@@ -35,11 +35,11 @@ export const CHANGELOG: ChangelogEntry[] = [
   //   ],
   // },
   {
-    version: '1.5.0',
+    version: '1.6.0',
     date: '2026-10-04',
-    title: '每个人都能在饭圈发动态',
+    title: '优化banner显示',
     items: [
-      { kind: 'new', text: '你也可以在饭圈写动态啦（配图）' },
+      { kind: 'new', text: '修复banner显示拥挤高度太大的问题' },
     ],
   },
   // {

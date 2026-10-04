@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { HashRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { ToastProvider } from './components/Toast'
+import { ToastProvider, useToast } from './components/Toast'
 import ChangelogModal from './components/ChangelogModal'
 import { APP_TITLE, configured } from './lib/supabase'
 import { requestNotifyPermission } from './lib/notify'
@@ -70,6 +70,34 @@ function Shell() {
   )
 }
 
+const HEAD_BTN =
+  'inline-flex h-8 max-w-[8rem] items-center gap-1 rounded-lg border border-brand-200 bg-white px-2 text-xs text-brand-600 active:bg-brand-50'
+const PANEL =
+  'absolute right-0 top-full z-40 mt-1.5 max-h-[60vh] w-40 overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-lg'
+
+function MenuItem({
+  children,
+  onClick,
+  active,
+  danger,
+}: {
+  children: ReactNode
+  onClick: () => void
+  active?: boolean
+  danger?: boolean
+}) {
+  return (
+    <button
+      className={`block w-full truncate px-3 py-2 text-left ${
+        active ? 'bg-brand-50 font-medium text-brand-600' : danger ? 'text-rose-600' : 'text-slate-600'
+      } active:bg-brand-50`}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  )
+}
+
 function Layout() {
   const { role, setViewMember, isAdmin, memberId, memberName, logout } = useSession()
   const { adminName } = useSettings()
@@ -78,7 +106,8 @@ function Layout() {
   const { pathname } = useLocation()
   const unread = useUnread()
   const { open: openChangelog } = useChangelog()
-  const [bell, setBell] = useState<string>('')
+  const toast = useToast()
+  const [menu, setMenu] = useState<'member' | 'more' | null>(null)
 
   const tabs: { to: string; label: string; emoji: string; badge?: number }[] =
     role === 'her'
@@ -95,9 +124,18 @@ function Layout() {
           { to: '/feed', label: '饭圈', emoji: '📸' },
         ]
 
+  const subtitle = isAdmin && role === 'her' && memberId
+    ? `正在查看：${memberName || '她'}`
+    : role === 'her'
+      ? `嗨，${memberName || '她'} 👋`
+      : adminName
+
   const enableBell = async () => {
     const p = await requestNotifyPermission()
-    setBell(p === 'granted' ? '已开启通知' : p === 'unsupported' ? '当前浏览器不支持' : '未授权')
+    toast.show(
+      p === 'granted' ? '已开启通知 🔔' : p === 'unsupported' ? '当前浏览器不支持通知' : '通知未授权',
+      p === 'granted' ? 'ok' : 'err'
+    )
   }
 
   const doLogout = () => {
@@ -106,65 +144,96 @@ function Layout() {
     logout()
   }
 
+  const run = (fn: () => void) => {
+    setMenu(null)
+    fn()
+  }
+
+  const switchMember = (id: string | null) => {
+    setMenu(null)
+    if (!id) {
+      setViewMember(null)
+      navigate('/admin/orders')
+      return
+    }
+    const m = members.find((x) => x.id === id)
+    if (m) {
+      setViewMember({ id: m.id, name: m.name })
+      navigate('/order')
+    }
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col bg-brand-50/40 pb-20">
-      <header className="sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-brand-100 bg-white/90 px-4 py-3 backdrop-blur">
-        <div>
-          <h1 className="text-base font-semibold text-brand-600">{APP_TITLE}</h1>
-          <p className="text-xs text-slate-400">
-            {role === 'her'
-              ? isAdmin
-                ? `正在查看：${memberName || '她'}`
-                : `嗨，${memberName || '她'} 👋`
-              : `我是${adminName} · 她的动态实时同步`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {role === 'me' && (
-            <button onClick={enableBell} className="btn-soft text-xs" title="开启浏览器推送">
-              🔔 {bell || '通知'}
-            </button>
-          )}
-          {isAdmin && (
-            <select
-              className="max-w-[9rem] rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600"
-              value={role === 'her' ? (memberId ?? '') : ''}
-              onChange={(e) => {
-                const v = e.target.value
-                if (!v) {
-                  setViewMember(null)
-                  navigate('/admin/orders')
-                  return
-                }
-                const m = members.find((x) => x.id === v)
-                if (m) {
-                  setViewMember({ id: m.id, name: m.name })
-                  navigate('/order')
-                }
-              }}
-            >
-              <option value="">我的管理视图</option>
-              {members.map((m) => (
-                <option key={m.id} value={m.id}>
-                  查看 {m.name}
-                </option>
-              ))}
-            </select>
-          )}
-          <button className="btn-ghost text-xs" onClick={openChangelog} title="查看更新日志">
-            日志
-          </button>
-          <button className="btn-ghost text-xs" onClick={doLogout} title="退出登录">
-            退出
-          </button>
+      <header className="sticky top-0 z-30 border-b border-brand-100 bg-white/95 backdrop-blur">
+        <div className="relative flex items-center gap-2 px-3 py-2">
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-[15px] font-semibold leading-tight text-brand-600">{APP_TITLE}</h1>
+            <p className="truncate text-[11px] leading-tight text-slate-400">{subtitle}</p>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-1.5">
+            {role === 'me' && (
+              <button className={HEAD_BTN} title="开启浏览器推送" onClick={enableBell}>
+                🔔
+              </button>
+            )}
+            {isAdmin && (
+              <div className="relative">
+                <button
+                  className={`${HEAD_BTN} ${memberId ? 'bg-brand-50 ring-1 ring-brand-200' : ''}`}
+                  onClick={() => setMenu((m) => (m === 'member' ? null : 'member'))}
+                >
+                  👥<span className="max-w-[4.5rem] truncate">{memberId ? memberName || '她' : '切换'}</span>
+                </button>
+                {menu === 'member' && (
+                  <div className={PANEL}>
+                    <div className="px-3 pb-1 pt-1.5 text-[11px] text-slate-400">切换到她的视角</div>
+                    <MenuItem active={!memberId} onClick={() => switchMember(null)}>
+                      我的管理视图
+                    </MenuItem>
+                    {members.map((m) => (
+                      <MenuItem key={m.id} active={m.id === memberId} onClick={() => switchMember(m.id)}>
+                        {m.name}
+                      </MenuItem>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="relative">
+              <button
+                className={HEAD_BTN}
+                title="更多"
+                onClick={() => setMenu((m) => (m === 'more' ? null : 'more'))}
+              >
+                ⋯
+              </button>
+              {menu === 'more' && (
+                <div className={PANEL}>
+                  {role === 'me' && (
+                    <MenuItem onClick={() => run(enableBell)}>开启推送通知</MenuItem>
+                  )}
+                  <MenuItem onClick={() => run(openChangelog)}>更新日志</MenuItem>
+                  <MenuItem danger onClick={() => run(doLogout)}>
+                    退出登录
+                  </MenuItem>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {menu && <div className="fixed inset-0 z-30" onClick={() => setMenu(null)} />}
         </div>
       </header>
 
       {isAdmin && role === 'her' && memberId && (
-        <div className="mx-4 mt-3 flex items-center gap-2 rounded-xl bg-brand-50 px-3 py-2 text-[11px] text-brand-700">
-          <span className="min-w-0 flex-1">👧 正在查看「{memberName || '她'}」，所有页面只显示她的数据</span>
+        <div className="mx-3 mt-2 flex items-center gap-2 rounded-xl bg-brand-50 px-3 py-1.5 text-[11px] text-brand-700">
+          <span className="min-w-0 flex-1 truncate">
+            👧 正在查看「{memberName || '她'}」，只看她的数据
+          </span>
           <button
-            className="shrink-0 rounded-lg bg-white px-2 py-1 text-brand-600"
+            className="shrink-0 rounded-lg bg-white px-2 py-0.5 text-brand-600"
             onClick={() => {
               setViewMember(null)
               navigate('/admin/orders')
