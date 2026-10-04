@@ -4,6 +4,7 @@ import { ToastProvider } from './components/Toast'
 import { APP_TITLE, configured } from './lib/supabase'
 import { requestNotifyPermission } from './lib/notify'
 import { SessionProvider, useSession } from './store/session'
+import { SettingsProvider, useSettings } from './store/settings'
 import { UnreadProvider, useUnread } from './store/unread'
 import { MembersProvider, useMembers } from './store/members'
 import type { Role } from './lib/types'
@@ -23,7 +24,9 @@ export default function App() {
     <HashRouter>
       <SessionProvider>
         <ToastProvider>
-          <Shell />
+          <SettingsProvider>
+            <Shell />
+          </SettingsProvider>
         </ToastProvider>
       </SessionProvider>
     </HashRouter>
@@ -64,6 +67,7 @@ function Shell() {
 
 function Layout() {
   const { role, setViewMember, isAdmin, memberId, memberName, logout } = useSession()
+  const { adminName } = useSettings()
   const { members } = useMembers()
   const navigate = useNavigate()
   const { pathname } = useLocation()
@@ -102,7 +106,11 @@ function Layout() {
         <div>
           <h1 className="text-base font-semibold text-brand-600">{APP_TITLE}</h1>
           <p className="text-xs text-slate-400">
-            {role === 'her' ? `正在查看：${memberName || '她'}` : '她的动态实时同步'}
+            {role === 'her'
+              ? isAdmin
+                ? `正在查看：${memberName || '她'}`
+                : `嗨，${memberName || '她'} 👋`
+              : `我是${adminName} · 她的动态实时同步`}
           </p>
         </div>
         <div className="flex items-center gap-2">

@@ -5,12 +5,14 @@ import { useRealtime } from '../lib/realtime'
 import { timeCn } from '../lib/date'
 import { useSession } from '../store/session'
 import { useMembers } from '../store/members'
+import { useSettings } from '../store/settings'
 import { SLOT_LABEL, type PostWithMeta } from '../lib/types'
 
 export default function FeedPage() {
   const toast = useToast()
-  const { isAdmin, role, memberId } = useSession()
+  const { isAdmin, role, memberId, memberName } = useSession()
   const { members } = useMembers()
+  const { adminName } = useSettings()
   const [posts, setPosts] = useState<PostWithMeta[]>([])
   const [draft, setDraft] = useState({ content: '', photo_url: '' })
   const [posting, setPosting] = useState(false)
@@ -42,7 +44,15 @@ export default function FeedPage() {
     { onPoll: () => void load() }
   )
 
-  const nameOf = (id: string | null) => (id ? (members.find((m) => m.id === id)?.name ?? '她') : '我')
+  /**
+   * 昵称显示：我发的 → 我的昵称（可在「成员」页改）；她本人 → 她自己的昵称（登录态里有，不依赖成员列表）；
+   * 其他人 → 成员表里的昵称（她看不到别人，所以只有我能用到这条分支）
+   */
+  const nameOf = (id: string | null): string => {
+    if (!id) return adminName
+    if (id === memberId && memberName) return memberName
+    return members.find((m) => m.id === id)?.name ?? '她'
+  }
 
   const likedByViewer = (p: PostWithMeta) =>
     isAdmin ? p.likes.some((l) => l.member_id === null) : p.likes.some((l) => l.member_id === memberId)

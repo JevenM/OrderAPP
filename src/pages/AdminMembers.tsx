@@ -1,16 +1,38 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createMember, randomCode, removeMember, updateMember } from '../lib/db'
 import { useToast } from '../components/Toast'
 import { useMembers } from '../store/members'
+import { useSettings } from '../store/settings'
 import type { Member } from '../lib/types'
 
 export default function AdminMembers() {
   const toast = useToast()
   const { members, reload, loading } = useMembers()
+  const { adminName, saveAdminName } = useSettings()
+  const [myName, setMyName] = useState(adminName)
+  const [savingMyName, setSavingMyName] = useState(false)
   const [name, setName] = useState('')
   const [code, setCode] = useState(randomCode())
   const [busy, setBusy] = useState(false)
   const [draft, setDraft] = useState<Record<string, { name: string; code: string }>>({})
+
+  useEffect(() => {
+    setMyName(adminName)
+  }, [adminName])
+
+  const saveMyName = async () => {
+    const n = myName.trim()
+    if (!n) return toast.show('给自己起个昵称吧～', 'err')
+    setSavingMyName(true)
+    try {
+      await saveAdminName(n)
+      toast.show('已保存，她在饭圈里看到的就是这个昵称')
+    } catch (e) {
+      toast.show((e as Error).message, 'err')
+    } finally {
+      setSavingMyName(false)
+    }
+  }
 
   const val = (m: Member) => draft[m.id] ?? { name: m.name, code: m.code }
   const dirty = (m: Member) => {
@@ -67,6 +89,34 @@ export default function AdminMembers() {
 
   return (
     <div className="space-y-4">
+      <div className="card space-y-2">
+        <h3 className="text-sm font-semibold">🙋 我的昵称</h3>
+        <p className="text-[11px] leading-relaxed text-slate-400">
+          她在饭圈里看到的名字，随时可改；改完她那边刷新就生效。
+        </p>
+        <div className="flex gap-2">
+          <input
+            className="input flex-1"
+            placeholder="比如：毛毛 / 大厨"
+            value={myName}
+            onChange={(e) => setMyName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                void saveMyName()
+              }
+            }}
+          />
+          <button
+            className="btn-primary shrink-0 text-xs"
+            disabled={savingMyName || myName.trim() === adminName}
+            onClick={saveMyName}
+          >
+            {savingMyName ? '保存中…' : '保存'}
+          </button>
+        </div>
+      </div>
+
       <div className="card space-y-3">
         <h3 className="text-sm font-semibold">➕ 新增一个她</h3>
         <input

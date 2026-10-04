@@ -372,6 +372,8 @@ export async function listPosts(viewer: {
   }
   const commentsBy = new Map<string, PostComment[]>()
   for (const c of (comments.data ?? []) as PostComment[]) {
+    // 她只能看到「我」和她自己的评论，别的她的评论对她不可见
+    if (!viewer.isAdmin && c.member_id !== null && c.member_id !== viewer.memberId) continue
     commentsBy.set(c.post_id, [...(commentsBy.get(c.post_id) ?? []), c])
   }
 
@@ -460,6 +462,22 @@ export async function addComment(postId: string, memberId: string | null, conten
 export async function removeComment(id: string): Promise<void> {
   const { error } = await supabase.from('post_comments').delete().eq('id', id)
   if (error) fail(error, '删除评论')
+}
+
+/* ------------------------------ 应用设置 ------------------------------ */
+
+/** 读一项设置，没配过就用 fallback（例如「我的昵称」默认「我」） */
+export async function getSetting(key: string, fallback = ''): Promise<string> {
+  const { data, error } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle()
+  if (error || !data) return fallback
+  return (data.value as string) || fallback
+}
+
+export async function setSetting(key: string, value: string): Promise<void> {
+  const { error } = await supabase
+    .from('app_settings')
+    .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+  if (error) fail(error, '保存设置')
 }
 
 /* ------------------------------ 未读 ------------------------------ */

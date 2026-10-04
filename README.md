@@ -82,6 +82,7 @@ cp .env.example .env
 | `VITE_INVITE_CODE` | 她的邀请码（本地随便填，线上由 Secret 决定） |
 | `VITE_ADMIN_CODE` | 管理口令，**默认 `adminMao`**，可不填 |
 | `VITE_APP_TITLE` | 可选，默认「今天吃什么」 |
+| `VITE_ADMIN_NAME` | 可选，「我的昵称」默认值，默认 `我`（进「成员」页可随时改，改完存数据库） |
 
 ### 4）启动
 
@@ -212,6 +213,7 @@ Supabase 控制台 → **SQL Editor**，按顺序执行：
 | `supabase/migrations/0003_drinks.sql` | 追加奶茶 / 饮品类初始菜单（按菜名去重） | 幂等，可重复执行 |
 | `supabase/migrations/0004_dish_requests.sql` | 建 `dish_requests` 表（她申请的新菜 + 我的审核状态） | **必须执行**，否则「新菜审核」不生效 |
 | `supabase/migrations/0005_feed.sql` | 建 `posts` / `post_likes` / `post_comments` 三表（饭圈动态、点赞、评论） | **必须执行**，否则饭圈打不开（会提示加载饭圈失败） |
+| `supabase/migrations/0006_settings.sql` | 建 `app_settings` 表，存「我的昵称」（她在饭圈里看到的名字） | 不执行也能跑，只是昵称固定为默认值 `我` |
 
 > 多成员功能上线前产生的历史订单/三餐，`member_id` 为 NULL，后台显示为「未归属」，数据不丢。
 
@@ -243,6 +245,8 @@ supabase functions deploy notify-email --no-verify-jwt
 | 邀请码（如 `ilovemg6`） | 「她」的视图 | 点菜、三餐 |
 | 管理口令（默认 `adminMao`） | 「我」的后台 | 订单、饮食、菜单、成员；可下拉切换查看任意一个她 |
 
+- 她用自己的邀请码登录后，顶栏显示「嗨，**她的昵称** 👋」，饭圈里也显示她的昵称（昵称取自登录态，不需要成员表）。
+- 顶部副标题对管理员显示「我是**我的昵称** · 她的动态实时同步」，昵称在「成员」页最上方改，存 `app_settings` 表，所有端实时同步。
 - 登录页**只有一个输入框**，不显示任何「我是谁」的选择 —— 管理入口对外不可见。
 - 顶部栏右侧有「**退出**」按钮（她的页面和后台都有），会二次确认并清空登录态。
 - 退出时会把地址重置到 `/`，避免下次用她的邀请码登录却落到后台页面。
@@ -259,8 +263,8 @@ supabase functions deploy notify-email --no-verify-jwt
 | 订单 | 我 | 实时收订单（红点 + 通知 + 邮件），「接单 / 做好了 / 取消」，按状态筛选；标记「做好了」会自动把这顿同步成她的就餐记录 |
 | 饮食 | 我 | 按日期看她的一日三餐，同一餐次按成员分条展示；可**修改 / 删除**任意一条记录；底部最近 7 天概览 |
 | 菜单 | 我 | 新增/编辑/删除/上下架菜品（名称、emoji 分组选择、分类含奶茶/饮品、描述、价格、排序）；顶部审核她申请的新菜（收进菜单 / 婉拒），Tab 带红点 |
-| 成员 | 我 | 新增多个「她」（各自昵称 + 独立邀请码），可改名 / 改码 / 删除；顶部下拉切换查看对象 |
-| 饭圈 | 她 | 看「我发的 + 自己发的」动态（**她与她之间互相不可见**），可点赞、评论、删自己的动态/评论 |
+| 成员 | 我 | 新增多个「她」（各自昵称 + 独立邀请码），可改名 / 改码 / 删除；顶部下拉切换查看对象；最上面可改**我的昵称**（她在饭圈里看到的名字） |
+| 饭圈 | 她 | 看「我发的 + 自己发的」动态（**她与她之间互相不可见，也看不到别人留下的评论**），可点赞、评论、删自己的动态/评论 |
 | 饭圈 | 我 | 看到**所有人**的动态（每个她都标了名字），自己也能发带图动态，可点赞 / 评论 / 删除任意动态 |
 
 ---
@@ -286,12 +290,14 @@ src/
   store/session.tsx       登录态、角色、isAdmin、当前查看的成员
   store/members.tsx       成员列表 + 实时刷新
   store/unread.tsx        未读红点 & 实时订阅
+  store/settings.tsx      应用设置：我的昵称（app_settings 表）
 supabase/
   migrations/0001_init.sql      建表 + 实时 + 初始菜单
   migrations/0002_members.sql   成员表 + member_id
   migrations/0003_drinks.sql    奶茶 / 饮品初始菜单
   migrations/0004_dish_requests.sql  她申请的新菜 + 审核
   migrations/0005_feed.sql      饭圈：posts / post_likes / post_comments
+  migrations/0006_settings.sql  app_settings（我的昵称）
   functions/notify-email/       邮件推送 Edge Function
 .github/workflows/deploy.yml    GitHub Pages 自动部署
 ```
