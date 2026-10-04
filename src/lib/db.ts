@@ -1,9 +1,44 @@
 import { supabase } from './supabase'
 import { toDayStr } from './date'
-import type { Dish, Meal, MealSlot, MealStatus, Member, OrderStatus, OrderWithItems } from './types'
+import type {
+  Dish,
+  DishRequestStatus,
+  DishRequest,
+  Meal,
+  MealSlot,
+  MealStatus,
+  Member,
+  OrderStatus,
+  OrderWithItems,
+  Post,
+  PostAuthor,
+  PostComment,
+  PostLike,
+  PostWithMeta,
+} from './types'
 
 function fail(e: { message?: string } | null, tag: string): never {
   throw new Error(`${tag}失败：${e?.message ?? '未知错误'}`)
+}
+
+/** 给请求加超时，避免网络不通时一直卡在「保存中…」看不到反馈 */
+function withTimeout<T>(p: PromiseLike<T>, ms: number, tag: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(
+      () => reject(new Error(`${tag}超时：网络似乎不太顺畅，请检查网络后重试`)),
+      ms
+    )
+    Promise.resolve(p).then(
+      (v) => {
+        window.clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        window.clearTimeout(timer)
+        reject(e)
+      }
+    )
+  })
 }
 
 /* ------------------------------ 菜单 ------------------------------ */
@@ -19,24 +54,80 @@ export async function listDishes(): Promise<Dish[]> {
 }
 
 export async function saveDish(dish: Partial<Dish> & { name: string }): Promise<void> {
+  const price = Number(dish.price ?? 0)
   const payload = {
-    name: dish.name,
+    name: dish.name.trim(),
     category: dish.category ?? '家常菜',
-    emoji: dish.emoji ?? '🍽️',
+    emoji: dish.emoji?.trim() || '🍽️',
     description: dish.description ?? '',
-    price: dish.price ?? 0,
+    price: Number.isFinite(price) ? price : 0,
     available: dish.available ?? true,
-    sort_order: dish.sort_order ?? 0,
+    sort_order: Number.isFinite(dish.sort_order) ? (dish.sort_order ?? 0) : 0,
   }
-  const { error } = dish.id
-    ? await supabase.from('dishes').update(payload).eq('id', dish.id)
-    : await supabase.from('dishes').insert(payload)
+
+  // 带上 .select() 才能知道到底改到了几行：RLS 限制时 Supabase 不会报错，只会静悄悄返回 0 行
+  if (dish.id) {
+    const { data, error } = await withTimeout(
+      supabase.from('dishes').update(payload).eq('id', dish.id).select('id'),
+      15_000,
+      '保存菜品'
+    )
+    if (error) fail(error, '保存菜品')
+    if (!data?.length) throw new Error('保存菜品失败：没有更新到任何数据，检查 Supabase 表权限（RLS）是否开放写入')
+    return
+  }
+
+  const { data, error } = await withTimeout(
+    supabase.from('dishes').insert(payload).select('id'),
+    15_000,
+    '保存菜品'
+  )
   if (error) fail(error, '保存菜品')
+  if (!data?.length) throw new Error('保存菜品失败：没有写入任何数据，检查 Supabase 表权限（RLS）是否开放写入')
 }
 
 export async function removeDish(id: string): Promise<void> {
-  const { error } = await supabase.from('dishes').delete().eq('id', id)
+  const { error } = await withTimeout(supabase.from('dishes').delete().eq('id', id), 15_000, '删除菜品')
   if (error) fail(error, '删除菜品')
+}
+
+/* ---------------------- 新菜申请（她 → 我审核 → 进菜单） ---------------------- */
+
+export async function listDishRequests(status?: DishRequestStatus): Promise<DishRequest[]> {
+  let query = supabase.from('dish_requests').select('*')
+  if (status) query = query.eq('status', status)
+  const { data, error } = await query.order('created_at', { ascending: false }).limit(50)
+  if (error) fail(error, '加载新菜申请')
+  return (data ?? []) as DishRequest[]
+}
+
+/** 她申请一道菜单里没有的菜；同一道菜有待审核申请时不重复推送 */
+export async function createDishRequest(name: string, memberId: string | null): Promise<boolean> {
+  const clean = name.trim()
+  if (!clean) return false
+
+  const { data: dup, error: e0 } = await supabase
+    .from('dish_requests')
+    .select('id')
+    .eq('name', clean)
+    .eq('status', 'pending')
+    .maybeSingle()
+  if (e0) fail(e0, '提交新菜申请')
+  if (dup) return false
+
+  const { error } = await supabase.from('dish_requests').insert({ name: clean, member_id: memberId })
+  if (error) fail(error, '提交新菜申请')
+  return true
+}
+
+/** 我审核：通过（收进菜单）/ 婉拒 */
+export async function resolveDishRequest(id: string, status: 'approved' | 'rejected'): Promise<void> {
+  const { error } = await supabase
+    .from('dish_requests')
+    .update({ status, handled_at: new Date().toISOString() })
+    .eq('id', id)
+    .select('id')
+  if (error) fail(error, '处理新菜申请')
 }
 
 /* ------------------------------ 成员（多个她） ------------------------------ */
@@ -238,12 +329,146 @@ export async function uploadMealPhoto(file: File): Promise<string> {
   return supabase.storage.from('meal-photos').getPublicUrl(path).data.publicUrl
 }
 
+/* ------------------------------ 饭圈 ------------------------------ */
+
+/**
+ * 可见性规则：
+ * - 我（管理员）：看到所有人的动态（所有她 + 我自己发的）
+ * - 某个她：只看「我发的」+「她自己发的」，她与她之间互相不可见
+ *   （想让她连自己的都看不到，把 includeSelf 传 false）
+ */
+export async function listPosts(viewer: {
+  isAdmin: boolean
+  memberId: string | null
+  includeSelf?: boolean
+}): Promise<PostWithMeta[]> {
+  let query = supabase.from('posts').select('*')
+  if (!viewer.isAdmin) {
+    const filters = ['author.eq.me']
+    if (viewer.memberId && viewer.includeSelf !== false) filters.push(`member_id.eq.${viewer.memberId}`)
+    query = query.or(filters.join(','))
+  }
+  const { data: posts, error } = await query.order('created_at', { ascending: false }).limit(50)
+  if (error) fail(error, '加载饭圈')
+
+  const list = (posts ?? []) as Post[]
+  if (!list.length) return []
+
+  const ids = list.map((p) => p.id)
+  const [likes, comments] = await Promise.all([
+    supabase.from('post_likes').select('*').in('post_id', ids),
+    supabase
+      .from('post_comments')
+      .select('*')
+      .in('post_id', ids)
+      .order('created_at', { ascending: true }),
+  ])
+  if (likes.error) fail(likes.error, '加载点赞')
+  if (comments.error) fail(comments.error, '加载评论')
+
+  const likesBy = new Map<string, PostLike[]>()
+  for (const l of (likes.data ?? []) as PostLike[]) {
+    likesBy.set(l.post_id, [...(likesBy.get(l.post_id) ?? []), l])
+  }
+  const commentsBy = new Map<string, PostComment[]>()
+  for (const c of (comments.data ?? []) as PostComment[]) {
+    commentsBy.set(c.post_id, [...(commentsBy.get(c.post_id) ?? []), c])
+  }
+
+  return list.map((p) => ({
+    ...p,
+    likes: likesBy.get(p.id) ?? [],
+    comments: commentsBy.get(p.id) ?? [],
+  }))
+}
+
+export async function createPost(input: {
+  author: PostAuthor
+  member_id: string | null
+  content: string
+  photo_url?: string
+  meal_slot?: MealSlot | null
+  day?: string | null
+}): Promise<void> {
+  const { error } = await supabase.from('posts').insert({
+    author: input.author,
+    member_id: input.member_id,
+    content: input.content.trim(),
+    photo_url: input.photo_url ?? '',
+    meal_slot: input.meal_slot ?? null,
+    day: input.day ?? null,
+  })
+  if (error) fail(error, '发布动态')
+}
+
+/** 她记录完三餐后自动发一条动态；同一天同一餐次只发一条，重复填写就更新 */
+export async function publishMealPost(input: {
+  member_id: string | null
+  day: string
+  slot: MealSlot
+  content: string
+  photo_url: string
+}): Promise<void> {
+  let find = supabase.from('posts').select('id').eq('day', input.day).eq('meal_slot', input.slot).eq('author', 'her')
+  find = input.member_id ? find.eq('member_id', input.member_id) : find.is('member_id', null)
+  const { data: existing } = await find.maybeSingle()
+
+  const payload = { content: input.content, photo_url: input.photo_url }
+  if (existing) {
+    const { error } = await supabase.from('posts').update(payload).eq('id', existing.id)
+    if (error) fail(error, '更新饭圈动态')
+    return
+  }
+  const { error } = await supabase.from('posts').insert({
+    author: 'her' as PostAuthor,
+    member_id: input.member_id,
+    day: input.day,
+    meal_slot: input.slot,
+    ...payload,
+  })
+  if (error) fail(error, '发布饭圈动态')
+}
+
+export async function removePost(id: string): Promise<void> {
+  const { error } = await supabase.from('posts').delete().eq('id', id)
+  if (error) fail(error, '删除动态')
+}
+
+/** 点赞 / 取消赞，返回点赞后的状态 */
+export async function toggleLike(postId: string, memberId: string | null): Promise<boolean> {
+  let find = supabase.from('post_likes').select('id').eq('post_id', postId)
+  find = memberId ? find.eq('member_id', memberId) : find.is('member_id', null)
+  const { data: mine } = await find.maybeSingle()
+
+  if (mine) {
+    const { error } = await supabase.from('post_likes').delete().eq('id', mine.id)
+    if (error) fail(error, '取消点赞')
+    return false
+  }
+  const { error } = await supabase.from('post_likes').insert({ post_id: postId, member_id: memberId })
+  if (error) fail(error, '点赞')
+  return true
+}
+
+export async function addComment(postId: string, memberId: string | null, content: string): Promise<void> {
+  const text = content.trim()
+  if (!text) return
+  const { error } = await supabase.from('post_comments').insert({ post_id: postId, member_id: memberId, content: text })
+  if (error) fail(error, '发表评论')
+}
+
+export async function removeComment(id: string): Promise<void> {
+  const { error } = await supabase.from('post_comments').delete().eq('id', id)
+  if (error) fail(error, '删除评论')
+}
+
 /* ------------------------------ 未读 ------------------------------ */
 
-export async function unreadCounts(): Promise<{ orders: number; meals: number }> {
-  const [o, m] = await Promise.all([
+export async function unreadCounts(): Promise<{ orders: number; meals: number; requests: number }> {
+  const [o, m, r] = await Promise.all([
     supabase.from('orders').select('id', { count: 'exact', head: true }).is('read_at', null).neq('status', 'cancelled'),
     supabase.from('meals').select('id', { count: 'exact', head: true }).is('read_at', null),
+    supabase.from('dish_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
   ])
-  return { orders: o.count ?? 0, meals: m.count ?? 0 }
+  return { orders: o.count ?? 0, meals: m.count ?? 0, requests: r.count ?? 0 }
 }

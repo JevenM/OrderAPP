@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { listMealsRange, uploadMealPhoto, upsertMeal } from '../lib/db'
+import { listMealsRange, publishMealPost, uploadMealPhoto, upsertMeal } from '../lib/db'
 import { pushEmail } from '../lib/notify'
 import { prettyDay, shiftDay, todayStr, weekdayCn } from '../lib/date'
 import { useToast } from '../components/Toast'
@@ -63,7 +63,19 @@ export default function MealLogPage() {
            ${f.photo_url ? `<p><img src="${f.photo_url}" width="240"/></p>` : ''}
          </div>`
       )
-      toast.show('已提交，他能看到啦 ❤️')
+      // 自动同步一条动态到饭圈（带照片），同一天同一餐次只发一条
+      const post = `${MEAL_STATUS[f.status].emoji} ${label}：${f.content || MEAL_STATUS[f.status].label}${
+        f.note ? `\n${f.note}` : ''
+      }`
+      let posted = false
+      try {
+        await publishMealPost({ member_id: memberId, day, slot, content: post, photo_url: f.photo_url })
+        posted = true
+      } catch {
+        // 饭圈没开通（没跑迁移脚本）也不影响记录本身
+      }
+
+      toast.show(posted ? '已提交，饭圈也更新啦 ❤️' : '已提交，他能看到啦 ❤️')
       void load()
     } catch (e) {
       toast.show((e as Error).message, 'err')

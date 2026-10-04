@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { listMealsRange, markMealRead, removeMeal, updateMeal, uploadMealPhoto } from '../lib/db'
-import { supabase } from '../lib/supabase'
+import { useRealtime } from '../lib/realtime'
 import { lastDays, prettyDay, shiftDay, todayStr, weekdayCn } from '../lib/date'
 import { useUnread } from '../store/unread'
 import { useMembers } from '../store/members'
@@ -29,14 +29,9 @@ export default function AdminMeals() {
 
   useEffect(() => {
     void load()
-    const channel = supabase
-      .channel('admin-meals')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'meals' }, load)
-      .subscribe()
-    return () => {
-      supabase.removeChannel(channel)
-    }
   }, [load])
+
+  useRealtime('admin-meals', [{ table: 'meals', on: () => void load() }], { onPoll: () => void load() })
 
   // 打开当天即视为已读
   useEffect(() => {

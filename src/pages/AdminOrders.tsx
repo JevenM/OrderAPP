@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { autoMealFromOrder, listOrders, markOrderRead, setOrderStatus } from '../lib/db'
-import { supabase } from '../lib/supabase'
 import { timeCn } from '../lib/date'
+import { useRealtime } from '../lib/realtime'
 import { useToast } from '../components/Toast'
 import { useUnread } from '../store/unread'
 import { useMembers } from '../store/members'
@@ -38,15 +38,16 @@ export default function AdminOrders() {
 
   useEffect(() => {
     void load()
-    const channel = supabase
-      .channel('admin-orders')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, load)
-      .subscribe()
-    return () => {
-      supabase.removeChannel(channel)
-    }
   }, [load])
+
+  useRealtime(
+    'admin-orders',
+    [
+      { table: 'orders', on: () => void load() },
+      { table: 'order_items', on: () => void load() },
+    ],
+    { onPoll: () => void load() }
+  )
 
   // 打开页面即视为已读（1.5 秒后清掉红点）
   useEffect(() => {

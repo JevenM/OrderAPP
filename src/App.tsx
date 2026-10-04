@@ -10,6 +10,7 @@ import type { Role } from './lib/types'
 import Login from './pages/Login'
 import OrderPage from './pages/OrderPage'
 import MealLogPage from './pages/MealLogPage'
+import FeedPage from './pages/FeedPage'
 import AdminOrders from './pages/AdminOrders'
 import AdminMeals from './pages/AdminMeals'
 import AdminDishes from './pages/AdminDishes'
@@ -48,6 +49,7 @@ function Shell() {
             <Route path="/" element={<Navigate to={HOME[role]} replace />} />
             <Route path="/order" element={<OrderPage />} />
             <Route path="/meals" element={<MealLogPage />} />
+            <Route path="/feed" element={<FeedPage />} />
             <Route path="/admin/orders" element={<AdminOrders />} />
             <Route path="/admin/meals" element={<AdminMeals />} />
             <Route path="/admin/dishes" element={<AdminDishes />} />
@@ -73,12 +75,14 @@ function Layout() {
       ? [
           { to: '/order', label: '点菜', emoji: '🧾' },
           { to: '/meals', label: '三餐', emoji: '🍚' },
+          { to: '/feed', label: '饭圈', emoji: '📸' },
         ]
       : [
           { to: '/admin/orders', label: '订单', emoji: '🧾', badge: unread.orders },
           { to: '/admin/meals', label: '饮食', emoji: '🍚', badge: unread.meals },
-          { to: '/admin/dishes', label: '菜单', emoji: '📖' },
+          { to: '/admin/dishes', label: '菜单', emoji: '📖', badge: unread.requests },
           { to: '/admin/members', label: '成员', emoji: '👭' },
+          { to: '/feed', label: '饭圈', emoji: '📸' },
         ]
 
   const enableBell = async () => {

@@ -2,8 +2,9 @@
 
 给两个人（或「我 + 多个她」）用的小应用：
 
-- **她**：点菜下单（菜单选菜 / 自定义菜名、选餐次、期望时间、备注）＋ 记录每天一日三餐
-- **我**：后台实时收到订单（红点 + 通知 + 邮件），接单、看三餐记录、管菜单、管成员
+- **她**：点菜下单（菜单选菜 / 自定义菜名、选餐次、期望时间、备注）＋ 记录每天一日三餐（自动发饭圈）
+- **我**：后台实时收到订单（红点 + 通知 + 邮件），接单、看三餐记录、管菜单、管成员、审核她申请的新菜
+- **饭圈**：她记录三餐后自动发带图动态；支持点赞 / 评论；**她与她之间互相不可见**，我能看到所有人的动态
 
 技术栈：**React 18 + Vite 5 + TypeScript + Tailwind 3 + Supabase（免费版）+ GitHub Pages**（静态托管，手机「添加到主屏幕」即可当 APP 用）。
 
@@ -131,7 +132,8 @@ npm run dev -- --host
 - **Table Editor**：直接看/改 `dishes / orders / order_items / meals / members` 表
 - **SQL Editor**：跑查询和迁移脚本
 - 页面报「加载菜单失败」「提交订单失败」时，优先去 SQL Editor 确认迁移脚本是否已执行、表是否存在
-https://supabase.com/dashboard/project/vbyjdfcfventelmjcufc/storage/files
+`https://supabase.com/dashboard/project/vbyjdfcfventelmjcufc/storage/files`
+执行sql文件的时候打不开页面，可以使用右上角的AI，把内容复制到AI中，然后让他来执行
 
 
 ### 实时同步怎么验证
@@ -207,6 +209,9 @@ Supabase 控制台 → **SQL Editor**，按顺序执行：
 | --- | --- | --- |
 | `supabase/migrations/0001_init.sql` | 建 `dishes / orders / order_items / meals` 四表、开 RLS、加实时订阅、写入 20 道初始菜 | 幂等，可重复执行 |
 | `supabase/migrations/0002_members.sql` | 建 `members` 表，`orders` / `meals` 加 `member_id` | **必须执行**，否则新代码会报 members 表不存在 |
+| `supabase/migrations/0003_drinks.sql` | 追加奶茶 / 饮品类初始菜单（按菜名去重） | 幂等，可重复执行 |
+| `supabase/migrations/0004_dish_requests.sql` | 建 `dish_requests` 表（她申请的新菜 + 我的审核状态） | **必须执行**，否则「新菜审核」不生效 |
+| `supabase/migrations/0005_feed.sql` | 建 `posts` / `post_likes` / `post_comments` 三表（饭圈动态、点赞、评论） | **必须执行**，否则饭圈打不开（会提示加载饭圈失败） |
 
 > 多成员功能上线前产生的历史订单/三餐，`member_id` 为 NULL，后台显示为「未归属」，数据不丢。
 
@@ -249,12 +254,14 @@ supabase functions deploy notify-email --no-verify-jwt
 | 页面 | 身份 | 能力 |
 | --- | --- | --- |
 | 点菜 | 她 | 按分类浏览/搜索菜单，`+/-` 选数量，选餐次（早/午/晚/加餐），填期望时间和备注，一键下单；下方看最近订单状态 |
-| ↳ **想吃的菜** | 她 | 菜单里没有的菜，可在输入框直接写菜名加入购物车，与菜单菜混着一起下单 |
-| 三餐 | 她 | 选日期 → 早/午/晚/加餐 四张卡片，「吃了 / 吃得少 / 没吃」+ 内容备注 + 上传照片 |
+| ↳ **想吃的菜** | 她 | 菜单里没有的菜，可在输入框直接写菜名加入购物车，与菜单菜混着一起下单；提交后同步发给他审核，通过即进菜单 |
+| 三餐 | 她 | 选日期 → 早/午/晚/加餐 四张卡片，「吃了 / 吃得少 / 没吃」+ 内容备注 + 上传照片；**提交后自动发一条带图动态到饭圈**（同一天同一餐次只发一条，重复填会更新） |
 | 订单 | 我 | 实时收订单（红点 + 通知 + 邮件），「接单 / 做好了 / 取消」，按状态筛选；标记「做好了」会自动把这顿同步成她的就餐记录 |
 | 饮食 | 我 | 按日期看她的一日三餐，同一餐次按成员分条展示；可**修改 / 删除**任意一条记录；底部最近 7 天概览 |
-| 菜单 | 我 | 新增/编辑/删除/上下架菜品（名称、emoji、分类、描述、价格、排序） |
+| 菜单 | 我 | 新增/编辑/删除/上下架菜品（名称、emoji 分组选择、分类含奶茶/饮品、描述、价格、排序）；顶部审核她申请的新菜（收进菜单 / 婉拒），Tab 带红点 |
 | 成员 | 我 | 新增多个「她」（各自昵称 + 独立邀请码），可改名 / 改码 / 删除；顶部下拉切换查看对象 |
+| 饭圈 | 她 | 看「我发的 + 自己发的」动态（**她与她之间互相不可见**），可点赞、评论、删自己的动态/评论 |
+| 饭圈 | 我 | 看到**所有人**的动态（每个她都标了名字），自己也能发带图动态，可点赞 / 评论 / 删除任意动态 |
 
 ---
 
@@ -265,7 +272,8 @@ src/
   App.tsx                 路由 + 底部 Tab + 顶部栏（成员切换 / 退出）
   pages/Login.tsx         邀请码 / 管理口令登录
   pages/OrderPage.tsx     她：点菜下单 + 自定义菜名
-  pages/MealLogPage.tsx   她：一日三餐记录
+  pages/MealLogPage.tsx   她：一日三餐记录（自动同步饭圈）
+  pages/FeedPage.tsx      饭圈：动态 / 点赞 / 评论（可见性按身份过滤）
   pages/AdminOrders.tsx   我：接单
   pages/AdminMeals.tsx    我：按日期看三餐（可改可删）
   pages/AdminDishes.tsx   我：菜单管理
@@ -273,6 +281,7 @@ src/
   lib/db.ts               所有数据库读写
   lib/supabase.ts         Supabase 客户端 + INVITE_CODE / ADMIN_CODE / APP_TITLE
   lib/notify.ts           邮件 / 浏览器通知 / 提示音
+  lib/realtime.ts         实时订阅封装（WebSocket 连不上自动降级轮询）
   lib/types.ts            类型与常量（SLOTS、状态字典）
   store/session.tsx       登录态、角色、isAdmin、当前查看的成员
   store/members.tsx       成员列表 + 实时刷新
@@ -280,6 +289,9 @@ src/
 supabase/
   migrations/0001_init.sql      建表 + 实时 + 初始菜单
   migrations/0002_members.sql   成员表 + member_id
+  migrations/0003_drinks.sql    奶茶 / 饮品初始菜单
+  migrations/0004_dish_requests.sql  她申请的新菜 + 审核
+  migrations/0005_feed.sql      饭圈：posts / post_likes / post_comments
   functions/notify-email/       邮件推送 Edge Function
 .github/workflows/deploy.yml    GitHub Pages 自动部署
 ```
@@ -294,6 +306,9 @@ supabase/
 | **邀请码一直提示不对** | ① Secret 名写错（必须严格 `VITE_INVITE_CODE`）；② 改了 Secret 但没重跑 workflow；③ 浏览器用了缓存旧 JS，需 `Ctrl+Shift+R` 强刷 |
 | **改了 Secret 但线上没变** | `VITE_*` 是构建期变量，改完必须 **Run workflow 重新构建** |
 | **报 members 表不存在** | `0002_members.sql` 还没在 Supabase 执行 |
+| **「加载饭圈失败」/ 饭圈空白** | `0005_feed.sql` 还没执行；点赞唯一索引冲突说明同一个人重复点了赞，刷新即可 |
+| **她写的菜没出现在审核区** | `0004_dish_requests.sql` 没执行，或同名申请已在待审核中（自动去重，不重复推送） |
+| **控制台一直刷 `WebSocket ... ERR_CONNECTION_RESET`** | Supabase Realtime 的 ws 被网络拦截，**不影响功能**：`lib/realtime.ts` 会自动降级为 10 秒轮询刷新 |
 | **连不上 Supabase / 一直弹错误 toast** | 检查 `.env`（本地）或 Secrets（线上）两个 Supabase 值；免费项目 **7 天不用会暂停**，去控制台手动恢复 |
 | **刷新后 404** | 已用 Hash 路由（`#/order`），正常不会出现 |
 | **收不到通知** | 后台右上角点「🔔 通知」授权；iOS Safari 需先「添加到主屏幕」再打开，且系统需 iOS 16.4+ |

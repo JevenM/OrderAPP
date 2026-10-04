@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createOrder, listDishes, listOrders } from '../lib/db'
+import { createDishRequest, createOrder, listDishes, listOrders } from '../lib/db'
 import { pushEmail } from '../lib/notify'
-import { supabase } from '../lib/supabase'
 import { timeCn } from '../lib/date'
+import { useRealtime } from '../lib/realtime'
 import { useToast } from '../components/Toast'
 import { useSession } from '../store/session'
 import { ORDER_STATUS, SLOTS, type Dish, type MealSlot, type OrderWithItems } from '../lib/types'
@@ -45,15 +45,21 @@ export default function OrderPage() {
   useEffect(() => {
     void load()
     void loadRecent()
-    const channel = supabase
-      .channel('her-orders')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, loadRecent)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'dishes' }, load)
-      .subscribe()
-    return () => {
-      supabase.removeChannel(channel)
-    }
   }, [load, loadRecent])
+
+  useRealtime(
+    'her-orders',
+    [
+      { table: 'orders', on: () => void loadRecent() },
+      { table: 'dishes', on: () => void load() },
+    ],
+    {
+      onPoll: () => {
+        void load()
+        void loadRecent()
+      },
+    }
+  )
 
   const grouped = useMemo(() => {
     const kw = keyword.trim()
@@ -123,10 +129,23 @@ export default function OrderPage() {
            <p>备注：${note || '无'}</p>
          </div>`
       )
+      // 菜单里没有的菜：同步提给他审核，通过后就会出现在菜单里
+      const customNames = picked
+        .filter(([key]) => key.startsWith(CUSTOM_PREFIX))
+        .map(([key]) => key.slice(CUSTOM_PREFIX.length))
+      let reviewed = 0
+      try {
+        for (const n of customNames) {
+          if (await createDishRequest(n, memberId)) reviewed += 1
+        }
+      } catch {
+        // 申请失败不影响这次下单
+      }
+
       setCart({})
       setNote('')
       setHopeTime('')
-      toast.show('下单成功，已经通知他啦 ❤️')
+      toast.show(reviewed > 0 ? '下单成功，新菜已发给他审核啦 ❤️' : '下单成功，已经通知他啦 ❤️')
       void loadRecent()
     } catch (e) {
       toast.show((e as Error).message, 'err')
@@ -170,6 +189,9 @@ export default function OrderPage() {
 
       <div className="card space-y-2">
         <div className="text-xs text-slate-500">想吃的菜（菜单里没有就直接写下来）</div>
+        <p className="text-[11px] text-slate-400">
+          菜单里没有的菜会先写进这顿订单，同时发给他审核；通过之后就能在下面的菜单里直接点啦～
+        </p>
         <div className="flex gap-2">
           <input
             className="input flex-1"
