@@ -29,19 +29,18 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-10-04',
     title: '每个人都能在饭圈发动态',
     items: [
-      { kind: 'new', text: '支持在饭圈写动态（配图）' },
-      { kind: 'improve', text: '发布框上方的提示会写清楚这条动态谁能看到，不用猜' },
+      { kind: 'new', text: '你也可以在饭圈写动态啦（配图）' },
     ],
   },
-  {
-    version: '1.4.0',
-    date: '2026-10-04',
-    title: '设置昵称',
-    items: [
-      { kind: 'new', text: '「成员」页每个人下面新增昵称显示' },
-      { kind: 'improve', text: '没单独设置的继续用统一昵称；刷新就生效' },
-    ],
-  },
+  // {
+  //   version: '1.4.0',
+  //   date: '2026-10-04',
+  //   title: '设置昵称',
+  //   items: [
+  //     { kind: 'new', text: '「成员」页每个人下面新增昵称显示' },
+  //     { kind: 'improve', text: '没单独设置的继续用统一昵称；刷新就生效' },
+  //   ],
+  // },
   // {
   //   version: '1.3.0',
   //   date: '2026-10-04',
