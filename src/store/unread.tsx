@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { supabase } from '../lib/supabase'
-import { markAllRead, unreadCounts } from '../lib/db'
+import { unreadCounts } from '../lib/db'
 import { browserNotify, ding } from '../lib/notify'
 import type { Meal, Order } from '../lib/types'
 
@@ -17,16 +17,12 @@ type UnreadValue = {
   orders: number
   meals: number
   refresh: () => void
-  clearOrders: () => void
-  clearMeals: () => void
 }
 
 const UnreadContext = createContext<UnreadValue>({
   orders: 0,
   meals: 0,
   refresh: () => {},
-  clearOrders: () => {},
-  clearMeals: () => {},
 })
 
 /** 监听 orders / meals 的新增，维护红点未读数并弹通知 */
@@ -74,17 +70,9 @@ export function UnreadProvider({ enabled, children }: { enabled: boolean; childr
     }
   }, [enabled, refresh])
 
-  const clearOrders = useCallback(() => {
-    void markAllRead('orders').then(refresh)
-  }, [refresh])
-
-  const clearMeals = useCallback(() => {
-    void markAllRead('meals').then(refresh)
-  }, [refresh])
-
   const value = useMemo<UnreadValue>(
-    () => ({ ...counts, refresh, clearOrders, clearMeals }),
-    [counts, refresh, clearOrders, clearMeals]
+    () => ({ ...counts, refresh }),
+    [counts, refresh]
   )
 
   return <UnreadContext.Provider value={value}>{children}</UnreadContext.Provider>

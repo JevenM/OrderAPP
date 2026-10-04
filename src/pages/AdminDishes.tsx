@@ -98,7 +98,7 @@ export default function AdminDishes() {
             value={editing.description ?? ''}
             onChange={(e) => setEditing({ ...editing, description: e.target.value })}
           />
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <select
               className="input"
               value={editing.category}
@@ -108,6 +108,13 @@ export default function AdminDishes() {
                 <option key={c}>{c}</option>
               ))}
             </select>
+            <input
+              className="input"
+              type="number"
+              placeholder="价格"
+              value={editing.price ?? 0}
+              onChange={(e) => setEditing({ ...editing, price: Number(e.target.value) })}
+            />
             <input
               className="input"
               type="number"

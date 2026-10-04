@@ -160,7 +160,10 @@ export default function OrderPage() {
                       <span className="rounded-full bg-brand-500 px-2 text-xs font-semibold text-white">×{qty}</span>
                     )}
                   </div>
-                  <div className="text-sm font-medium">{d.name}</div>
+                  <div className="flex items-baseline justify-between gap-1">
+                    <span className="text-sm font-medium">{d.name}</span>
+                    {d.price > 0 && <span className="shrink-0 text-[11px] text-brand-500">¥{d.price}</span>}
+                  </div>
                   {d.description && <div className="line-clamp-2 text-[11px] text-slate-400">{d.description}</div>}
                   <div className="mt-1 flex items-center justify-between">
                     <button

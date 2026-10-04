@@ -99,10 +99,6 @@ export async function markOrderRead(id: string): Promise<void> {
   await supabase.from('orders').update({ read_at: new Date().toISOString() }).eq('id', id).is('read_at', null)
 }
 
-export async function markAllRead(table: 'orders' | 'meals'): Promise<void> {
-  await supabase.from(table).update({ read_at: new Date().toISOString() }).is('read_at', null)
-}
-
 /* ------------------------------ 三餐记录 ------------------------------ */
 
 export async function listMealsRange(days: string[]): Promise<Meal[]> {

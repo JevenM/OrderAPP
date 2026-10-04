@@ -8,3 +8,5 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 .codebuddy/memory
+dev.log
+install.log
