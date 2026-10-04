@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { HashRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ToastProvider } from './components/Toast'
+import ChangelogModal from './components/ChangelogModal'
 import { APP_TITLE, configured } from './lib/supabase'
 import { requestNotifyPermission } from './lib/notify'
 import { SessionProvider, useSession } from './store/session'
 import { SettingsProvider, useSettings } from './store/settings'
 import { UnreadProvider, useUnread } from './store/unread'
 import { MembersProvider, useMembers } from './store/members'
+import { ChangelogProvider, useChangelog } from './store/changelog'
 import type { Role } from './lib/types'
 import Login from './pages/Login'
 import OrderPage from './pages/OrderPage'
@@ -25,7 +27,10 @@ export default function App() {
       <SessionProvider>
         <ToastProvider>
           <SettingsProvider>
-            <Shell />
+            <ChangelogProvider>
+              <Shell />
+              <ChangelogModal />
+            </ChangelogProvider>
           </SettingsProvider>
         </ToastProvider>
       </SessionProvider>
@@ -72,6 +77,7 @@ function Layout() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const unread = useUnread()
+  const { open: openChangelog } = useChangelog()
   const [bell, setBell] = useState<string>('')
 
   const tabs: { to: string; label: string; emoji: string; badge?: number }[] =
@@ -145,6 +151,9 @@ function Layout() {
               ))}
             </select>
           )}
+          <button className="btn-ghost text-xs" onClick={openChangelog} title="查看更新日志">
+            日志
+          </button>
           <button className="btn-ghost text-xs" onClick={doLogout} title="退出登录">
             退出
           </button>

@@ -183,7 +183,7 @@ export default function FeedPage() {
 
       {!showComposer && (
         <p className="rounded-xl bg-brand-50 px-3 py-2 text-[11px] text-brand-700">
-          🍚 每天记录三餐后会自动发到这里（带照片一起），他可以在下面点赞和评论～
+          🍚 每天记录三餐后会自动发到这里（可带照片），在下面点赞和评论～
         </p>
       )}
 

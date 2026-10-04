@@ -294,6 +294,9 @@ src/
   lib/notify.ts           邮件 / 浏览器通知 / 提示音
   lib/realtime.ts         实时订阅封装（WebSocket 连不上自动降级轮询）
   lib/types.ts            类型与常量（SLOTS、状态字典）
+  lib/changelog.ts        更新日志数据 + 已读记录（localStorage）
+  components/ChangelogModal.tsx  更新日志弹窗
+  store/changelog.tsx     判断「这次版本看过没」→ 是否弹窗
   store/session.tsx       登录态、角色、isAdmin、当前查看的成员
   store/members.tsx       成员列表 + 实时刷新
   store/unread.tsx        未读红点 & 实时订阅
@@ -311,7 +314,41 @@ supabase/
 
 ---
 
-## 十、常见问题速查
+## 十、更新日志（每次发版必看）
+
+每次部署新版本后，**用户登录进来会第一次自动弹出更新日志**（显示这次新增 / 优化 / 修复了什么），
+点「知道啦」关掉后就记住了，**后续无更新不会再弹**，直到下一次发版。
+
+- 已读记录存在 **localStorage 的 `order-app-changelog-seen-v1`**，按登录身份（我 / 每个她）分别记录。
+- 顶栏「**日志**」按钮可随时手动回看全部历史更新。
+- 想重新看一遍弹窗：清掉上面那个 localStorage key 再刷新。
+
+### 发版时要做的唯一一件事
+
+在 `src/lib/changelog.ts` 的 `CHANGELOG` 数组**最前面**加一条，`version` 必须比上一条大：
+
+```ts
+export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '1.2.0',            // ← 必须比上一条大，这是「弹不弹」的判断依据
+    date: '2026-10-10',
+    title: '这次更新的一句话标题',
+    items: [
+      { kind: 'new', text: '新增了 xxx 功能' },     // 新增
+      { kind: 'improve', text: '优化了 xxx 体验' }, // 优化
+      { kind: 'fix', text: '修复了 xxx 的问题' },   // 修复
+    ],
+  },
+  // ...历史记录保持在下面，不用动
+]
+```
+
+> 只改了代码但**没加 version**，用户那边不会弹窗（因为版本号没变）。
+> 这和 `VITE_*` 一样是构建期烧进去的，**必须推代码重新部署**才生效。
+
+---
+
+## 十一、常见问题速查
 
 | 现象 | 原因 / 解决办法 |
 | --- | --- |
