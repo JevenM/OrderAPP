@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { timeCn } from '../lib/date'
 import { useToast } from '../components/Toast'
 import { useUnread } from '../store/unread'
+import { useMembers } from '../store/members'
 import { ORDER_STATUS, SLOT_LABEL, type OrderStatus, type OrderWithItems } from '../lib/types'
 
 const FILTERS: { key: 'all' | OrderStatus; label: string }[] = [
@@ -17,19 +18,23 @@ const FILTERS: { key: 'all' | OrderStatus; label: string }[] = [
 export default function AdminOrders() {
   const toast = useToast()
   const { refresh } = useUnread()
+  const { members } = useMembers()
   const [orders, setOrders] = useState<OrderWithItems[]>([])
   const [filter, setFilter] = useState<'all' | OrderStatus>('all')
+  const [memberFilter, setMemberFilter] = useState('')
   const [loading, setLoading] = useState(true)
+
+  const who = (id: string | null) => members.find((m) => m.id === id)?.name ?? '未归属'
 
   const load = useCallback(async () => {
     try {
-      setOrders(await listOrders())
+      setOrders(await listOrders(60, memberFilter || null))
     } catch (e) {
       toast.show((e as Error).message, 'err')
     } finally {
       setLoading(false)
     }
-  }, [toast])
+  }, [toast, memberFilter])
 
   useEffect(() => {
     void load()
@@ -80,6 +85,19 @@ export default function AdminOrders() {
 
   return (
     <div className="space-y-3">
+      <select
+        className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600"
+        value={memberFilter}
+        onChange={(e) => setMemberFilter(e.target.value)}
+      >
+        <option value="">全部成员</option>
+        {members.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.name}
+          </option>
+        ))}
+      </select>
+
       <div className="flex gap-1.5 overflow-x-auto pb-1">
         {FILTERS.map((f) => (
           <button
@@ -103,6 +121,7 @@ export default function AdminOrders() {
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <span>{timeCn(o.created_at)}</span>
               <span className="rounded bg-slate-100 px-1.5 py-0.5">{SLOT_LABEL[o.meal_slot] ?? o.meal_slot}</span>
+              <span className="rounded bg-brand-50 px-1.5 py-0.5 text-brand-600">{who(o.member_id)}</span>
               {!o.read_at && <span className="rounded bg-rose-500 px-1.5 py-0.5 text-white">NEW</span>}
             </div>
             <span className={`chip ${ORDER_STATUS[o.status]?.cls ?? ''}`}>{ORDER_STATUS[o.status]?.label ?? o.status}</span>

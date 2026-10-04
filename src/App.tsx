@@ -5,6 +5,7 @@ import { APP_TITLE, configured } from './lib/supabase'
 import { requestNotifyPermission } from './lib/notify'
 import { SessionProvider, useSession } from './store/session'
 import { UnreadProvider, useUnread } from './store/unread'
+import { MembersProvider, useMembers } from './store/members'
 import type { Role } from './lib/types'
 import Login from './pages/Login'
 import OrderPage from './pages/OrderPage'
@@ -12,6 +13,7 @@ import MealLogPage from './pages/MealLogPage'
 import AdminOrders from './pages/AdminOrders'
 import AdminMeals from './pages/AdminMeals'
 import AdminDishes from './pages/AdminDishes'
+import AdminMembers from './pages/AdminMembers'
 
 const HOME: Record<Role, string> = { her: '/order', me: '/admin/orders' }
 
@@ -40,23 +42,27 @@ function Shell() {
 
   return (
     <UnreadProvider enabled={isAdmin}>
-      <Routes>
-        <Route element={<Layout />}>
-          <Route path="/" element={<Navigate to={HOME[role]} replace />} />
-          <Route path="/order" element={<OrderPage />} />
-          <Route path="/meals" element={<MealLogPage />} />
-          <Route path="/admin/orders" element={<AdminOrders />} />
-          <Route path="/admin/meals" element={<AdminMeals />} />
-          <Route path="/admin/dishes" element={<AdminDishes />} />
-          <Route path="*" element={<Navigate to={HOME[role]} replace />} />
-        </Route>
-      </Routes>
+      <MembersProvider enabled={isAdmin}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<Navigate to={HOME[role]} replace />} />
+            <Route path="/order" element={<OrderPage />} />
+            <Route path="/meals" element={<MealLogPage />} />
+            <Route path="/admin/orders" element={<AdminOrders />} />
+            <Route path="/admin/meals" element={<AdminMeals />} />
+            <Route path="/admin/dishes" element={<AdminDishes />} />
+            <Route path="/admin/members" element={<AdminMembers />} />
+            <Route path="*" element={<Navigate to={HOME[role]} replace />} />
+          </Route>
+        </Routes>
+      </MembersProvider>
     </UnreadProvider>
   )
 }
 
 function Layout() {
-  const { role, setRole, isAdmin } = useSession()
+  const { role, setViewMember, isAdmin, memberId, memberName } = useSession()
+  const { members } = useMembers()
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const unread = useUnread()
@@ -72,6 +78,7 @@ function Layout() {
           { to: '/admin/orders', label: '订单', emoji: '🧾', badge: unread.orders },
           { to: '/admin/meals', label: '饮食', emoji: '🍚', badge: unread.meals },
           { to: '/admin/dishes', label: '菜单', emoji: '📖' },
+          { to: '/admin/members', label: '成员', emoji: '👭' },
         ]
 
   const enableBell = async () => {
@@ -84,7 +91,9 @@ function Layout() {
       <header className="sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-brand-100 bg-white/90 px-4 py-3 backdrop-blur">
         <div>
           <h1 className="text-base font-semibold text-brand-600">{APP_TITLE}</h1>
-          <p className="text-xs text-slate-400">{role === 'her' ? '想吃什么随便点～' : '她的动态实时同步'}</p>
+          <p className="text-xs text-slate-400">
+            {role === 'her' ? `正在查看：${memberName || '她'}` : '她的动态实时同步'}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {role === 'me' && (
@@ -93,16 +102,30 @@ function Layout() {
             </button>
           )}
           {isAdmin && (
-            <button
-              className="btn-ghost text-xs"
-              onClick={() => {
-                const next: Role = role === 'her' ? 'me' : 'her'
-                setRole(next)
-                navigate(HOME[next])
+            <select
+              className="max-w-[9rem] rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600"
+              value={role === 'her' ? (memberId ?? '') : ''}
+              onChange={(e) => {
+                const v = e.target.value
+                if (!v) {
+                  setViewMember(null)
+                  navigate('/admin/orders')
+                  return
+                }
+                const m = members.find((x) => x.id === v)
+                if (m) {
+                  setViewMember({ id: m.id, name: m.name })
+                  navigate('/order')
+                }
               }}
             >
-              切换为{role === 'her' ? '我' : '她'}
-            </button>
+              <option value="">我的管理视图</option>
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>
+                  查看 {m.name}
+                </option>
+              ))}
+            </select>
           )}
         </div>
       </header>

@@ -1,0 +1,138 @@
+import { useState } from 'react'
+import { createMember, randomCode, removeMember, updateMember } from '../lib/db'
+import { useToast } from '../components/Toast'
+import { useMembers } from '../store/members'
+import type { Member } from '../lib/types'
+
+export default function AdminMembers() {
+  const toast = useToast()
+  const { members, reload, loading } = useMembers()
+  const [name, setName] = useState('')
+  const [code, setCode] = useState(randomCode())
+  const [busy, setBusy] = useState(false)
+  const [draft, setDraft] = useState<Record<string, { name: string; code: string }>>({})
+
+  const val = (m: Member) => draft[m.id] ?? { name: m.name, code: m.code }
+  const dirty = (m: Member) => {
+    const d = val(m)
+    return d.name !== m.name || d.code !== m.code
+  }
+
+  const add = async () => {
+    const n = name.trim()
+    const c = code.trim()
+    if (!n) return toast.show('给她起个昵称吧～', 'err')
+    if (!c) return toast.show('邀请码不能为空', 'err')
+    if (members.some((m) => m.code === c)) return toast.show('这个邀请码已经有人用了', 'err')
+    setBusy(true)
+    try {
+      await createMember(n, c)
+      toast.show('已添加，把邀请码发给她吧 ❤️')
+      setName('')
+      setCode(randomCode())
+      reload()
+    } catch (e) {
+      toast.show((e as Error).message, 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const save = async (m: Member) => {
+    const d = val(m)
+    const n = d.name.trim()
+    const c = d.code.trim()
+    if (!n) return toast.show('昵称不能为空', 'err')
+    if (!c) return toast.show('邀请码不能为空', 'err')
+    if (members.some((x) => x.id !== m.id && x.code === c)) return toast.show('邀请码重复了', 'err')
+    try {
+      await updateMember(m.id, { name: n, code: c })
+      toast.show('已保存（改名 / 改码立即生效）')
+      reload()
+    } catch (e) {
+      toast.show((e as Error).message, 'err')
+    }
+  }
+
+  const del = async (m: Member) => {
+    if (!window.confirm(`删除「${m.name}」？她的邀请码会立即失效（历史订单和记录仍会保留）。`)) return
+    try {
+      await removeMember(m.id)
+      toast.show('已删除')
+      reload()
+    } catch (e) {
+      toast.show((e as Error).message, 'err')
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="card space-y-3">
+        <h3 className="text-sm font-semibold">➕ 新增一个她</h3>
+        <input
+          className="input"
+          placeholder="昵称（比如：小美）"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <div className="flex items-center gap-2">
+          <input
+            className="input font-mono"
+            placeholder="邀请码"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+          <button className="btn-soft whitespace-nowrap text-xs" onClick={() => setCode(randomCode())}>
+            换一个
+          </button>
+        </div>
+        <button className="btn-primary w-full" disabled={busy} onClick={add}>
+          {busy ? '添加中…' : '生成并添加'}
+        </button>
+        <p className="text-[11px] leading-relaxed text-slate-400">
+          邀请码区分大小写，可随时修改；改了之后旧的立即失效。她用这个码登录，就只能看到自己的点菜和就餐记录。
+        </p>
+      </div>
+
+      {loading && <p className="py-6 text-center text-sm text-slate-400">加载中…</p>}
+      {!loading && members.length === 0 && (
+        <p className="py-6 text-center text-sm text-slate-400">还没有成员，先添加一个吧～</p>
+      )}
+
+      {members.map((m) => (
+        <div key={m.id} className="card space-y-2">
+          <div className="flex items-center gap-2">
+            <input
+              className="input"
+              value={val(m).name}
+              onChange={(e) => setDraft((d) => ({ ...d, [m.id]: { ...val(m), name: e.target.value } }))}
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              className="input font-mono text-xs"
+              value={val(m).code}
+              onChange={(e) => setDraft((d) => ({ ...d, [m.id]: { ...val(m), code: e.target.value } }))}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <button className="text-xs text-slate-400" onClick={() => del(m)}>
+              删除
+            </button>
+            {dirty(m) ? (
+              <button className="btn-primary text-xs" onClick={() => save(m)}>
+                保存修改
+              </button>
+            ) : (
+              <span className="text-[11px] text-slate-400">未修改</span>
+            )}
+          </div>
+        </div>
+      ))}
+
+      <p className="px-1 text-[11px] leading-relaxed text-slate-400">
+        提示：在顶部下拉里可以切换查看任意一个她的视图；每个她登录后只能看到自己的数据。
+      </p>
+    </div>
+  )
+}

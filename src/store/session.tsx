@@ -1,25 +1,35 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ADMIN_CODE, INVITE_CODE } from '../lib/supabase'
+import { createMember, findMemberByCode, listMembers } from '../lib/db'
 import type { Role } from '../lib/types'
 
-const KEY = 'order-app-session'
+const KEY = 'order-app-session-v2'
+
+type SessionState = {
+  code: string
+  role: Role
+  memberId: string | null
+  memberName: string
+}
 
 type SessionValue = {
   role: Role
   entered: boolean
   isAdmin: boolean
-  enter: (code: string) => boolean
-  setRole: (role: Role) => void
+  memberId: string | null
+  memberName: string
+  enter: (code: string) => Promise<boolean>
+  setViewMember: (m: { id: string; name: string } | null) => void
   logout: () => void
 }
 
 const SessionContext = createContext<SessionValue | null>(null)
 
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<{ code: string; role: Role } | null>(() => {
+  const [state, setState] = useState<SessionState | null>(() => {
     try {
       const raw = localStorage.getItem(KEY)
-      return raw ? (JSON.parse(raw) as { code: string; role: Role }) : null
+      return raw ? (JSON.parse(raw) as SessionState) : null
     } catch {
       return null
     }
@@ -30,28 +40,51 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     else localStorage.removeItem(KEY)
   }, [state])
 
-  const entered = state != null && (state.code === INVITE_CODE || state.code === ADMIN_CODE)
-
-  // 真实身份：用管理口令进入的始终是“我”，切换视图只改 role，不改身份
+  // 真实身份：用管理口令进入的始终是「我」；切换查看某个她只改 role，不改身份
   const isAdmin = state?.code === ADMIN_CODE
 
-  const enter = useCallback((code: string) => {
+  const enter = useCallback(async (code: string) => {
     const c = code.trim()
-    const role: Role | null = c === INVITE_CODE ? 'her' : c === ADMIN_CODE ? 'me' : null
-    if (!role) return false
-    setState({ code: c, role })
+    if (!c) return false
+
+    if (c === ADMIN_CODE) {
+      setState({ code: c, role: 'me', memberId: null, memberName: '' })
+      return true
+    }
+
+    // 她的专属邀请码
+    let member = await findMemberByCode(c)
+
+    // 兼容主邀请码：映射到第一个成员；成员表为空时自动建一个
+    if (!member && c === INVITE_CODE) {
+      const all = await listMembers()
+      member = all[0] ?? (await createMember('她', c))
+    }
+    if (!member) return false
+
+    setState({ code: c, role: 'her', memberId: member.id, memberName: member.name })
     return true
   }, [])
 
-  const setRole = useCallback((role: Role) => {
-    setState((s) => (s ? { ...s, role } : s))
+  /** 「我」切换查看某个她；传 null 回到管理视图 */
+  const setViewMember = useCallback((m: { id: string; name: string } | null) => {
+    setState((s) => (s ? { ...s, role: m ? 'her' : 'me', memberId: m?.id ?? null, memberName: m?.name ?? '' } : s))
   }, [])
 
   const logout = useCallback(() => setState(null), [])
 
   const value = useMemo<SessionValue>(
-    () => ({ role: state?.role ?? 'her', entered, isAdmin, enter, setRole, logout }),
-    [state, entered, isAdmin, enter, setRole, logout]
+    () => ({
+      role: state?.role ?? 'her',
+      entered: state != null,
+      isAdmin,
+      memberId: state?.memberId ?? null,
+      memberName: state?.memberName ?? '',
+      enter,
+      setViewMember,
+      logout,
+    }),
+    [state, isAdmin, enter, setViewMember, logout]
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

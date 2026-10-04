@@ -3,6 +3,7 @@ import { listMealsRange, uploadMealPhoto, upsertMeal } from '../lib/db'
 import { pushEmail } from '../lib/notify'
 import { prettyDay, shiftDay, todayStr, weekdayCn } from '../lib/date'
 import { useToast } from '../components/Toast'
+import { useSession } from '../store/session'
 import { MEAL_STATUS, SLOTS, type Meal, type MealSlot, type MealStatus } from '../lib/types'
 
 type Form = { status: MealStatus; content: string; note: string; photo_url: string }
@@ -11,6 +12,7 @@ const emptyForm = (): Form => ({ status: 'eaten', content: '', note: '', photo_u
 
 export default function MealLogPage() {
   const toast = useToast()
+  const { memberId, memberName } = useSession()
   const [day, setDay] = useState(todayStr())
   const [records, setRecords] = useState<Meal[]>([])
   const [forms, setForms] = useState<Record<string, Form>>({})
@@ -19,7 +21,7 @@ export default function MealLogPage() {
 
   const load = useCallback(async () => {
     try {
-      const list = await listMealsRange([day])
+      const list = await listMealsRange([day], memberId)
       setRecords(list)
       setForms(() => {
         const next: Record<string, Form> = {}
@@ -32,7 +34,7 @@ export default function MealLogPage() {
     } catch (e) {
       toast.show((e as Error).message, 'err')
     }
-  }, [day, toast])
+  }, [day, toast, memberId])
 
   useEffect(() => {
     void load()
@@ -48,10 +50,11 @@ export default function MealLogPage() {
     if (!f.content.trim() && f.status === 'eaten') return toast.show('写点吃了什么吧～', 'err')
     setSaving(slot)
     try {
-      await upsertMeal({ day, slot, ...f })
+      await upsertMeal({ day, slot, ...f, member_id: memberId })
       const label = SLOTS.find((s) => s.key === slot)!.label
+      const who = memberName || '她'
       await pushEmail(
-        `🍚 她记录了${label}：${f.content || MEAL_STATUS[f.status].label}`,
+        `🍚 ${who}记录了${label}：${f.content || MEAL_STATUS[f.status].label}`,
         `<div style="font-family:sans-serif;line-height:1.7">
            <h3>${day} ${label}</h3>
            <p>${MEAL_STATUS[f.status].emoji} ${MEAL_STATUS[f.status].label}</p>

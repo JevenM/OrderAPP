@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 import { toDayStr } from './date'
-import type { Dish, Meal, MealSlot, MealStatus, OrderStatus, OrderWithItems } from './types'
+import type { Dish, Meal, MealSlot, MealStatus, Member, OrderStatus, OrderWithItems } from './types'
 
 function fail(e: { message?: string } | null, tag: string): never {
   throw new Error(`${tag}失败：${e?.message ?? '未知错误'}`)
@@ -39,6 +39,47 @@ export async function removeDish(id: string): Promise<void> {
   if (error) fail(error, '删除菜品')
 }
 
+/* ------------------------------ 成员（多个她） ------------------------------ */
+
+/** 生成随机邀请码（去掉了容易看错的 0/o/1/l） */
+export function randomCode(len = 6): string {
+  const chars = 'abcdefghijkmnpqrstuvwxyz23456789'
+  let s = ''
+  for (let i = 0; i < len; i += 1) s += chars[Math.floor(Math.random() * chars.length)]
+  return s
+}
+
+export async function listMembers(): Promise<Member[]> {
+  const { data, error } = await supabase
+    .from('members')
+    .select('*')
+    .order('created_at', { ascending: true })
+  if (error) fail(error, '加载成员')
+  return (data ?? []) as Member[]
+}
+
+export async function findMemberByCode(code: string): Promise<Member | null> {
+  const { data, error } = await supabase.from('members').select('*').eq('code', code).maybeSingle()
+  if (error) fail(error, '校验邀请码')
+  return (data as Member | null) ?? null
+}
+
+export async function createMember(name: string, code: string): Promise<Member> {
+  const { data, error } = await supabase.from('members').insert({ name, code }).select().single()
+  if (error || !data) fail(error, '新增成员')
+  return data as Member
+}
+
+export async function updateMember(id: string, patch: { name?: string; code?: string }): Promise<void> {
+  const { error } = await supabase.from('members').update(patch).eq('id', id)
+  if (error) fail(error, '修改成员')
+}
+
+export async function removeMember(id: string): Promise<void> {
+  const { error } = await supabase.from('members').delete().eq('id', id)
+  if (error) fail(error, '删除成员')
+}
+
 /* ------------------------------ 订单 ------------------------------ */
 
 export async function createOrder(input: {
@@ -46,10 +87,17 @@ export async function createOrder(input: {
   meal_slot: MealSlot
   hope_time: string
   note: string
+  member_id: string | null
 }): Promise<string> {
   const { data, error } = await supabase
     .from('orders')
-    .insert({ meal_slot: input.meal_slot, hope_time: input.hope_time, note: input.note, status: 'pending' })
+    .insert({
+      meal_slot: input.meal_slot,
+      hope_time: input.hope_time,
+      note: input.note,
+      status: 'pending',
+      member_id: input.member_id,
+    })
     .select('id')
     .single()
   if (error || !data) fail(error, '提交订单')
@@ -64,12 +112,10 @@ export async function createOrder(input: {
   return orderId
 }
 
-export async function listOrders(limit = 60): Promise<OrderWithItems[]> {
-  const { data: orders, error } = await supabase
-    .from('orders')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(limit)
+export async function listOrders(limit = 60, memberId?: string | null): Promise<OrderWithItems[]> {
+  let query = supabase.from('orders').select('*')
+  if (memberId) query = query.eq('member_id', memberId)
+  const { data: orders, error } = await query.order('created_at', { ascending: false }).limit(limit)
   if (error) fail(error, '加载订单')
 
   const list = (orders ?? []) as OrderWithItems[]
@@ -101,13 +147,11 @@ export async function markOrderRead(id: string): Promise<void> {
 
 /* ------------------------------ 三餐记录 ------------------------------ */
 
-export async function listMealsRange(days: string[]): Promise<Meal[]> {
+export async function listMealsRange(days: string[], memberId?: string | null): Promise<Meal[]> {
   if (!days.length) return []
-  const { data, error } = await supabase
-    .from('meals')
-    .select('*')
-    .in('day', days)
-    .order('created_at', { ascending: true })
+  let query = supabase.from('meals').select('*').in('day', days)
+  if (memberId) query = query.eq('member_id', memberId)
+  const { data, error } = await query.order('created_at', { ascending: true })
   if (error) fail(error, '加载三餐记录')
   return (data ?? []) as Meal[]
 }
@@ -119,13 +163,11 @@ export async function upsertMeal(input: {
   content: string
   photo_url: string
   note: string
+  member_id: string | null
 }): Promise<void> {
-  const { data: existing } = await supabase
-    .from('meals')
-    .select('id')
-    .eq('day', input.day)
-    .eq('slot', input.slot)
-    .maybeSingle()
+  let find = supabase.from('meals').select('id').eq('day', input.day).eq('slot', input.slot)
+  if (input.member_id) find = find.eq('member_id', input.member_id)
+  const { data: existing } = await find.maybeSingle()
 
   const payload = {
     day: input.day,
@@ -134,6 +176,7 @@ export async function upsertMeal(input: {
     content: input.content,
     photo_url: input.photo_url,
     note: input.note,
+    member_id: input.member_id,
     read_at: null, // 每次更新都算新消息，我这边重新出现红点
   }
 
@@ -141,6 +184,24 @@ export async function upsertMeal(input: {
     ? await supabase.from('meals').update(payload).eq('id', existing.id)
     : await supabase.from('meals').insert(payload)
   if (error) fail(error, '保存三餐记录')
+}
+
+/** 「我」在后台直接修改她的某条就餐记录（按 id 改，不计未读） */
+export async function updateMeal(
+  id: string,
+  patch: Partial<Pick<Meal, 'status' | 'content' | 'note' | 'photo_url'>>
+): Promise<void> {
+  const { error } = await supabase
+    .from('meals')
+    .update({ ...patch, read_at: new Date().toISOString() })
+    .eq('id', id)
+  if (error) fail(error, '修改就餐记录')
+}
+
+/** 「我」在后台删除她的某条就餐记录 */
+export async function removeMeal(id: string): Promise<void> {
+  const { error } = await supabase.from('meals').delete().eq('id', id)
+  if (error) fail(error, '删除就餐记录')
 }
 
 export async function markMealRead(id: string): Promise<void> {
@@ -151,12 +212,9 @@ export async function markMealRead(id: string): Promise<void> {
 export async function autoMealFromOrder(order: OrderWithItems): Promise<void> {
   const day = toDayStr(new Date(order.created_at))
   // 若该餐次她已手动记录过，则不覆盖
-  const { data: existing } = await supabase
-    .from('meals')
-    .select('id')
-    .eq('day', day)
-    .eq('slot', order.meal_slot)
-    .maybeSingle()
+  let find = supabase.from('meals').select('id').eq('day', day).eq('slot', order.meal_slot)
+  if (order.member_id) find = find.eq('member_id', order.member_id)
+  const { data: existing } = await find.maybeSingle()
   if (existing) return
   const content = order.items.map((i) => `${i.dish_name}×${i.qty}`).join('、') || order.note || '（她下的单）'
   const { error } = await supabase.from('meals').insert({
@@ -166,6 +224,7 @@ export async function autoMealFromOrder(order: OrderWithItems): Promise<void> {
     content,
     photo_url: '',
     note: order.note ?? '',
+    member_id: order.member_id ?? null,
     read_at: new Date().toISOString(), // 我这边自己补全，不弹通知/不计未读
   })
   if (error) fail(error, '同步就餐记录')

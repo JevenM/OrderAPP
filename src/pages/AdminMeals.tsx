@@ -1,27 +1,31 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { listMealsRange, markMealRead } from '../lib/db'
+import { listMealsRange, markMealRead, removeMeal, updateMeal, uploadMealPhoto } from '../lib/db'
 import { supabase } from '../lib/supabase'
 import { lastDays, prettyDay, shiftDay, todayStr, weekdayCn } from '../lib/date'
 import { useUnread } from '../store/unread'
+import { useMembers } from '../store/members'
 import { useToast } from '../components/Toast'
-import { MEAL_STATUS, SLOTS, type Meal, type MealSlot } from '../lib/types'
+import { MEAL_STATUS, SLOTS, type Meal, type MealSlot, type MealStatus } from '../lib/types'
 
 export default function AdminMeals() {
   const toast = useToast()
   const { refresh } = useUnread()
+  const { members } = useMembers()
+  const [memberFilter, setMemberFilter] = useState('')
   const [day, setDay] = useState(todayStr())
   const [records, setRecords] = useState<Meal[]>([])
   const [week, setWeek] = useState<Meal[]>([])
 
   const load = useCallback(async () => {
     try {
-      const [today, range] = await Promise.all([listMealsRange([day]), listMealsRange(lastDays(7))])
+      const id = memberFilter || null
+      const [today, range] = await Promise.all([listMealsRange([day], id), listMealsRange(lastDays(7), id)])
       setRecords(today)
       setWeek(range)
     } catch (e) {
       toast.show((e as Error).message, 'err')
     }
-  }, [day, toast])
+  }, [day, toast, memberFilter])
 
   useEffect(() => {
     void load()
@@ -47,8 +51,12 @@ export default function AdminMeals() {
   }, [records, refresh])
 
   const bySlot = useMemo(() => {
-    const map: Partial<Record<MealSlot, Meal>> = {}
-    for (const m of records) map[m.slot] = m
+    const map: Partial<Record<MealSlot, Meal[]>> = {}
+    for (const m of records) {
+      const arr = map[m.slot] ?? []
+      arr.push(m)
+      map[m.slot] = arr
+    }
     return map
   }, [records])
 
@@ -65,8 +73,83 @@ export default function AdminMeals() {
     })
   }, [week])
 
+  const [editing, setEditing] = useState<string | null>(null)
+  const [form, setForm] = useState<{ status: MealStatus; content: string; note: string; photo_url: string }>({
+    status: 'eaten',
+    content: '',
+    note: '',
+    photo_url: '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
+
+  const startEdit = (m: Meal) => {
+    setEditing(m.id)
+    setForm({ status: m.status, content: m.content, note: m.note, photo_url: m.photo_url })
+  }
+
+  const saveEdit = async () => {
+    if (!editing) return
+    setSaving(true)
+    try {
+      await updateMeal(editing, {
+        status: form.status,
+        content: form.content,
+        note: form.note,
+        photo_url: form.photo_url,
+      })
+      toast.show('已修改她的记录')
+      setEditing(null)
+      await load()
+      refresh()
+    } catch (e) {
+      toast.show((e as Error).message, 'err')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const del = async (m: Meal) => {
+    const who = members.find((x) => x.id === m.member_id)?.name ?? '她'
+    if (!window.confirm(`删除「${who}」的这条就餐记录？删除后不可恢复。`)) return
+    try {
+      await removeMeal(m.id)
+      toast.show('已删除')
+      await load()
+      refresh()
+    } catch (e) {
+      toast.show((e as Error).message, 'err')
+    }
+  }
+
+  const pickPhoto = async (file: File) => {
+    setUploading(true)
+    try {
+      const url = await uploadMealPhoto(file)
+      setForm((f) => ({ ...f, photo_url: url }))
+      toast.show('图片已上传')
+    } catch (e) {
+      toast.show((e as Error).message, 'err')
+    } finally {
+      setUploading(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
+      <select
+        className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600"
+        value={memberFilter}
+        onChange={(e) => setMemberFilter(e.target.value)}
+      >
+        <option value="">全部成员</option>
+        {members.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.name}
+          </option>
+        ))}
+      </select>
+
       <div className="card flex items-center justify-between gap-2">
         <button className="btn-ghost px-3" onClick={() => setDay(shiftDay(day, -1))}>
           ‹
@@ -94,35 +177,127 @@ export default function AdminMeals() {
 
       <div className="space-y-3">
         {SLOTS.map((s) => {
-          const m = bySlot[s.key]
-          const st = m ? MEAL_STATUS[m.status] : null
+          const list = bySlot[s.key] ?? []
           return (
-            <div key={s.key} className={`card space-y-2 ${m && !m.read_at ? 'ring-2 ring-brand-200' : ''}`}>
+            <div
+              key={s.key}
+              className={`card space-y-2 ${list.some((m) => !m.read_at) ? 'ring-2 ring-brand-200' : ''}`}
+            >
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold">
                   {s.emoji} {s.label}
                 </h3>
-                {st ? (
-                  <span className={`chip ${st.cls}`}>
-                    {st.emoji} {st.label}
-                  </span>
-                ) : (
-                  <span className="chip border-slate-200 text-slate-400">未记录</span>
-                )}
-                {m && !m.read_at && <span className="chip border-rose-200 bg-rose-500 text-white">NEW</span>}
+                {list.length === 0 && <span className="chip border-slate-200 text-slate-400">未记录</span>}
               </div>
 
-              {m ? (
-                <>
-                  {m.content && <p className="whitespace-pre-wrap text-sm">{m.content}</p>}
-                  {m.note && <p className="text-xs text-slate-400">备注：{m.note}</p>}
-                  {m.photo_url && (
-                    <img src={m.photo_url} alt="餐食" className="max-h-56 w-full rounded-xl object-cover" />
-                  )}
-                </>
-              ) : (
-                <p className="text-xs text-slate-400">她还没提交这一餐～</p>
-              )}
+              {list.length === 0 && <p className="text-xs text-slate-400">还没有人提交这一餐～</p>}
+
+              {list.map((m) => {
+                const st = MEAL_STATUS[m.status]
+                const who = members.find((x) => x.id === m.member_id)?.name ?? '未归属'
+                const isEdit = editing === m.id
+                return (
+                  <div key={m.id} className="space-y-2 border-t border-slate-100 pt-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded bg-brand-50 px-1.5 py-0.5 text-xs text-brand-600">{who}</span>
+                      {!isEdit && (
+                        <span className={`chip ${st.cls}`}>
+                          {st.emoji} {st.label}
+                        </span>
+                      )}
+                      {!isEdit && !m.read_at && (
+                        <span className="chip border-rose-200 bg-rose-500 text-white">NEW</span>
+                      )}
+                    </div>
+
+                    {isEdit ? (
+                      <>
+                        <div className="flex gap-2">
+                          {(Object.keys(MEAL_STATUS) as MealStatus[]).map((k) => (
+                            <button
+                              key={k}
+                              onClick={() => setForm((f) => ({ ...f, status: k }))}
+                              className={`chip flex-1 justify-center ${
+                                form.status === k
+                                  ? MEAL_STATUS[k].cls + ' ring-1 ring-offset-1 ring-brand-200'
+                                  : 'border-slate-200 text-slate-400'
+                              }`}
+                            >
+                              {MEAL_STATUS[k].emoji} {MEAL_STATUS[k].label}
+                            </button>
+                          ))}
+                        </div>
+                        <textarea
+                          className="input min-h-[64px]"
+                          placeholder="吃了什么？"
+                          value={form.content}
+                          onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
+                        />
+                        <input
+                          className="input"
+                          placeholder="备注（可留空）"
+                          value={form.note}
+                          onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
+                        />
+                        <div className="flex items-center gap-2">
+                          {form.photo_url ? (
+                            <img src={form.photo_url} alt="餐食" className="h-16 w-16 rounded-lg object-cover" />
+                          ) : (
+                            <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-slate-50 text-xl">
+                              📷
+                            </div>
+                          )}
+                          <label className="btn-soft cursor-pointer text-xs">
+                            {uploading ? '上传中…' : form.photo_url ? '换张图' : '上传照片'}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0]
+                                if (file) void pickPhoto(file)
+                                e.target.value = ''
+                              }}
+                            />
+                          </label>
+                          {form.photo_url && (
+                            <button
+                              className="text-xs text-slate-400"
+                              onClick={() => setForm((f) => ({ ...f, photo_url: '' }))}
+                            >
+                              移除
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <button className="btn-primary flex-1 text-xs" disabled={saving} onClick={saveEdit}>
+                            {saving ? '保存中…' : '保存修改'}
+                          </button>
+                          <button className="btn-ghost flex-1 text-xs" onClick={() => setEditing(null)}>
+                            取消
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {m.content && <p className="whitespace-pre-wrap text-sm">{m.content}</p>}
+                        {m.note && <p className="text-xs text-slate-400">备注：{m.note}</p>}
+                        {m.photo_url && (
+                          <img src={m.photo_url} alt="餐食" className="max-h-56 w-full rounded-xl object-cover" />
+                        )}
+                        <div className="flex gap-3 pt-1">
+                          <button className="text-xs text-brand-600" onClick={() => startEdit(m)}>
+                            修改
+                          </button>
+                          <button className="text-xs text-slate-400" onClick={() => del(m)}>
+                            删除
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )
         })}

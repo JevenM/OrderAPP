@@ -6,9 +6,20 @@ export default function Login() {
   const { enter } = useSession()
   const [code, setCode] = useState('')
   const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
 
-  const submit = () => {
-    if (!enter(code)) setErr('邀请码不对哦，再问问他～')
+  const submit = async () => {
+    if (busy) return
+    setBusy(true)
+    setErr('')
+    try {
+      const ok = await enter(code)
+      if (!ok) setErr('邀请码不对哦，再问问他～')
+    } catch (e) {
+      setErr((e as Error).message || '连不上服务器，稍后再试～')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -25,7 +36,7 @@ export default function Login() {
           <input
             className="input"
             value={code}
-            placeholder="输入两个人约定的邀请码"
+            placeholder="输入你的邀请码"
             onChange={(e) => {
               setCode(e.target.value)
               setErr('')
@@ -36,8 +47,8 @@ export default function Login() {
 
         {err && <p className="text-xs text-rose-500">{err}</p>}
 
-        <button className="btn-primary w-full py-2.5" onClick={submit}>
-          进 入
+        <button className="btn-primary w-full py-2.5" disabled={busy} onClick={submit}>
+          {busy ? '进入中…' : '进 入'}
         </button>
 
         {import.meta.env.DEV && (

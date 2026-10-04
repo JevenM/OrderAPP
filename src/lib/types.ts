@@ -24,6 +24,13 @@ export interface OrderItem {
   qty: number
 }
 
+export interface Member {
+  id: string
+  name: string
+  code: string
+  created_at: string
+}
+
 export interface Order {
   id: string
   status: OrderStatus
@@ -33,6 +40,7 @@ export interface Order {
   created_at: string
   read_at: string | null
   updated_at: string
+  member_id: string | null
 }
 
 export type OrderWithItems = Order & { items: OrderItem[] }
@@ -47,6 +55,7 @@ export interface Meal {
   note: string
   created_at: string
   read_at: string | null
+  member_id: string | null
 }
 
 export const SLOTS: { key: MealSlot; label: string; emoji: string }[] = [

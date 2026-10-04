@@ -4,10 +4,12 @@ import { pushEmail } from '../lib/notify'
 import { supabase } from '../lib/supabase'
 import { timeCn } from '../lib/date'
 import { useToast } from '../components/Toast'
+import { useSession } from '../store/session'
 import { ORDER_STATUS, SLOTS, type Dish, type MealSlot, type OrderWithItems } from '../lib/types'
 
 export default function OrderPage() {
   const toast = useToast()
+  const { memberId, memberName } = useSession()
   const [dishes, setDishes] = useState<Dish[]>([])
   const [cart, setCart] = useState<Record<string, number>>({})
   const [slot, setSlot] = useState<MealSlot>('dinner')
@@ -27,11 +29,11 @@ export default function OrderPage() {
 
   const loadRecent = useCallback(async () => {
     try {
-      setRecent((await listOrders(5)).filter((o) => o.items.length > 0 || o.note))
+      setRecent((await listOrders(5, memberId)).filter((o) => o.items.length > 0 || o.note))
     } catch {
       // ignore
     }
-  }, [])
+  }, [memberId])
 
   useEffect(() => {
     void load()
@@ -81,13 +83,14 @@ export default function OrderPage() {
         const d = dishes.find((x) => x.id === id)!
         return { dish_id: d.id, dish_name: d.name, emoji: d.emoji, qty }
       })
-      await createOrder({ items, meal_slot: slot, hope_time: hopeTime, note })
+      await createOrder({ items, meal_slot: slot, hope_time: hopeTime, note, member_id: memberId })
       const slotLabel = SLOTS.find((s) => s.key === slot)?.label ?? ''
+      const who = memberName || '她'
       const lines = items.map((i) => `${i.emoji} ${i.dish_name} ×${i.qty}`).join('<br/>')
       await pushEmail(
-        `🔔 她点了${slotLabel}：${items.map((i) => i.dish_name).join('、')}`,
+        `🔔 ${who}点了${slotLabel}：${items.map((i) => i.dish_name).join('、')}`,
         `<div style="font-family:sans-serif;line-height:1.7">
-           <h3>她点了${slotLabel}</h3>
+           <h3>${who}点了${slotLabel}</h3>
            <p>${lines}</p>
            <p>期望时间：${hopeTime || '随缘'}</p>
            <p>备注：${note || '无'}</p>
