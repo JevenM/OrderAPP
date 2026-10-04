@@ -5,6 +5,7 @@ import { useRealtime } from '../lib/realtime'
 import { useToast } from '../components/Toast'
 import { useUnread } from '../store/unread'
 import { useMembers } from '../store/members'
+import { useSession } from '../store/session'
 import { ORDER_STATUS, SLOT_LABEL, type OrderStatus, type OrderWithItems } from '../lib/types'
 
 const FILTERS: { key: 'all' | OrderStatus; label: string }[] = [
@@ -19,10 +20,16 @@ export default function AdminOrders() {
   const toast = useToast()
   const { refresh } = useUnread()
   const { members } = useMembers()
+  const { memberId: viewMemberId } = useSession() // 顶部下拉切换到某个她时，只显示她的
   const [orders, setOrders] = useState<OrderWithItems[]>([])
   const [filter, setFilter] = useState<'all' | OrderStatus>('all')
-  const [memberFilter, setMemberFilter] = useState('')
+  const [memberFilter, setMemberFilter] = useState(viewMemberId ?? '')
   const [loading, setLoading] = useState(true)
+
+  // 切换查看对象 → 成员筛选跟着变（回到管理视图时恢复成「全部成员」）
+  useEffect(() => {
+    setMemberFilter(viewMemberId ?? '')
+  }, [viewMemberId])
 
   const who = (id: string | null) => members.find((m) => m.id === id)?.name ?? '未归属'
 

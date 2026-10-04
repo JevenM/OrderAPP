@@ -160,6 +160,21 @@ function Layout() {
         </div>
       </header>
 
+      {isAdmin && role === 'her' && memberId && (
+        <div className="mx-4 mt-3 flex items-center gap-2 rounded-xl bg-brand-50 px-3 py-2 text-[11px] text-brand-700">
+          <span className="min-w-0 flex-1">👧 正在查看「{memberName || '她'}」，所有页面只显示她的数据</span>
+          <button
+            className="shrink-0 rounded-lg bg-white px-2 py-1 text-brand-600"
+            onClick={() => {
+              setViewMember(null)
+              navigate('/admin/orders')
+            }}
+          >
+            回到全员
+          </button>
+        </div>
+      )}
+
       {!configured && (
         <div className="m-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
           还没配置 Supabase：复制 <code>.env.example</code> 为 <code>.env</code> 填入 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 后重启。

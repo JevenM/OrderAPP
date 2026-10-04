@@ -5,6 +5,7 @@ import { useRealtime } from '../lib/realtime'
 import { lastDays, prettyDay, shiftDay, todayStr, weekdayCn } from '../lib/date'
 import { useUnread } from '../store/unread'
 import { useMembers } from '../store/members'
+import { useSession } from '../store/session'
 import { useToast } from '../components/Toast'
 import { MEAL_STATUS, SLOTS, type Meal, type MealSlot, type MealStatus } from '../lib/types'
 
@@ -12,10 +13,16 @@ export default function AdminMeals() {
   const toast = useToast()
   const { refresh } = useUnread()
   const { members } = useMembers()
-  const [memberFilter, setMemberFilter] = useState('')
+  const { memberId: viewMemberId } = useSession() // 顶部下拉切换到某个她时，只显示她的
+  const [memberFilter, setMemberFilter] = useState(viewMemberId ?? '')
   const [day, setDay] = useState(todayStr())
   const [records, setRecords] = useState<Meal[]>([])
   const [week, setWeek] = useState<Meal[]>([])
+
+  // 切换查看对象 → 成员筛选跟着变
+  useEffect(() => {
+    setMemberFilter(viewMemberId ?? '')
+  }, [viewMemberId])
 
   const load = useCallback(async () => {
     try {

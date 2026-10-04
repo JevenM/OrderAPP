@@ -27,13 +27,20 @@ export default function FeedPage() {
   // 我发的动态 / 点赞 / 评论都记 member_id = null；她用她自己的 member id
   const meKey = isAdmin ? null : memberId
 
+  /**
+   * 我切到某个她的视角时，饭圈也要跟着她的身份走：
+   * 只看「我发的 + 她发的」动态、「我的 + 她的」点赞评论，别的她的内容不出现。
+   */
+  const asMemberView = isAdmin && role === 'her'
+  const feedIsAdmin = isAdmin && !asMemberView
+
   const load = useCallback(async () => {
     try {
-      setPosts(await listPosts({ isAdmin, memberId, includeSelf: true }))
+      setPosts(await listPosts({ isAdmin: feedIsAdmin, memberId, includeSelf: true }))
     } catch (e) {
       toast.show((e as Error).message, 'err')
     }
-  }, [isAdmin, memberId, toast])
+  }, [feedIsAdmin, memberId, toast])
 
   useEffect(() => {
     void load()

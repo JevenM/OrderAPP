@@ -4,6 +4,7 @@ import { useToast } from '../components/Toast'
 import { useRealtime } from '../lib/realtime'
 import { timeCn } from '../lib/date'
 import { useMembers } from '../store/members'
+import { useSession } from '../store/session'
 import { useUnread } from '../store/unread'
 import { DISH_REQUEST_STATUS, type Dish, type DishRequest } from '../lib/types'
 
@@ -60,6 +61,7 @@ export default function AdminDishes() {
   const toast = useToast()
   const { members } = useMembers()
   const { refresh } = useUnread()
+  const { memberId: viewMemberId } = useSession() // 顶部下拉切换到某个她时，她提交的申请才显示
   const [dishes, setDishes] = useState<Dish[]>([])
   const [requests, setRequests] = useState<DishRequest[]>([])
   const [showDone, setShowDone] = useState(false)
@@ -105,8 +107,18 @@ export default function AdminDishes() {
     }
   )
 
-  const pending = useMemo(() => requests.filter((r) => r.status === 'pending'), [requests])
-  const done = useMemo(() => requests.filter((r) => r.status !== 'pending').slice(0, 10), [requests])
+  // 我切换到某个她的视角时，「她申请的新菜」也只显示她提的那些
+  const pending = useMemo(
+    () => requests.filter((r) => r.status === 'pending' && (!viewMemberId || r.member_id === viewMemberId)),
+    [requests, viewMemberId]
+  )
+  const done = useMemo(
+    () =>
+      requests
+        .filter((r) => r.status !== 'pending' && (!viewMemberId || r.member_id === viewMemberId))
+        .slice(0, 10),
+    [requests, viewMemberId]
+  )
   const who = (id: string | null) => members.find((m) => m.id === id)?.name ?? '她'
 
   const openForm = (d: Partial<Dish> & { name: string }) => {

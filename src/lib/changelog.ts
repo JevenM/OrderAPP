@@ -24,6 +24,16 @@ export type ChangelogEntry = {
 
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
+  // {
+  //   version: '1.6.0',
+  //   date: '2026-10-04',
+  //   title: '切换到某个她 → 所有页面只看她自己的数据',
+  //   items: [
+  //     { kind: 'improve', text: '顶部下拉切到「查看 A」后，订单 / 饮食 / 新菜申请都自动按 A 筛选，只看她的数据' },
+  //     { kind: 'fix', text: '切到某个她的视角时，饭圈以前会看到所有人；现在跟她自己看到的一模一样' },
+  //     { kind: 'new', text: '顶部多了一条「正在查看某某，所有页面只显示她的数据」提示条，右侧一键「回到全员」' },
+  //   ],
+  // },
   {
     version: '1.5.0',
     date: '2026-10-04',
