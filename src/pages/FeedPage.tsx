@@ -274,7 +274,7 @@ export default function FeedPage() {
                     <span className="min-w-0 flex-1">
                       {c.reply_to && (
                         <span className="mr-1 rounded bg-brand-50 px-1 text-[10px] text-brand-600">
-                          {isAdmin ? `🔒 仅${nameOf(c.reply_to)}可见` : '🔒 只对你可见'}
+                          {isAdmin ? `🔒 仅${nameOf(c.reply_to)}可见` : '🔒'}
                         </span>
                       )}
                       <span className="font-medium text-slate-600">{nameOf(c.member_id)}：</span>
