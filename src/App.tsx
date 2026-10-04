@@ -28,7 +28,7 @@ export default function App() {
 }
 
 function Shell() {
-  const { entered, role } = useSession()
+  const { entered, role, isAdmin } = useSession()
 
   if (!entered) {
     return (
@@ -39,7 +39,7 @@ function Shell() {
   }
 
   return (
-    <UnreadProvider enabled={role === 'me'}>
+    <UnreadProvider enabled={isAdmin}>
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to={HOME[role]} replace />} />
@@ -56,7 +56,7 @@ function Shell() {
 }
 
 function Layout() {
-  const { role, setRole } = useSession()
+  const { role, setRole, isAdmin } = useSession()
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const unread = useUnread()
@@ -92,16 +92,18 @@ function Layout() {
               🔔 {bell || '通知'}
             </button>
           )}
-          <button
-            className="btn-ghost text-xs"
-            onClick={() => {
-              const next: Role = role === 'her' ? 'me' : 'her'
-              setRole(next)
-              navigate(HOME[next])
-            }}
-          >
-            切换为{role === 'her' ? '他' : '她'}
-          </button>
+          {isAdmin && (
+            <button
+              className="btn-ghost text-xs"
+              onClick={() => {
+                const next: Role = role === 'her' ? 'me' : 'her'
+                setRole(next)
+                navigate(HOME[next])
+              }}
+            >
+              切换为{role === 'her' ? '我' : '她'}
+            </button>
+          )}
         </div>
       </header>
 

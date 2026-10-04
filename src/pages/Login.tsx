@@ -1,16 +1,14 @@
 import { useState } from 'react'
-import { APP_TITLE, INVITE_CODE } from '../lib/supabase'
+import { APP_TITLE, ADMIN_CODE, INVITE_CODE } from '../lib/supabase'
 import { useSession } from '../store/session'
-import type { Role } from '../lib/types'
 
 export default function Login() {
   const { enter } = useSession()
   const [code, setCode] = useState('')
-  const [role, setRole] = useState<Role>('her')
   const [err, setErr] = useState('')
 
   const submit = () => {
-    if (!enter(code, role)) setErr('邀请码不对哦，再问问他～')
+    if (!enter(code)) setErr('邀请码不对哦，再问问他～')
   }
 
   return (
@@ -36,31 +34,6 @@ export default function Login() {
           />
         </div>
 
-        <div>
-          <label className="mb-1 block text-xs text-slate-500">我是谁</label>
-          <div className="grid grid-cols-2 gap-2">
-            {(
-              [
-                { key: 'her' as Role, emoji: '👧', title: '她', desc: '点菜 / 记三餐' },
-                { key: 'me' as Role, emoji: '👨‍🍳', title: '我', desc: '接单 / 看记录' },
-              ]
-            ).map((r) => (
-              <button
-                key={r.key}
-                onClick={() => setRole(r.key)}
-                className={`rounded-xl border p-3 text-left transition ${
-                  role === r.key ? 'border-brand-400 bg-brand-50' : 'border-slate-200 bg-white'
-                }`}
-              >
-                <div className="text-lg">
-                  {r.emoji} <span className="text-sm font-medium">{r.title}</span>
-                </div>
-                <div className="mt-0.5 text-xs text-slate-400">{r.desc}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-
         {err && <p className="text-xs text-rose-500">{err}</p>}
 
         <button className="btn-primary w-full py-2.5" onClick={submit}>
@@ -68,7 +41,9 @@ export default function Login() {
         </button>
 
         {import.meta.env.DEV && (
-          <p className="text-center text-[11px] text-slate-400">开发模式邀请码：{INVITE_CODE}</p>
+          <p className="text-center text-[11px] text-slate-400">
+            开发模式：邀请码 {INVITE_CODE} ／ 管理口令 {ADMIN_CODE}
+          </p>
         )}
       </div>
 

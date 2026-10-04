@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { INVITE_CODE } from '../lib/supabase'
+import { ADMIN_CODE, INVITE_CODE } from '../lib/supabase'
 import type { Role } from '../lib/types'
 
 const KEY = 'order-app-session'
@@ -7,7 +7,8 @@ const KEY = 'order-app-session'
 type SessionValue = {
   role: Role
   entered: boolean
-  enter: (code: string, role: Role) => boolean
+  isAdmin: boolean
+  enter: (code: string) => boolean
   setRole: (role: Role) => void
   logout: () => void
 }
@@ -29,11 +30,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     else localStorage.removeItem(KEY)
   }, [state])
 
-  const entered = state?.code === INVITE_CODE
+  const entered = state != null && (state.code === INVITE_CODE || state.code === ADMIN_CODE)
 
-  const enter = useCallback((code: string, role: Role) => {
-    if (code.trim() !== INVITE_CODE) return false
-    setState({ code: code.trim(), role })
+  // 真实身份：用管理口令进入的始终是“我”，切换视图只改 role，不改身份
+  const isAdmin = state?.code === ADMIN_CODE
+
+  const enter = useCallback((code: string) => {
+    const c = code.trim()
+    const role: Role | null = c === INVITE_CODE ? 'her' : c === ADMIN_CODE ? 'me' : null
+    if (!role) return false
+    setState({ code: c, role })
     return true
   }, [])
 
@@ -44,8 +50,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => setState(null), [])
 
   const value = useMemo<SessionValue>(
-    () => ({ role: state?.role ?? 'her', entered, enter, setRole, logout }),
-    [state, entered, enter, setRole, logout]
+    () => ({ role: state?.role ?? 'her', entered, isAdmin, enter, setRole, logout }),
+    [state, entered, isAdmin, enter, setRole, logout]
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
