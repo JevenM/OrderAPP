@@ -214,10 +214,17 @@ Supabase 控制台 → **SQL Editor**，按顺序执行：
 | `supabase/migrations/0004_dish_requests.sql` | 建 `dish_requests` 表（她申请的新菜 + 我的审核状态） | **必须执行**，否则「新菜审核」不生效 |
 | `supabase/migrations/0005_feed.sql` | 建 `posts` / `post_likes` / `post_comments` 三表（饭圈动态、点赞、评论） | **必须执行**，否则饭圈打不开（会提示加载饭圈失败） |
 | `supabase/migrations/0006_settings.sql` | 建 `app_settings` 表，存「我的昵称」（她在饭圈里看到的名字） | 不执行也能跑，只是昵称固定为默认值 `我` |
+| `supabase/migrations/0007_meal_photos_policy.sql` | 放开 `storage.objects` 的 anon 读写（照片上传） | **要传图就必须执行**，只建 bucket 会报 RLS 错误 |
 
 > 多成员功能上线前产生的历史订单/三餐，`member_id` 为 NULL，后台显示为「未归属」，数据不丢。
 
 照片上传（可选）：Storage → New bucket，名 `meal-photos`，**Public**。不建也不影响其它功能。
+
+> ⚠️ 只建 bucket **还不够**：Supabase 的「Public」只代表图片能被公开读取，**上传仍然受 `storage.objects` 的 RLS 限制**。
+> 建完 bucket 后**必须再执行 `supabase/migrations/0007_meal_photos_policy.sql`**（放开 anon 的 insert/update/delete），
+> 否则会报 `new row violates row-level security policy`。脚本最后有一条自检查询，看到 `public = true` 就说明配好了。
+>
+> 其它排查点：bucket 名必须一字不差 `meal-photos`；`Allowed MIME types` 留空或包含 `image/*`；单张图不要超过 10MB。
 
 ---
 
@@ -314,6 +321,8 @@ supabase/
 | **报 members 表不存在** | `0002_members.sql` 还没在 Supabase 执行 |
 | **「加载饭圈失败」/ 饭圈空白** | `0005_feed.sql` 还没执行；点赞唯一索引冲突说明同一个人重复点了赞，刷新即可 |
 | **她写的菜没出现在审核区** | `0004_dish_requests.sql` 没执行，或同名申请已在待审核中（自动去重，不重复推送） |
+| **bucket 建好了仍提示上传失败（`row-level security policy`）** | `storage.objects` 没放开写入：执行 `0007_meal_photos_policy.sql`；bucket 必须勾选 Public、名字 `meal-photos` |
+| **图片上传成功但显示不出来** | bucket 不是 Public，或 `Allowed MIME types` 把该类型排除了 |
 | **控制台一直刷 `WebSocket ... ERR_CONNECTION_RESET`** | Supabase Realtime 的 ws 被网络拦截，**不影响功能**：`lib/realtime.ts` 会自动降级为 10 秒轮询刷新 |
 | **连不上 Supabase / 一直弹错误 toast** | 检查 `.env`（本地）或 Secrets（线上）两个 Supabase 值；免费项目 **7 天不用会暂停**，去控制台手动恢复 |
 | **刷新后 404** | 已用 Hash 路由（`#/order`），正常不会出现 |

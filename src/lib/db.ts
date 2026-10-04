@@ -321,12 +321,36 @@ export async function autoMealFromOrder(order: OrderWithItems): Promise<void> {
   if (error) fail(error, '同步就餐记录')
 }
 
+const PHOTO_BUCKET = 'meal-photos'
+
 export async function uploadMealPhoto(file: File): Promise<string> {
-  const ext = file.name.split('.').pop() || 'jpg'
+  if (file.size > 10 * 1024 * 1024) throw new Error('上传图片失败：图片超过 10MB，换一张小一点的吧')
+
+  const bucket = supabase.storage.from(PHOTO_BUCKET)
+  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
   const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
-  const { error } = await supabase.storage.from('meal-photos').upload(path, file, { cacheControl: '3600' })
-  if (error) throw new Error(`上传图片失败（需先在 Supabase 创建公开 bucket "meal-photos"）：${error.message}`)
-  return supabase.storage.from('meal-photos').getPublicUrl(path).data.publicUrl
+  const { error } = await bucket.upload(path, file, {
+    cacheControl: '3600',
+    contentType: file.type || 'image/jpeg',
+  })
+
+  if (error) {
+    const msg = error.message ?? ''
+    // 分情况给提示，别再一律说「没建 bucket」
+    if (/bucket.*not.*found|not found|does not exist/i.test(msg)) {
+      throw new Error(
+        `上传图片失败：Supabase 里找不到 bucket "${PHOTO_BUCKET}"。Storage → New bucket，名字必须完全一致并勾选 Public`
+      )
+    }
+    if (/row-level security|policy|permission|unauthorized|403/i.test(msg)) {
+      throw new Error(
+        `上传图片失败：bucket 有了但没开写入权限。请执行 supabase/migrations/0007_meal_photos_policy.sql（给 storage.objects 放开 anon 上传）`
+      )
+    }
+    throw new Error(`上传图片失败：${msg}`)
+  }
+
+  return bucket.getPublicUrl(path).data.publicUrl
 }
 
 /* ------------------------------ 饭圈 ------------------------------ */
