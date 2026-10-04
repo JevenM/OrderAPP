@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { listMealsRange, publishMealPost, uploadMealPhoto, upsertMeal } from '../lib/db'
+import { sizeText } from '../lib/image'
 import { pushEmail } from '../lib/notify'
 import { prettyDay, shiftDay, todayStr, weekdayCn } from '../lib/date'
 import { useToast } from '../components/Toast'
@@ -87,9 +88,9 @@ export default function MealLogPage() {
   const pickPhoto = async (slot: MealSlot, file: File) => {
     setUploading(slot)
     try {
-      const url = await uploadMealPhoto(file)
-      patch(slot, { photo_url: url })
-      toast.show('图片已上传')
+      const photo = await uploadMealPhoto(file)
+      patch(slot, { photo_url: photo.url })
+      toast.show(`图片已上传（${sizeText(photo.originalSize)} → ${sizeText(photo.size)}）`)
     } catch (e) {
       toast.show((e as Error).message, 'err')
     } finally {

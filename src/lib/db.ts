@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { compressImage } from './image'
 import { toDayStr } from './date'
 import type {
   Dish,
@@ -161,9 +162,20 @@ export async function createMember(name: string, code: string): Promise<Member> 
   return data as Member
 }
 
-export async function updateMember(id: string, patch: { name?: string; code?: string }): Promise<void> {
+export async function updateMember(
+  id: string,
+  patch: { name?: string; code?: string; my_name?: string | null }
+): Promise<void> {
   const { error } = await supabase.from('members').update(patch).eq('id', id)
   if (error) fail(error, '修改成员')
+}
+
+/** 某个成员眼里的「我」叫什么：单独设过就用她的，没设过返回空串（由调用方回落到全局昵称） */
+export async function getMemberMyName(memberId: string | null): Promise<string> {
+  if (!memberId) return ''
+  const { data, error } = await supabase.from('members').select('my_name').eq('id', memberId).maybeSingle()
+  if (error || !data) return ''
+  return ((data.my_name as string | null) ?? '').trim()
 }
 
 export async function removeMember(id: string): Promise<void> {
@@ -323,15 +335,38 @@ export async function autoMealFromOrder(order: OrderWithItems): Promise<void> {
 
 const PHOTO_BUCKET = 'meal-photos'
 
-export async function uploadMealPhoto(file: File): Promise<string> {
+export type UploadedPhoto = {
+  url: string
+  /** 实际上传的大小（压缩后） */
+  size: number
+  /** 原图大小 */
+  originalSize: number
+}
+
+/** 上传图片：先压缩到 20KB 左右再传，省流量也省 Supabase 存储 */
+export async function uploadMealPhoto(file: File): Promise<UploadedPhoto> {
   if (file.size > 10 * 1024 * 1024) throw new Error('上传图片失败：图片超过 10MB，换一张小一点的吧')
 
+  const originalSize = file.size
+  let upload: File = file
+  let size = originalSize
+
+  try {
+    const c = await compressImage(file)
+    upload = c.file
+    size = c.size
+  } catch {
+    // 压缩失败（浏览器太老 / 图解码不了）就用原图，别挡着用户上传
+    upload = file
+    size = originalSize
+  }
+
   const bucket = supabase.storage.from(PHOTO_BUCKET)
-  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
+  const ext = (upload.name.split('.').pop() || 'jpg').toLowerCase()
   const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
-  const { error } = await bucket.upload(path, file, {
+  const { error } = await bucket.upload(path, upload, {
     cacheControl: '3600',
-    contentType: file.type || 'image/jpeg',
+    contentType: upload.type || 'image/jpeg',
   })
 
   if (error) {
@@ -350,16 +385,19 @@ export async function uploadMealPhoto(file: File): Promise<string> {
     throw new Error(`上传图片失败：${msg}`)
   }
 
-  return bucket.getPublicUrl(path).data.publicUrl
+  return { url: bucket.getPublicUrl(path).data.publicUrl, size, originalSize }
 }
 
 /* ------------------------------ 饭圈 ------------------------------ */
 
 /**
  * 可见性规则：
- * - 我（管理员）：看到所有人的动态（所有她 + 我自己发的）
- * - 某个她：只看「我发的」+「她自己发的」，她与她之间互相不可见
+ * - 动态：我（管理员）看到所有人的；某个她只看「我发的」+「她自己发的」，她与她之间互相不可见
  *   （想让她连自己的都看不到，把 includeSelf 传 false）
+ * - 点赞 / 评论：**只有我能看到所有人的**；她只能看到「我点的赞 / 我发的评论」+「她自己的」，
+ *   别的她的点赞和评论对她完全不可见
+ * - 针对性回复：评论的 reply_to 填了成员 id 时，**只有那个人能看到**（我也能看到），
+ *   没被回复到的人连这条评论都收不到
  */
 export async function listPosts(viewer: {
   isAdmin: boolean
@@ -390,14 +428,30 @@ export async function listPosts(viewer: {
   if (likes.error) fail(likes.error, '加载点赞')
   if (comments.error) fail(comments.error, '加载评论')
 
+  /**
+   * 点赞可见性：我全看到；她只能看到「我点的」+「她自己点的」
+   * （她自己的必须保留，否则她点完赞连红心都不亮）
+   */
+  const canSeeLike = (l: PostLike) =>
+    viewer.isAdmin || l.member_id === null || (!!viewer.memberId && l.member_id === viewer.memberId)
+
+  /** 评论可见性：我全看到；她看到「我的公开评论」+「我专门回复她的」+「她自己的」 */
+  const canSeeComment = (c: PostComment) => {
+    if (viewer.isAdmin) return true
+    if (viewer.memberId && c.member_id === viewer.memberId) return true // 她自己的
+    if (c.member_id !== null) return false // 别的她发的
+    // 我发的：没指定人 → 公开；指定了人 → 只有那个人能看到
+    return c.reply_to === null || (!!viewer.memberId && c.reply_to === viewer.memberId)
+  }
+
   const likesBy = new Map<string, PostLike[]>()
   for (const l of (likes.data ?? []) as PostLike[]) {
+    if (!canSeeLike(l)) continue
     likesBy.set(l.post_id, [...(likesBy.get(l.post_id) ?? []), l])
   }
   const commentsBy = new Map<string, PostComment[]>()
   for (const c of (comments.data ?? []) as PostComment[]) {
-    // 她只能看到「我」和她自己的评论，别的她的评论对她不可见
-    if (!viewer.isAdmin && c.member_id !== null && c.member_id !== viewer.memberId) continue
+    if (!canSeeComment(c)) continue
     commentsBy.set(c.post_id, [...(commentsBy.get(c.post_id) ?? []), c])
   }
 
@@ -476,10 +530,22 @@ export async function toggleLike(postId: string, memberId: string | null): Promi
   return true
 }
 
-export async function addComment(postId: string, memberId: string | null, content: string): Promise<void> {
+/**
+ * 发评论。
+ * @param replyTo 针对性回复的成员 id：填了就**只有那个人能看到**（我自己当然也看得到）；
+ *                传 null 则是公开评论。
+ */
+export async function addComment(
+  postId: string,
+  memberId: string | null,
+  content: string,
+  replyTo: string | null = null
+): Promise<void> {
   const text = content.trim()
   if (!text) return
-  const { error } = await supabase.from('post_comments').insert({ post_id: postId, member_id: memberId, content: text })
+  const { error } = await supabase
+    .from('post_comments')
+    .insert({ post_id: postId, member_id: memberId, content: text, reply_to: replyTo })
   if (error) fail(error, '发表评论')
 }
 

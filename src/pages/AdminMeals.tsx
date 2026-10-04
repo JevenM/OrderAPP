@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { listMealsRange, markMealRead, removeMeal, updateMeal, uploadMealPhoto } from '../lib/db'
+import { sizeText } from '../lib/image'
 import { useRealtime } from '../lib/realtime'
 import { lastDays, prettyDay, shiftDay, todayStr, weekdayCn } from '../lib/date'
 import { useUnread } from '../store/unread'
@@ -120,9 +121,9 @@ export default function AdminMeals() {
   const pickPhoto = async (file: File) => {
     setUploading(true)
     try {
-      const url = await uploadMealPhoto(file)
-      setForm((f) => ({ ...f, photo_url: url }))
-      toast.show('图片已上传')
+      const photo = await uploadMealPhoto(file)
+      setForm((f) => ({ ...f, photo_url: photo.url }))
+      toast.show(`图片已上传（${sizeText(photo.originalSize)} → ${sizeText(photo.size)}）`)
     } catch (e) {
       toast.show((e as Error).message, 'err')
     } finally {

@@ -30,6 +30,8 @@ export interface PostComment {
   member_id: string | null
   content: string
   created_at: string
+  /** 针对性回复：只有这个成员能看到（NULL = 公开评论，所有看得见这条动态的人都能看到） */
+  reply_to: string | null
 }
 
 export type PostWithMeta = Post & {
@@ -72,6 +74,8 @@ export interface Member {
   name: string
   code: string
   created_at: string
+  /** 这个成员看到的「我」的昵称；为空表示沿用全局昵称 */
+  my_name: string | null
 }
 
 export interface Order {

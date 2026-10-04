@@ -14,7 +14,7 @@ export default function AdminMembers() {
   const [name, setName] = useState('')
   const [code, setCode] = useState(randomCode())
   const [busy, setBusy] = useState(false)
-  const [draft, setDraft] = useState<Record<string, { name: string; code: string }>>({})
+  const [draft, setDraft] = useState<Record<string, { name: string; code: string; myName: string }>>({})
 
   useEffect(() => {
     setMyName(adminName)
@@ -26,7 +26,7 @@ export default function AdminMembers() {
     setSavingMyName(true)
     try {
       await saveAdminName(n)
-      toast.show('已保存，她在饭圈里看到的就是这个昵称')
+      toast.show('已保存，没单独设置称呼的她看到的就是这个昵称')
     } catch (e) {
       toast.show((e as Error).message, 'err')
     } finally {
@@ -34,10 +34,10 @@ export default function AdminMembers() {
     }
   }
 
-  const val = (m: Member) => draft[m.id] ?? { name: m.name, code: m.code }
+  const val = (m: Member) => draft[m.id] ?? { name: m.name, code: m.code, myName: m.my_name ?? '' }
   const dirty = (m: Member) => {
     const d = val(m)
-    return d.name !== m.name || d.code !== m.code
+    return d.name !== m.name || d.code !== m.code || d.myName !== (m.my_name ?? '')
   }
 
   const add = async () => {
@@ -68,8 +68,8 @@ export default function AdminMembers() {
     if (!c) return toast.show('邀请码不能为空', 'err')
     if (members.some((x) => x.id !== m.id && x.code === c)) return toast.show('邀请码重复了', 'err')
     try {
-      await updateMember(m.id, { name: n, code: c })
-      toast.show('已保存（改名 / 改码立即生效）')
+      await updateMember(m.id, { name: n, code: c, my_name: d.myName.trim() || null })
+      toast.show('已保存（改名 / 改码 / 称呼立即生效）')
       reload()
     } catch (e) {
       toast.show((e as Error).message, 'err')
@@ -93,6 +93,8 @@ export default function AdminMembers() {
         <h3 className="text-sm font-semibold">🙋 我的昵称</h3>
         <p className="text-[11px] leading-relaxed text-slate-400">
           她在饭圈里看到的名字，随时可改；改完她那边刷新就生效。
+          <br />
+          <span className="text-brand-600">下面每个成员还能各设一个专属称呼，设了就以那个为准。</span>
         </p>
         <div className="flex gap-2">
           <input
@@ -165,6 +167,28 @@ export default function AdminMembers() {
               onChange={(e) => setDraft((d) => ({ ...d, [m.id]: { ...val(m), code: e.target.value } }))}
             />
           </div>
+          <div>
+            <label className="mb-1 block text-[11px] text-slate-400">她看到我叫</label>
+            <div className="flex items-center gap-2">
+              <input
+                className="input"
+                placeholder={`不填就用「${adminName}」`}
+                value={val(m).myName}
+                onChange={(e) => setDraft((d) => ({ ...d, [m.id]: { ...val(m), myName: e.target.value } }))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void save(m)
+                  }
+                }}
+              />
+              {val(m).myName.trim() && (
+                <span className="shrink-0 text-[11px] text-brand-600">
+                  {val(m).name}：你好，{val(m).myName.trim()}
+                </span>
+              )}
+            </div>
+          </div>
           <div className="flex items-center justify-between gap-2">
             <button className="text-xs text-slate-400" onClick={() => del(m)}>
               删除
@@ -182,6 +206,8 @@ export default function AdminMembers() {
 
       <p className="px-1 text-[11px] leading-relaxed text-slate-400">
         提示：在顶部下拉里可以切换查看任意一个她的视图；每个她登录后只能看到自己的数据。
+        <br />
+        「她看到我叫」只对这一个人生效：A 看到我叫 maoge、B 看到我叫老干部，互不影响；留空则用上面那个统一昵称。
       </p>
     </div>
   )
