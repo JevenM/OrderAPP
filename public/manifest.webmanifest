@@ -1,0 +1,19 @@
+{
+  "name": "今天吃什么 · 点菜小屋",
+  "short_name": "点菜小屋",
+  "description": "点菜下单 + 一日三餐记录",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fff1f5",
+  "theme_color": "#f43f70",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
