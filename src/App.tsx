@@ -61,7 +61,7 @@ function Shell() {
 }
 
 function Layout() {
-  const { role, setViewMember, isAdmin, memberId, memberName } = useSession()
+  const { role, setViewMember, isAdmin, memberId, memberName, logout } = useSession()
   const { members } = useMembers()
   const navigate = useNavigate()
   const { pathname } = useLocation()
@@ -84,6 +84,12 @@ function Layout() {
   const enableBell = async () => {
     const p = await requestNotifyPermission()
     setBell(p === 'granted' ? '已开启通知' : p === 'unsupported' ? '当前浏览器不支持' : '未授权')
+  }
+
+  const doLogout = () => {
+    if (!window.confirm('确定退出登录吗？')) return
+    navigate('/', { replace: true }) // 清空当前地址，避免下次登录跳到上次的页面
+    logout()
   }
 
   return (
@@ -127,6 +133,9 @@ function Layout() {
               ))}
             </select>
           )}
+          <button className="btn-ghost text-xs" onClick={doLogout} title="退出登录">
+            退出
+          </button>
         </div>
       </header>
 

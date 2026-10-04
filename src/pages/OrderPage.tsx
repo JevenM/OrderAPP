@@ -7,6 +7,12 @@ import { useToast } from '../components/Toast'
 import { useSession } from '../store/session'
 import { ORDER_STATUS, SLOTS, type Dish, type MealSlot, type OrderWithItems } from '../lib/types'
 
+type CartItem = { dish_id: string | null; dish_name: string; emoji: string; qty: number }
+
+/** 购物车里「自定义菜」的 key 前缀（菜单菜直接用 dish.id） */
+const CUSTOM_PREFIX = 'custom:'
+const CUSTOM_EMOJI = '✨'
+
 export default function OrderPage() {
   const toast = useToast()
   const { memberId, memberName } = useSession()
@@ -16,6 +22,7 @@ export default function OrderPage() {
   const [hopeTime, setHopeTime] = useState('')
   const [note, setNote] = useState('')
   const [keyword, setKeyword] = useState('')
+  const [customName, setCustomName] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [recent, setRecent] = useState<OrderWithItems[]>([])
 
@@ -64,25 +71,45 @@ export default function OrderPage() {
 
   const totalQty = Object.values(cart).reduce((a, b) => a + b, 0)
   const picked = Object.entries(cart).filter(([, q]) => q > 0)
+  const customPicked = picked.filter(([key]) => key.startsWith(CUSTOM_PREFIX))
 
-  const change = (d: Dish, delta: number) => {
+  const changeKey = (key: string, delta: number) => {
     setCart((c) => {
       const next = { ...c }
-      const v = (next[d.id] ?? 0) + delta
-      if (v <= 0) delete next[d.id]
-      else next[d.id] = v
+      const v = (next[key] ?? 0) + delta
+      if (v <= 0) delete next[key]
+      else next[key] = v
       return next
     })
   }
+
+  const change = (d: Dish, delta: number) => changeKey(d.id, delta)
+
+  const addCustom = () => {
+    const name = customName.trim().replace(/\s+/g, ' ')
+    if (!name) return toast.show('先写下想吃的菜名～', 'err')
+    if (name.length > 30) return toast.show('菜名太长啦，简短一点', 'err')
+    changeKey(CUSTOM_PREFIX + name, 1)
+    setCustomName('')
+  }
+
+  const toItems = (): CartItem[] =>
+    picked.map(([key, qty]) => {
+      if (key.startsWith(CUSTOM_PREFIX)) {
+        return { dish_id: null, dish_name: key.slice(CUSTOM_PREFIX.length), emoji: CUSTOM_EMOJI, qty }
+      }
+      const d = dishes.find((x) => x.id === key)
+      // 菜品可能已被删除，兜底成自定义项，避免下单失败
+      return d
+        ? { dish_id: d.id, dish_name: d.name, emoji: d.emoji, qty }
+        : { dish_id: null, dish_name: '（已下架的菜）', emoji: '🍽️', qty }
+    })
 
   const submit = async () => {
     if (!picked.length) return toast.show('先选几道菜吧～', 'err')
     setSubmitting(true)
     try {
-      const items = picked.map(([id, qty]) => {
-        const d = dishes.find((x) => x.id === id)!
-        return { dish_id: d.id, dish_name: d.name, emoji: d.emoji, qty }
-      })
+      const items = toItems()
       await createOrder({ items, meal_slot: slot, hope_time: hopeTime, note, member_id: memberId })
       const slotLabel = SLOTS.find((s) => s.key === slot)?.label ?? ''
       const who = memberName || '她'
@@ -141,9 +168,64 @@ export default function OrderPage() {
         />
       </div>
 
+      <div className="card space-y-2">
+        <div className="text-xs text-slate-500">想吃的菜（菜单里没有就直接写下来）</div>
+        <div className="flex gap-2">
+          <input
+            className="input flex-1"
+            placeholder="比如：妈妈牌红烧肉"
+            value={customName}
+            onChange={(e) => setCustomName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                addCustom()
+              }
+            }}
+          />
+          <button className="btn-primary shrink-0 px-3 text-sm" onClick={addCustom}>
+            加入
+          </button>
+        </div>
+        {customPicked.length > 0 && (
+          <div className="flex flex-wrap gap-2 pt-1">
+            {customPicked.map(([key, qty]) => (
+              <div
+                key={key}
+                className="flex items-center gap-1.5 rounded-full border border-brand-300 bg-brand-50 py-1 pl-3 pr-1.5 text-xs"
+              >
+                <span className="max-w-[10rem] truncate">
+                  {CUSTOM_EMOJI} {key.slice(CUSTOM_PREFIX.length)}
+                </span>
+                <span className="font-semibold text-brand-600">×{qty}</span>
+                <button
+                  className="btn-soft px-1.5 py-0.5 text-xs leading-none"
+                  onClick={() => changeKey(key, -1)}
+                  title="减少"
+                >
+                  −
+                </button>
+                <button
+                  className="btn-primary px-1.5 py-0.5 text-xs leading-none"
+                  onClick={() => changeKey(key, 1)}
+                  title="增加"
+                >
+                  +
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <input className="input" placeholder="🔍 搜索菜名" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
 
-      {grouped.length === 0 && <p className="py-8 text-center text-sm text-slate-400">还没有可点的菜，让他去「菜单」里加几道～</p>}
+      {grouped.length === 0 && (
+        <p className="py-8 text-center text-sm text-slate-400">
+          还没有可点的菜，让他去「菜单」里加几道～<br />
+          也可以直接在上面写下想吃的菜
+        </p>
+      )}
 
       {grouped.map(([category, list]) => (
         <div key={category}>
