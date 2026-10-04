@@ -10,6 +10,8 @@ type SessionState = {
   role: Role
   memberId: string | null
   memberName: string
+  /** 当前查看的那个她的头像（登录后跟着一起记住，她本人也能看到自己的头像） */
+  memberAvatar: string
 }
 
 type SessionValue = {
@@ -18,8 +20,11 @@ type SessionValue = {
   isAdmin: boolean
   memberId: string | null
   memberName: string
+  memberAvatar: string
   enter: (code: string) => Promise<boolean>
-  setViewMember: (m: { id: string; name: string } | null) => void
+  setViewMember: (m: { id: string; name: string; avatarUrl?: string | null } | null) => void
+  /** 她自己换完头像后同步进登录态（不用重新登录就能看到） */
+  setMyAvatar: (url: string | null) => void
   logout: () => void
 }
 
@@ -48,7 +53,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (!c) return false
 
     if (c === ADMIN_CODE) {
-      setState({ code: c, role: 'me', memberId: null, memberName: '' })
+      setState({ code: c, role: 'me', memberId: null, memberName: '', memberAvatar: '' })
       return true
     }
 
@@ -62,13 +67,34 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     if (!member) return false
 
-    setState({ code: c, role: 'her', memberId: member.id, memberName: member.name })
+    setState({
+      code: c,
+      role: 'her',
+      memberId: member.id,
+      memberName: member.name,
+      memberAvatar: member.avatar_url ?? '',
+    })
     return true
   }, [])
 
   /** 「我」切换查看某个她；传 null 回到管理视图 */
-  const setViewMember = useCallback((m: { id: string; name: string } | null) => {
-    setState((s) => (s ? { ...s, role: m ? 'her' : 'me', memberId: m?.id ?? null, memberName: m?.name ?? '' } : s))
+  const setViewMember = useCallback((m: { id: string; name: string; avatarUrl?: string | null } | null) => {
+    setState((s) =>
+      s
+        ? {
+            ...s,
+            role: m ? 'her' : 'me',
+            memberId: m?.id ?? null,
+            memberName: m?.name ?? '',
+            memberAvatar: m?.avatarUrl ?? '',
+          }
+        : s
+    )
+  }, [])
+
+  /** 她自己换头像后立刻生效（省得重新登录） */
+  const setMyAvatar = useCallback((url: string | null) => {
+    setState((s) => (s ? { ...s, memberAvatar: url ?? '' } : s))
   }, [])
 
   const logout = useCallback(() => setState(null), [])
@@ -80,11 +106,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       isAdmin,
       memberId: state?.memberId ?? null,
       memberName: state?.memberName ?? '',
+      memberAvatar: state?.memberAvatar ?? '',
       enter,
       setViewMember,
+      setMyAvatar,
       logout,
     }),
-    [state, isAdmin, enter, setViewMember, logout]
+    [state, isAdmin, enter, setViewMember, setMyAvatar, logout]
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

@@ -5,6 +5,7 @@
 - **她**：点菜下单（菜单选菜 / 自定义菜名、选餐次、期望时间、备注）＋ 记录每天一日三餐（自动发饭圈）
 - **我**：后台实时收到订单（红点 + 通知 + 邮件），接单、看三餐记录、管菜单、管成员、审核她申请的新菜
 - **饭圈**：她记录三餐后自动发带图动态；支持点赞 / 评论；**她与她之间互相不可见**，我能看到所有人的动态
+- **头像**：顶部点自己的头像就能从相册换图（自动压缩上传），饭圈动态里也会显示；我还能在「成员」页帮每个她设置
 
 技术栈：**React 18 + Vite 5 + TypeScript + Tailwind 3 + Supabase（免费版）+ GitHub Pages**（静态托管，手机「添加到主屏幕」即可当 APP 用）。
 
@@ -113,10 +114,11 @@ npm run dev
 
 ### 用管理员身份查看任意一个「她」
 
-用 `adminMao` 登录后，右上角有一个下拉框：
+用 `adminMao` 登录后，右上角有一个 👥 按钮（窄屏收在这里比下拉框省地方）：
 
-- 选「我的管理视图」→ 回到后台
-- 选「查看 某某」→ 以她的视角看她的点菜/三餐页
+- 点「我的管理视图」→ 回到后台
+- 点某个成员昵称 → 以她的视角看她的点菜/三餐页
+- 再点头像按钮右侧的 ⋯ → 更新日志 / 退出登录
 
 这是**单向的**：用邀请码登录的她看不到这个下拉，也无法进后台。
 
@@ -161,11 +163,14 @@ git commit -m "说明这次改了什么"
 git push
 ```
 
-推到 `main` 后，`.github/workflows/deploy.yml` **会自动触发**构建部署。
+推到 `master` 后，`.github/workflows/deploy.yml` **会自动触发**构建部署。
 
 想手动触发（或 Actions 没自动跑）：
 
-> 仓库 → **Actions** → 左侧 **Deploy to GitHub Pages** → 右上角 **Run workflow** → 分支选 `main` → Run
+> 仓库 → **Actions** → 左侧 **Deploy to GitHub Pages** → 右上角 **Run workflow** → 分支选 `master` → Run
+
+> 已删除旧的 `.github/workflows/static.yml`：它监听 `master` 却把整个源码仓库直接传到 Pages（不做构建），
+> 会和 deploy.yml 抢着发布同一页。现在只有 deploy.yml 一个工作流，监听分支也是 `master`。
 
 ### 等它变绿
 
@@ -217,6 +222,7 @@ Supabase 控制台 → **SQL Editor**，按顺序执行：
 | `supabase/migrations/0007_meal_photos_policy.sql` | 放开 `storage.objects` 的 anon 读写（照片上传） | **要传图就必须执行**，只建 bucket 会报 RLS 错误 |
 | `supabase/migrations/0008_comment_privacy.sql` | `post_comments` 加 `reply_to` 列（针对性回复） | **要用「回复某人」就必须执行**，否则会报 reply_to 列不存在 |
 | `supabase/migrations/0009_member_my_name.sql` | `members` 加 `my_name` 列（每个她看到的我） | **要用「她看到我叫」就必须执行**，不改旧数据，留空继续用统一昵称 |
+| `supabase/migrations/0010_avatars.sql` | `members` 加 `avatar_url` 列，并建 `avatars` bucket + 放开读写 | **要上传头像就必须执行**，脚本已包含 bucket 创建，不用手动建 |
 
 > 多成员功能上线前产生的历史订单/三餐，`member_id` 为 NULL，后台显示为「未归属」，数据不丢。
 
@@ -417,6 +423,9 @@ export const CHANGELOG: ChangelogEntry[] = [
 | **bucket 建好了仍提示上传失败（`row-level security policy`）** | `storage.objects` 没放开写入：执行 `0007_meal_photos_policy.sql`；bucket 必须勾选 Public、名字 `meal-photos` |
 | **图片上传成功但显示不出来** | bucket 不是 Public，或 `Allowed MIME types` 把该类型排除了 |
 | **照片压缩后有点糊 / 想更清晰** | 上传统一压到 20KB：调大 `src/lib/image.ts` 的 `TARGET_PHOTO_BYTES`（如 `50 * 1024`）和 `MAX_EDGE` 重新部署 |
+| **登录报「校验邀请码失败：TypeError: Failed to fetch」** | 请求根本没到 Supabase：① 项目被暂停（Supabase 控制台 Restore）② `VITE_SUPABASE_URL` 写错/少了 `https://` ③ 部署站点没配 Secret 或改完 Secret 没重新构建 ④ VPN / 代理 / 插件拦截。登录页点「**网络自检**」会给出具体结论 |
+| **输入用户名能进、点她的邀请码却连不上** | 管理口令是本地比对不走网络，邀请码要查 `members` 表；本地检查 `.env`，线上检查 Secrets 是否真的注入（见上一条） |
+| **头像上传失败 / 提示找不到 bucket** | 执行 `supabase/migrations/0010_avatars.sql`（自动建 `avatars` bucket + 放开 anon 读写），不需要手动建 bucket |
 | **toast 显示「3.2MB → 3.2MB」没变小** | 浏览器不支持 canvas 压缩，走了原图兜底；换 Chrome / Safari 新版 |
 | **控制台一直刷 `WebSocket ... ERR_CONNECTION_RESET`** | Supabase Realtime 的 ws 被网络拦截，**不影响功能**：`lib/realtime.ts` 会自动降级为 10 秒轮询刷新 |
 | **连不上 Supabase / 一直弹错误 toast** | 检查 `.env`（本地）或 Secrets（线上）两个 Supabase 值；免费项目 **7 天不用会暂停**，去控制台手动恢复 |

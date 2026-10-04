@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { configured, supabase } from './supabase'
 import { compressImage } from './image'
 import { toDayStr } from './date'
 import type {
@@ -40,6 +40,31 @@ function withTimeout<T>(p: PromiseLike<T>, ms: number, tag: string): Promise<T> 
       }
     )
   })
+}
+
+/**
+ * 网络层错误翻译成人话。
+ * supabase-js 在连不上时只会抛 "TypeError: Failed to fetch"，用户完全看不懂，
+ * 这里按情况给出能动手排查的提示。
+ */
+function netHint(tag: string, e: unknown): Error {
+  const raw = e instanceof Error ? e.message : String(e ?? '')
+
+  if (!configured) {
+    return new Error(
+      `${tag}失败：还没有连上 Supabase。本地请复制 .env.example 为 .env，填好 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 后重启 npm run dev；` +
+        `部署好的站点要到仓库 Settings → Secrets 里配上同名变量并重新构建（Vite 的环境变量只在构建时注入）。`
+    )
+  }
+  if (!navigator.onLine) return new Error(`${tag}失败：设备当前离线，连上网再试一次`)
+
+  if (/failed to fetch|networkerror|load failed|network request failed|ERR_/i.test(raw)) {
+    return new Error(
+      `${tag}失败：连不上 Supabase（${raw}）。常见原因：① Supabase 项目被暂停/删除，去控制台 Restore；` +
+        `② VITE_SUPABASE_URL 填错或少了 https://；③ 部署站点没配环境变量或改完之后没有重新构建；④ VPN / 代理 / 浏览器插件拦截了请求。`
+    )
+  }
+  return e instanceof Error ? e : new Error(`${tag}失败：${raw}`)
 }
 
 /* ------------------------------ 菜单 ------------------------------ */
@@ -142,18 +167,31 @@ export function randomCode(len = 6): string {
 }
 
 export async function listMembers(): Promise<Member[]> {
-  const { data, error } = await supabase
-    .from('members')
-    .select('*')
-    .order('created_at', { ascending: true })
+  const { data, error } = await withTimeout(
+    supabase.from('members').select('*').order('created_at', { ascending: true }),
+    15_000,
+    '加载成员'
+  )
   if (error) fail(error, '加载成员')
   return (data ?? []) as Member[]
 }
 
+/**
+ * 校验邀请码。登录第一步，网络不通时要给得出排查方向（见 netHint），
+ * 另外加 15s 超时，避免弱网下一直转圈没有任何反馈。
+ */
 export async function findMemberByCode(code: string): Promise<Member | null> {
-  const { data, error } = await supabase.from('members').select('*').eq('code', code).maybeSingle()
-  if (error) fail(error, '校验邀请码')
-  return (data as Member | null) ?? null
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from('members').select('*').eq('code', code).maybeSingle(),
+      15_000,
+      '校验邀请码'
+    )
+    if (error) fail(error, '校验邀请码')
+    return (data as Member | null) ?? null
+  } catch (e) {
+    throw netHint('校验邀请码', e)
+  }
 }
 
 export async function createMember(name: string, code: string): Promise<Member> {
@@ -164,10 +202,63 @@ export async function createMember(name: string, code: string): Promise<Member> 
 
 export async function updateMember(
   id: string,
-  patch: { name?: string; code?: string; my_name?: string | null }
+  patch: { name?: string; code?: string; my_name?: string | null; avatar_url?: string | null }
 ): Promise<void> {
   const { error } = await supabase.from('members').update(patch).eq('id', id)
   if (error) fail(error, '修改成员')
+}
+
+/* ------------------------------ 头像 ------------------------------ */
+
+const AVATAR_BUCKET = 'avatars'
+/** 头像压到 60KB：既要比 20KB 的三餐图清楚一些，又不能让免费额度吃紧 */
+const AVATAR_TARGET_BYTES = 60 * 1024
+
+/**
+ * 上传头像（压缩后存到 avatars bucket，返回公开地址）
+ * 没跑 0010_avatars.sql（bucket / 权限没建）时给出明确的 SQL 文件名。
+ */
+export async function uploadAvatar(file: File): Promise<string> {
+  if (!file.type.startsWith('image/')) throw new Error('头像上传失败：请选择图片文件')
+  if (file.size > 10 * 1024 * 1024) throw new Error('头像上传失败：图片超过 10MB，换一张小一点的吧')
+
+  let upload: File = file
+  try {
+    const c = await compressImage(file, AVATAR_TARGET_BYTES)
+    upload = c.file
+  } catch (e) {
+    throw new Error(`头像处理失败：${(e as Error).message}`)
+  }
+
+  const bucket = supabase.storage.from(AVATAR_BUCKET)
+  const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`
+  const { error } = await withTimeout(
+    bucket.upload(path, upload, { cacheControl: '3600', contentType: 'image/jpeg' }),
+    20_000,
+    '头像上传'
+  )
+
+  if (error) {
+    const msg = error.message ?? ''
+    if (/bucket.*not.*found|not found|does not exist/i.test(msg)) {
+      throw new Error(
+        `头像上传失败：还没有建立 "${AVATAR_BUCKET}" bucket。执行 supabase/migrations/0010_avatars.sql 会自动建好 bucket 和权限`
+      )
+    }
+    if (/row-level security|policy|permission|unauthorized|403/i.test(msg)) {
+      throw new Error(
+        `头像上传失败：bucket 有了但没开写入权限。请执行 supabase/migrations/0010_avatars.sql（给 storage.objects 放开 anon 上传）`
+      )
+    }
+    throw new Error(`头像上传失败：${msg}`)
+  }
+
+  return bucket.getPublicUrl(path).data.publicUrl
+}
+
+/** 给某个成员设置头像（传 null 表示删掉头像，回到默认表情） */
+export async function setMemberAvatar(id: string, url: string | null): Promise<void> {
+  await updateMember(id, { avatar_url: url })
 }
 
 /** 某个成员眼里的「我」叫什么：单独设过就用她的，没设过返回空串（由调用方回落到全局昵称） */

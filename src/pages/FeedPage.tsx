@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { addComment, createPost, listPosts, removeComment, removePost, toggleLike, uploadMealPhoto } from '../lib/db'
 import { sizeText } from '../lib/image'
+import Avatar from '../components/Avatar'
 import { useToast } from '../components/Toast'
 import { useRealtime } from '../lib/realtime'
 import { timeCn } from '../lib/date'
@@ -14,9 +15,9 @@ type ReplyTarget = Record<string, { id: string | null; label: string }>
 
 export default function FeedPage() {
   const toast = useToast()
-  const { isAdmin, role, memberId, memberName } = useSession()
+  const { isAdmin, role, memberId, memberName, memberAvatar } = useSession()
   const { members } = useMembers()
-  const { viewerAdminName } = useSettings()
+  const { viewerAdminName, adminAvatar } = useSettings()
   const [posts, setPosts] = useState<PostWithMeta[]>([])
   const [draft, setDraft] = useState({ content: '', photo_url: '' })
   const [posting, setPosting] = useState(false)
@@ -65,6 +66,13 @@ export default function FeedPage() {
     if (!id) return viewerAdminName
     if (id === memberId && memberName) return memberName
     return members.find((m) => m.id === id)?.name ?? '她'
+  }
+
+  /** 头像：我的用统一头像，她的用成员表里那张（她本人用登录态里的），没传就用默认表情 */
+  const avatarOf = (id: string | null): { url: string; emoji: string } => {
+    if (!id) return { url: adminAvatar, emoji: '👨‍🍳' }
+    if (id === memberId) return { url: memberAvatar || (members.find((m) => m.id === id)?.avatar_url ?? ''), emoji: '👧' }
+    return { url: members.find((m) => m.id === id)?.avatar_url ?? '', emoji: '👧' }
   }
 
   const likedByViewer = (p: PostWithMeta) =>
@@ -237,12 +245,12 @@ export default function FeedPage() {
 
       {posts.map((p) => {
         const liked = likedByViewer(p)
-        const isMine = p.author === 'me'
         const target = replyTarget[p.id]
+        const who = avatarOf(p.member_id)
         return (
           <div key={p.id} className="card space-y-2">
             <div className="flex items-center gap-2">
-              <span className="text-xl">{isMine ? '👨‍🍳' : '👧'}</span>
+              <Avatar url={who.url} emoji={who.emoji} size={38} />
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{nameOf(p.member_id)}</div>
                 <div className="text-[11px] text-slate-400">
@@ -266,7 +274,7 @@ export default function FeedPage() {
 
             <div className="flex items-center gap-3 pt-1">
               <button
-                className={`text-sm transition active:scale-95 ${liked ? 'text-rose-500' : 'text-slate-400'}`}
+                className={`text-sm transition active:scale-95 ${liked ? 'animate-heart text-rose-500' : 'text-slate-400'}`}
                 onClick={() => like(p)}
               >
                 {liked ? '❤️' : '🤍'} {p.likes.length}

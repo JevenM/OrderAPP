@@ -76,6 +76,8 @@ export interface Member {
   created_at: string
   /** 这个成员看到的「我」的昵称；为空表示沿用全局昵称 */
   my_name: string | null
+  /** 头像地址（0010_avatars.sql 之后才有；老数据为 null，界面回落到默认表情） */
+  avatar_url?: string | null
 }
 
 export interface Order {

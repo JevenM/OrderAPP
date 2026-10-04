@@ -23,9 +23,16 @@ body {
 @layer components {
   .card {
     @apply rounded-2xl bg-white p-4 shadow-card;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .card:active {
+    transform: scale(0.995);
   }
   .btn {
     @apply inline-flex items-center justify-center gap-1 rounded-xl px-4 py-2 text-sm font-medium transition active:scale-95 disabled:opacity-50;
+    transition-property: transform, background-color, color, border-color, box-shadow, opacity;
+    transition-duration: 0.18s;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
   }
   .btn-primary {
     @apply btn bg-brand-500 text-white hover:bg-brand-600;
@@ -46,4 +53,28 @@ body {
 
 .pb-safe {
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+}
+
+@layer utilities {
+  /* 列表逐条入场：给 card 加 stagger-1/2/3 就有轻微错落感 */
+  .stagger-1 {
+    animation-delay: 45ms;
+  }
+  .stagger-2 {
+    animation-delay: 90ms;
+  }
+  .stagger-3 {
+    animation-delay: 135ms;
+  }
+}
+
+/* 系统开启「减弱动态效果」时关掉动画，照顾晕动/省电场景 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

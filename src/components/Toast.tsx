@@ -21,7 +21,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {msg && (
         <div className="pointer-events-none fixed inset-x-0 top-4 z-50 flex justify-center px-4">
           <div
-            className={`rounded-xl px-4 py-2 text-sm text-white shadow-lg ${
+            className={`animate-fade-down rounded-xl px-4 py-2 text-sm text-white shadow-lg ${
               msg.kind === 'ok' ? 'bg-emerald-600' : 'bg-rose-600'
             }`}
           >

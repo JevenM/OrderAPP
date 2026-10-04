@@ -24,6 +24,17 @@ export type ChangelogEntry = {
 
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '1.7.0',
+    date: '2026-10-04',
+    title: '头像自定义 + 登录排障 + 动效升级',
+    items: [
+      { kind: 'new', text: '头像能自己换啦：顶部点头像即可从相册选图，自动压缩后上传' },
+      { kind: 'improve', text: '饭圈动态也显示头像了' },
+      { kind: 'fix', text: '校验邀请码连不上 Supabase 时不再只显示「Failed to fetch」，会给出可操作的排查建议（项目暂停 / 地址写错 / 没配环境变量 / 网络拦截），并支持一键重试和网络自检' },
+      { kind: 'improve', text: '页面切换、提示条、底部导航都加了过渡动画，卡片点击有轻微反馈；系统开启「减弱动态效果」时会自动关闭' },
+    ],
+  },
   // {
   //   version: '1.6.0',
   //   date: '2026-10-04',

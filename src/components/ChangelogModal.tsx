@@ -23,7 +23,7 @@ export default function ChangelogModal() {
       onClick={dismiss}
     >
       <div
-        className="max-h-[85vh] w-full max-w-md overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-2xl"
+        className="max-h-[85vh] w-full max-w-md animate-slide-up overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-brand-100 px-4 py-3">

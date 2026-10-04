@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from 'react'
 import { HashRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ToastProvider, useToast } from './components/Toast'
+import Avatar from './components/Avatar'
+import AvatarSheet, { saveMemberAvatar } from './components/AvatarSheet'
 import ChangelogModal from './components/ChangelogModal'
 import { APP_TITLE, configured } from './lib/supabase'
 import { requestNotifyPermission } from './lib/notify'
@@ -99,15 +101,22 @@ function MenuItem({
 }
 
 function Layout() {
-  const { role, setViewMember, isAdmin, memberId, memberName, logout } = useSession()
-  const { adminName } = useSettings()
-  const { members } = useMembers()
+  const { role, setViewMember, isAdmin, memberId, memberName, memberAvatar, setMyAvatar, logout } = useSession()
+  const { adminName, adminAvatar, saveAdminAvatar } = useSettings()
+  const { members, reload: reloadMembers } = useMembers()
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const unread = useUnread()
   const { open: openChangelog } = useChangelog()
   const toast = useToast()
   const [menu, setMenu] = useState<'member' | 'more' | null>(null)
+  const [avatarOpen, setAvatarOpen] = useState(false)
+
+  /** 顶部头像：看到谁的脸就用谁的头像；「我」的视角用自己的 */
+  const viewingMember = members.find((m) => m.id === memberId)
+  const isMyView = role === 'me' || !memberId
+  const avatarUrl = isMyView ? adminAvatar : (memberAvatar || viewingMember?.avatar_url || '')
+  const avatarEmoji = isMyView ? '👨‍🍳' : '👧'
 
   const tabs: { to: string; label: string; emoji: string; badge?: number }[] =
     role === 'her'
@@ -158,7 +167,7 @@ function Layout() {
     }
     const m = members.find((x) => x.id === id)
     if (m) {
-      setViewMember({ id: m.id, name: m.name })
+      setViewMember({ id: m.id, name: m.name, avatarUrl: m.avatar_url ?? '' })
       navigate('/order')
     }
   }
@@ -167,6 +176,13 @@ function Layout() {
     <div className="mx-auto flex min-h-screen max-w-md flex-col bg-brand-50/40 pb-20">
       <header className="sticky top-0 z-30 border-b border-brand-100 bg-white/95 backdrop-blur">
         <div className="relative flex items-center gap-2 px-3 py-2">
+          <button
+            className="shrink-0 rounded-full transition active:scale-95"
+            title="点击更换头像"
+            onClick={() => setAvatarOpen(true)}
+          >
+            <Avatar url={avatarUrl} emoji={avatarEmoji} size={38} />
+          </button>
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-[15px] font-semibold leading-tight text-brand-600">{APP_TITLE}</h1>
             <p className="truncate text-[11px] leading-tight text-slate-400">{subtitle}</p>
@@ -228,7 +244,7 @@ function Layout() {
       </header>
 
       {isAdmin && role === 'her' && memberId && (
-        <div className="mx-3 mt-2 flex items-center gap-2 rounded-xl bg-brand-50 px-3 py-1.5 text-[11px] text-brand-700">
+        <div className="mx-3 mt-2 flex animate-fade-down items-center gap-2 rounded-xl bg-brand-50 px-3 py-1.5 text-[11px] text-brand-700">
           <span className="min-w-0 flex-1 truncate">
             👧 正在查看「{memberName || '她'}」，只看她的数据
           </span>
@@ -250,28 +266,52 @@ function Layout() {
         </div>
       )}
 
-      <main className="flex-1 px-4 py-4">
+      {/* key 让每次切页都重新播一次入场动画 */}
+      <main key={pathname} className="flex-1 animate-page px-4 py-4">
         <Outlet />
       </main>
 
+      <AvatarSheet
+        open={avatarOpen}
+        title={isMyView ? '换个头像' : `${viewingMember?.name || '她'}的头像`}
+        hint={isMyView ? '她在饭圈和顶部都能看到这张头像' : '这张头像会出现在她的饭圈动态里'}
+        fallbackEmoji={avatarEmoji}
+        url={avatarUrl}
+        onSave={async (url) => {
+          if (isMyView || !memberId) await saveAdminAvatar(url)
+          else {
+            await saveMemberAvatar(memberId, url)
+            setMyAvatar(url)
+            reloadMembers()
+          }
+        }}
+        onClose={() => setAvatarOpen(false)}
+      />
+
       <nav className="pb-safe fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-md border-t border-brand-100 bg-white/95 backdrop-blur">
-        {tabs.map((t) => (
-          <NavLink
-            key={t.to}
-            to={t.to}
-            className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-xs ${
-              pathname === t.to ? 'text-brand-600' : 'text-slate-400'
-            }`}
-          >
-            <span className="text-lg leading-none">{t.emoji}</span>
-            <span>{t.label}</span>
-            {!!t.badge && t.badge > 0 && (
-              <span className="absolute right-[22%] top-1 min-w-[16px] rounded-full bg-rose-500 px-1 text-[10px] font-semibold leading-4 text-white">
-                {t.badge > 99 ? '99+' : t.badge}
+        {tabs.map((t) => {
+          const active = pathname === t.to
+          return (
+            <NavLink
+              key={t.to}
+              to={t.to}
+              className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-xs transition-colors duration-200 ${
+                active ? 'text-brand-600' : 'text-slate-400'
+              }`}
+            >
+              <span className={`text-lg leading-none transition-transform duration-200 ${active ? 'scale-110' : ''}`}>
+                {t.emoji}
               </span>
-            )}
-          </NavLink>
-        ))}
+              <span>{t.label}</span>
+              {active && <span className="absolute inset-x-0 top-0 mx-auto h-0.5 w-8 rounded-full bg-brand-400 animate-pop-in" />}
+              {!!t.badge && t.badge > 0 && (
+                <span className="absolute right-[22%] top-1 min-w-[16px] animate-pop-in rounded-full bg-rose-500 px-1 text-[10px] font-semibold leading-4 text-white">
+                  {t.badge > 99 ? '99+' : t.badge}
+                </span>
+              )}
+            </NavLink>
+          )
+        })}
       </nav>
     </div>
   )

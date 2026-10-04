@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { createMember, randomCode, removeMember, updateMember } from '../lib/db'
 import { useToast } from '../components/Toast'
+import Avatar from '../components/Avatar'
+import AvatarSheet, { saveMemberAvatar } from '../components/AvatarSheet'
 import { useMembers } from '../store/members'
 import { useSettings } from '../store/settings'
 import type { Member } from '../lib/types'
@@ -8,7 +10,8 @@ import type { Member } from '../lib/types'
 export default function AdminMembers() {
   const toast = useToast()
   const { members, reload, loading } = useMembers()
-  const { adminName, saveAdminName } = useSettings()
+  const { adminName, saveAdminName, adminAvatar, saveAdminAvatar } = useSettings()
+  const [avatarFor, setAvatarFor] = useState<string | null>(null)
   const [myName, setMyName] = useState(adminName)
   const [savingMyName, setSavingMyName] = useState(false)
   const [name, setName] = useState('')
@@ -91,6 +94,12 @@ export default function AdminMembers() {
     <div className="space-y-4">
       <div className="card space-y-2">
         <h3 className="text-sm font-semibold">🙋 我的昵称</h3>
+        <div className="flex items-center gap-3">
+          <Avatar url={adminAvatar} emoji="👨‍🍳" size={56} />
+          <button className="btn-soft text-xs" onClick={() => setAvatarFor('me')}>
+            换我的头像
+          </button>
+        </div>
         <p className="text-[11px] leading-relaxed text-slate-400">
           她在饭圈里看到的名字，随时可改；改完她那边刷新就生效。
           <br />
@@ -154,11 +163,17 @@ export default function AdminMembers() {
       {members.map((m) => (
         <div key={m.id} className="card space-y-2">
           <div className="flex items-center gap-2">
+            <button className="rounded-full transition active:scale-95" title="给她换头像" onClick={() => setAvatarFor(m.id)}>
+              <Avatar url={m.avatar_url} emoji="👧" size={44} />
+            </button>
             <input
-              className="input"
+              className="input flex-1"
               value={val(m).name}
               onChange={(e) => setDraft((d) => ({ ...d, [m.id]: { ...val(m), name: e.target.value } }))}
             />
+            <button className="btn-soft shrink-0 text-xs" onClick={() => setAvatarFor(m.id)}>
+              头像
+            </button>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -204,8 +219,34 @@ export default function AdminMembers() {
         </div>
       ))}
 
+      {avatarFor === 'me' && (
+        <AvatarSheet
+          open
+          title="我的头像"
+          hint="她在饭圈里看到的就是这张，顶部也能看到"
+          fallbackEmoji="👨‍🍳"
+          url={adminAvatar}
+          onSave={saveAdminAvatar}
+          onClose={() => setAvatarFor(null)}
+        />
+      )}
+      {avatarFor && avatarFor !== 'me' && (
+        <AvatarSheet
+          open
+          title={`${members.find((m) => m.id === avatarFor)?.name || '她'}的头像`}
+          hint="她自己也能在顶部点头像更换；这里帮她改也可以"
+          fallbackEmoji="👧"
+          url={members.find((m) => m.id === avatarFor)?.avatar_url ?? null}
+          onSave={async (url) => {
+            await saveMemberAvatar(avatarFor, url)
+            reload()
+          }}
+          onClose={() => setAvatarFor(null)}
+        />
+      )}
+
       <p className="px-1 text-[11px] leading-relaxed text-slate-400">
-        提示：在顶部下拉里可以切换查看任意一个她的视图；每个她登录后只能看到自己的数据。
+        提示：在顶部点一下头像就能换自己的头像；这里可以顺手帮每个她设置。
         <br />
         「她看到我叫」只对这一个人生效：A 看到我叫 maoge、B 看到我叫老干部，互不影响；留空则用上面那个统一昵称。
       </p>
