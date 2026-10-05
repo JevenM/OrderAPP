@@ -49,6 +49,57 @@ export interface DishRequest {
   handled_at: string | null
 }
 
+/* ------------------------------ 好友 ------------------------------ */
+
+export type FriendshipStatus = 'pending' | 'accepted'
+
+/** 一对人一行关系：谁发的申请记在 requester_id，备注各存各的 */
+export interface Friendship {
+  id: string
+  requester_id: string
+  addressee_id: string
+  status: FriendshipStatus
+  requester_note: string | null
+  addressee_note: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** 好友（已经 accepted 的） */
+export interface FriendProfile {
+  memberId: string
+  /** 对方自己设的昵称 */
+  name: string
+  avatarUrl: string
+  /** 我给 TA 的备注（空 = 没备注） */
+  note: string
+  /** 显示名：有备注用备注，否则用昵称 */
+  shownName: string
+  /** 关系行 id（改备注 / 删好友要用）；adminMao 视图下为空串 */
+  friendshipId: string
+  since: string
+}
+
+/** 待接受的好友申请 */
+export interface FriendRequestItem {
+  friendshipId: string
+  memberId: string
+  name: string
+  avatarUrl: string
+  createdAt: string
+}
+
+/** 我和某个人的关系：self 自己 / accepted 好友 / incoming 对方申请我 / outgoing 我申请对方 / none 陌生人 */
+export type FriendRelation = 'self' | 'accepted' | 'incoming' | 'outgoing' | 'none'
+
+export interface FriendSearchResult {
+  memberId: string
+  name: string
+  avatarUrl: string
+  relation: FriendRelation
+  friendshipId: string | null
+}
+
 export interface Dish {
   id: string
   name: string

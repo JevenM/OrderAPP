@@ -1,10 +1,15 @@
-import { configured, supabase } from './supabase'
+import { ADMIN_CODE, ADMIN_NAME, configured, supabase } from './supabase'
 import { compressImage } from './image'
 import { toDayStr } from './date'
 import type {
   Dish,
   DishRequestStatus,
   DishRequest,
+  FriendProfile,
+  FriendRelation,
+  FriendRequestItem,
+  FriendSearchResult,
+  Friendship,
   Meal,
   MealSlot,
   MealStatus,
@@ -194,6 +199,16 @@ export async function findMemberByCode(code: string): Promise<Member | null> {
   }
 }
 
+export async function findMemberByName(name: string): Promise<Member | null> {
+  const { data, error } = await withTimeout(
+    supabase.from('members').select('*').eq('name', name.trim()).maybeSingle(),
+    15_000,
+    '查询成员'
+  )
+  if (error) fail(error, '查询成员')
+  return (data as Member | null) ?? null
+}
+
 export async function createMember(name: string, code: string): Promise<Member> {
   const { data, error } = await supabase.from('members').insert({ name, code }).select().single()
   if (error || !data) fail(error, '新增成员')
@@ -272,6 +287,189 @@ export async function getMemberMyName(memberId: string | null): Promise<string> 
 export async function removeMember(id: string): Promise<void> {
   const { error } = await supabase.from('members').delete().eq('id', id)
   if (error) fail(error, '删除成员')
+}
+
+/* ------------------------------ 好友 ------------------------------ */
+
+/**
+ * 好友可见性总规则（adminMao 是唯一例外）：
+ * - adminMao 默认和所有账户都是好友：能看到所有人的动态 / 点赞 / 评论，也不用发申请；
+ * - 其他账户之间完全隔离：不是好友就什么都看不到，也不能点赞评论；
+ * - 加好友靠邀请码：搜到对方 → 发申请 → 对方接受后才算好友。
+ * 一对人只存一行（谁发的申请记在 requester_id），备注各存各的，互不可见。
+ */
+
+/** 我所有的关系行（含待接受申请） */
+export async function listFriendships(memberId: string): Promise<Friendship[]> {
+  const { data, error } = await withTimeout(
+    supabase
+      .from('friendships')
+      .select('*')
+      .or(`requester_id.eq.${memberId},addressee_id.eq.${memberId}`)
+      .order('updated_at', { ascending: false }),
+    15_000,
+    '加载好友'
+  )
+  if (error) fail(error, '加载好友')
+  return (data ?? []) as Friendship[]
+}
+
+async function membersById(ids: string[]): Promise<Map<string, Member>> {
+  if (!ids.length) return new Map()
+  const { data } = await supabase.from('members').select('*').in('id', ids)
+  return new Map(((data ?? []) as Member[]).map((m) => [m.id, m]))
+}
+
+/** 一行关系里「对方」是谁 */
+function otherIdOf(f: Friendship, myId: string): string {
+  return f.requester_id === myId ? f.addressee_id : f.requester_id
+}
+
+/** 一行关系里「我给对方的备注」 */
+function noteOf(f: Friendship, myId: string): string {
+  return ((f.requester_id === myId ? f.requester_note : f.addressee_note) ?? '').trim()
+}
+
+/** 好友列表（只要 accepted 的） */
+export async function listFriends(memberId: string): Promise<FriendProfile[]> {
+  const rows = (await listFriendships(memberId)).filter((r) => r.status === 'accepted')
+  if (!rows.length) return []
+
+  const byId = await membersById(rows.map((r) => otherIdOf(r, memberId)))
+  return rows.map((r) => {
+    const id = otherIdOf(r, memberId)
+    const m = byId.get(id)
+    const name = m?.name ?? '她'
+    const note = noteOf(r, memberId)
+    return {
+      memberId: id,
+      name,
+      avatarUrl: m?.avatar_url ?? '',
+      note,
+      shownName: note || name,
+      friendshipId: r.id,
+      since: r.updated_at,
+    }
+  })
+}
+
+/** 待处理的申请：incoming 别人申请我 / outgoing 我申请的 */
+export async function listFriendRequests(
+  memberId: string
+): Promise<{ incoming: FriendRequestItem[]; outgoing: FriendRequestItem[] }> {
+  const rows = (await listFriendships(memberId)).filter((r) => r.status === 'pending')
+  if (!rows.length) return { incoming: [], outgoing: [] }
+
+  const byId = await membersById(rows.map((r) => otherIdOf(r, memberId)))
+  const toItem = (r: Friendship): FriendRequestItem => {
+    const id = otherIdOf(r, memberId)
+    const m = byId.get(id)
+    return {
+      friendshipId: r.id,
+      memberId: id,
+      name: m?.name ?? '她',
+      avatarUrl: m?.avatar_url ?? '',
+      createdAt: r.created_at,
+    }
+  }
+
+  return {
+    incoming: rows.filter((r) => r.addressee_id === memberId).map(toItem),
+    outgoing: rows.filter((r) => r.requester_id === memberId).map(toItem),
+  }
+}
+
+/**
+ * 按昵称搜人加好友。返回对方资料和「我现在和 TA 是什么关系」；
+ * 查无此人返回 null（调用方负责提示「没找到这个昵称」）。
+ */
+export async function searchFriendByName(
+  myId: string,
+  searchName: string,
+  adminDisplayName?: string
+): Promise<FriendSearchResult | null> {
+  const normalized = searchName.trim()
+  if (!normalized) return null
+
+  // 管理员的名字可以匹配全局昵称、专属昵称或默认配置
+  if (
+    normalized === ADMIN_CODE ||
+    normalized === ADMIN_NAME ||
+    (adminDisplayName && normalized === adminDisplayName)
+  ) {
+    const base = {
+      memberId: '__admin__',
+      name: adminDisplayName || ADMIN_NAME,
+      avatarUrl: '',
+    }
+    return { ...base, relation: 'accepted' as FriendRelation, friendshipId: null }
+  }
+
+  const target = await findMemberByName(normalized)
+  if (!target) return null
+
+  const base = {
+    memberId: target.id,
+    name: target.name,
+    avatarUrl: target.avatar_url ?? '',
+  }
+
+  if (target.id === myId) return { ...base, relation: 'self' as FriendRelation, friendshipId: null }
+
+  const f = (await listFriendships(myId)).find((r) => r.requester_id === target.id || r.addressee_id === target.id)
+  const relation: FriendRelation = !f
+    ? 'none'
+    : f.status === 'accepted'
+      ? 'accepted'
+      : f.addressee_id === myId
+        ? 'incoming'
+        : 'outgoing'
+
+  return { ...base, relation, friendshipId: f?.id ?? null }
+}
+
+/** 发好友申请（重复申请会给出人话提示） */
+export async function sendFriendRequest(myId: string, targetId: string): Promise<void> {
+  if (myId === targetId) throw new Error('不能添加自己为好友哦～')
+  const f = (await listFriendships(myId)).find((r) => r.requester_id === targetId || r.addressee_id === targetId)
+  if (f?.status === 'accepted') throw new Error('你们已经是好友啦')
+  if (f) {
+    throw new Error(
+      f.addressee_id === myId ? '对方已经向你发过申请了，在上面点「接受」就好 🤝' : '申请已经发出去了，等对方接受一下吧'
+    )
+  }
+  const { error } = await supabase
+    .from('friendships')
+    .insert({ requester_id: myId, addressee_id: targetId, status: 'pending' })
+  if (error) fail(error, '发送好友申请')
+}
+
+/** 接受申请：变成好友，从此互相可见、可互动 */
+export async function acceptFriendRequest(friendshipId: string): Promise<void> {
+  const { error } = await supabase
+    .from('friendships')
+    .update({ status: 'accepted', updated_at: new Date().toISOString() })
+    .eq('id', friendshipId)
+    .select('id')
+  if (error) fail(error, '接受好友申请')
+}
+
+/** 拒绝申请 / 撤回申请 / 删除好友：都是删掉这一行关系（删了还能重新申请） */
+export async function dropFriendship(friendshipId: string): Promise<void> {
+  const { error } = await supabase.from('friendships').delete().eq('id', friendshipId)
+  if (error) fail(error, '处理好友关系')
+}
+
+/** 给好友写备注：只有自己能看到，显示时优先于对方昵称，对方完全无感 */
+export async function setFriendNote(myId: string, friendId: string, note: string): Promise<void> {
+  const f = (await listFriendships(myId)).find((r) => r.requester_id === friendId || r.addressee_id === friendId)
+  if (!f) throw new Error('你们已经不是好友了，刷新一下再看看')
+  const col = f.requester_id === myId ? 'requester_note' : 'addressee_note'
+  const { error } = await supabase
+    .from('friendships')
+    .update({ [col]: note.trim() || null, updated_at: new Date().toISOString() })
+    .eq('id', f.id)
+  if (error) fail(error, '保存备注')
 }
 
 /* ------------------------------ 订单 ------------------------------ */
@@ -482,23 +680,34 @@ export async function uploadMealPhoto(file: File): Promise<UploadedPhoto> {
 /* ------------------------------ 饭圈 ------------------------------ */
 
 /**
- * 可见性规则：
- * - 动态：我（管理员）看到所有人的；某个她只看「我发的」+「她自己发的」，她与她之间互相不可见
+ * 可见性规则（核心：账户之间互相隔离，只有好友才互通）：
+ * - 动态：我（adminMao）看到所有人的；某个她只看「我发的」+「她自己发的」+「她好友发的」，
+ *   非好友的动态一条都看不到
  *   （想让她连自己的都看不到，把 includeSelf 传 false）
- * - 点赞 / 评论：**只有我能看到所有人的**；她只能看到「我点的赞 / 我发的评论」+「她自己的」，
- *   别的她的点赞和评论对她完全不可见
+ * - 点赞 / 评论：**只有我能看到所有人的**；她只能看到「我点的赞 / 我发的评论」+「她自己的」+
+ *   「她好友的」，非好友的点赞和评论对她完全不可见
  * - 针对性回复：评论的 reply_to 填了成员 id 时，**只有那个人能看到**（我也能看到），
  *   没被回复到的人连这条评论都收不到
+ * - adminMao 默认和所有人都是好友，所以走 isAdmin 分支时不做任何过滤
  */
 export async function listPosts(viewer: {
   isAdmin: boolean
   memberId: string | null
   includeSelf?: boolean
+  /** 好友的成员 id 列表：不是好友的动态 / 点赞 / 评论一律过滤掉 */
+  friendIds?: string[]
 }): Promise<PostWithMeta[]> {
+  const friendIds = (viewer.friendIds ?? []).filter(Boolean)
+  const friendSet = new Set(friendIds)
+
   let query = supabase.from('posts').select('*')
   if (!viewer.isAdmin) {
     const filters = ['author.eq.me']
     if (viewer.memberId && viewer.includeSelf !== false) filters.push(`member_id.eq.${viewer.memberId}`)
+    if (friendIds.length) {
+      const memberFriendIds = friendIds.filter((id) => id !== '__admin__')
+      if (memberFriendIds.length) filters.push(`member_id.in.(${memberFriendIds.join(',')})`)
+    }
     query = query.or(filters.join(','))
   }
   const { data: posts, error } = await query.order('created_at', { ascending: false }).limit(50)
@@ -519,19 +728,26 @@ export async function listPosts(viewer: {
   if (likes.error) fail(likes.error, '加载点赞')
   if (comments.error) fail(comments.error, '加载评论')
 
+  /** 这个人是我 / 我（adminMao）/ 我的好友吗？不是就一律不可见 */
+  const isVisibleActor = (memberId: string | null) =>
+    memberId === null || (!!viewer.memberId && memberId === viewer.memberId) || friendSet.has(memberId)
+
   /**
-   * 点赞可见性：我全看到；她只能看到「我点的」+「她自己点的」
+   * 点赞可见性：我全看到；她只能看到「我点的」+「她自己点的」+「她好友点的」
    * （她自己的必须保留，否则她点完赞连红心都不亮）
    */
-  const canSeeLike = (l: PostLike) =>
-    viewer.isAdmin || l.member_id === null || (!!viewer.memberId && l.member_id === viewer.memberId)
+  const canSeeLike = (l: PostLike) => viewer.isAdmin || isVisibleActor(l.member_id)
 
-  /** 评论可见性：我全看到；她看到「我的公开评论」+「我专门回复她的」+「她自己的」 */
+  /** 评论可见性：我全看到；她看到「我的评论」+「她自己的」+「她好友的」（定向回复只给被回复的人） */
   const canSeeComment = (c: PostComment) => {
     if (viewer.isAdmin) return true
+    if (!isVisibleActor(c.member_id)) return false // 非好友的评论，连影子都看不到
     if (viewer.memberId && c.member_id === viewer.memberId) return true // 她自己的
-    if (c.member_id !== null) return false // 别的她发的
-    // 我发的：没指定人 → 公开；指定了人 → 只有那个人能看到
+    if (c.member_id === null) {
+      // 我发的：没指定人 → 公开；指定了人 → 只有那个人能看到
+      return c.reply_to === null || (!!viewer.memberId && c.reply_to === viewer.memberId)
+    }
+    // 好友发的：定向回复只给被回复的那个人看
     return c.reply_to === null || (!!viewer.memberId && c.reply_to === viewer.memberId)
   }
 

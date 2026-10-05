@@ -25,6 +25,18 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.8.0',
+    date: '2026-10-05',
+    title: '好友系统上线',
+    items: [
+      { kind: 'new', text: '新增好友功能：在「好友」页输入对方的专属昵称搜索并发申请，对方接受后才是好友' },
+      { kind: 'new', text: '不是好友，饭圈动态、点赞、评论一条都看不到，也不能互动' },
+      // { kind: 'new', text: 'adminMao 默认和所有账户都是好友，依然能看到所有人的动态' },
+      { kind: 'new', text: '可以给好友添加备注' },
+      { kind: 'new', text: '个人资料与安全性：昵称唯一保障，加好友通过昵称查找，不公开展示私密邀请码；每个人都能改自己的头像和昵称' },
+    ],
+  },
+  {
     version: '1.7.0',
     date: '2026-10-04',
     title: '头像自定义 + 登录排障 + 动效升级',
@@ -45,14 +57,14 @@ export const CHANGELOG: ChangelogEntry[] = [
   //     { kind: 'new', text: '顶部多了一条「正在查看某某，所有页面只显示她的数据」提示条，右侧一键「回到全员」' },
   //   ],
   // },
-  {
-    version: '1.6.0',
-    date: '2026-10-04',
-    title: '优化banner显示',
-    items: [
-      { kind: 'new', text: '修复banner显示拥挤高度太大的问题' },
-    ],
-  },
+  // {
+  //   version: '1.6.0',
+  //   date: '2026-10-04',
+  //   title: '优化banner显示',
+  //   items: [
+  //     { kind: 'new', text: '修复banner显示拥挤高度太大的问题' },
+  //   ],
+  // },
   // {
   //   version: '1.4.0',
   //   date: '2026-10-04',

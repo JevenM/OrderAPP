@@ -2,7 +2,9 @@ import { useState, type ReactNode } from 'react'
 import { HashRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ToastProvider, useToast } from './components/Toast'
 import Avatar from './components/Avatar'
-import AvatarSheet, { saveMemberAvatar } from './components/AvatarSheet'
+import ProfileSheet from './components/ProfileSheet'
+import { saveMemberAvatar } from './components/AvatarSheet'
+import { updateMember } from './lib/db'
 import ChangelogModal from './components/ChangelogModal'
 import { APP_TITLE, configured } from './lib/supabase'
 import { requestNotifyPermission } from './lib/notify'
@@ -10,12 +12,14 @@ import { SessionProvider, useSession } from './store/session'
 import { SettingsProvider, useSettings } from './store/settings'
 import { UnreadProvider, useUnread } from './store/unread'
 import { MembersProvider, useMembers } from './store/members'
+import { FriendsProvider, useFriends } from './store/friends'
 import { ChangelogProvider, useChangelog } from './store/changelog'
 import type { Role } from './lib/types'
 import Login from './pages/Login'
 import OrderPage from './pages/OrderPage'
 import MealLogPage from './pages/MealLogPage'
 import FeedPage from './pages/FeedPage'
+import FriendsPage from './pages/FriendsPage'
 import AdminOrders from './pages/AdminOrders'
 import AdminMeals from './pages/AdminMeals'
 import AdminDishes from './pages/AdminDishes'
@@ -54,19 +58,22 @@ function Shell() {
   return (
     <UnreadProvider enabled={isAdmin}>
       <MembersProvider enabled={isAdmin}>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route path="/" element={<Navigate to={HOME[role]} replace />} />
-            <Route path="/order" element={<OrderPage />} />
-            <Route path="/meals" element={<MealLogPage />} />
-            <Route path="/feed" element={<FeedPage />} />
-            <Route path="/admin/orders" element={<AdminOrders />} />
-            <Route path="/admin/meals" element={<AdminMeals />} />
-            <Route path="/admin/dishes" element={<AdminDishes />} />
-            <Route path="/admin/members" element={<AdminMembers />} />
-            <Route path="*" element={<Navigate to={HOME[role]} replace />} />
-          </Route>
-        </Routes>
+        <FriendsProvider>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<Navigate to={HOME[role]} replace />} />
+              <Route path="/order" element={<OrderPage />} />
+              <Route path="/meals" element={<MealLogPage />} />
+              <Route path="/feed" element={<FeedPage />} />
+              <Route path="/friends" element={<FriendsPage />} />
+              <Route path="/admin/orders" element={<AdminOrders />} />
+              <Route path="/admin/meals" element={<AdminMeals />} />
+              <Route path="/admin/dishes" element={<AdminDishes />} />
+              <Route path="/admin/members" element={<AdminMembers />} />
+              <Route path="*" element={<Navigate to={HOME[role]} replace />} />
+            </Route>
+          </Routes>
+        </FriendsProvider>
       </MembersProvider>
     </UnreadProvider>
   )
@@ -101,16 +108,18 @@ function MenuItem({
 }
 
 function Layout() {
-  const { role, setViewMember, isAdmin, memberId, memberName, memberAvatar, setMyAvatar, logout } = useSession()
-  const { adminName, adminAvatar, saveAdminAvatar } = useSettings()
+  const { role, setViewMember, isAdmin, memberId, memberName, memberAvatar, setMyAvatar, setMyName, logout } =
+    useSession()
+  const { adminName, adminAvatar, saveAdminAvatar, saveAdminName } = useSettings()
   const { members, reload: reloadMembers } = useMembers()
+  const { incoming } = useFriends()
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const unread = useUnread()
   const { open: openChangelog } = useChangelog()
   const toast = useToast()
   const [menu, setMenu] = useState<'member' | 'more' | null>(null)
-  const [avatarOpen, setAvatarOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
 
   /** 顶部头像：看到谁的脸就用谁的头像；「我」的视角用自己的 */
   const viewingMember = members.find((m) => m.id === memberId)
@@ -124,6 +133,7 @@ function Layout() {
           { to: '/order', label: '点菜', emoji: '🧾' },
           { to: '/meals', label: '三餐', emoji: '🍚' },
           { to: '/feed', label: '饭圈', emoji: '📸' },
+          { to: '/friends', label: '好友', emoji: '👫', badge: incoming.length },
         ]
       : [
           { to: '/admin/orders', label: '订单', emoji: '🧾', badge: unread.orders },
@@ -178,8 +188,8 @@ function Layout() {
         <div className="relative flex items-center gap-2 px-3 py-2">
           <button
             className="shrink-0 rounded-full transition active:scale-95"
-            title="点击更换头像"
-            onClick={() => setAvatarOpen(true)}
+            title="点击修改头像和昵称"
+            onClick={() => setProfileOpen(true)}
           >
             <Avatar url={avatarUrl} emoji={avatarEmoji} size={38} />
           </button>
@@ -230,6 +240,10 @@ function Layout() {
                   {role === 'me' && (
                     <MenuItem onClick={() => run(enableBell)}>开启推送通知</MenuItem>
                   )}
+                  {role === 'me' && (
+                    <MenuItem onClick={() => run(() => navigate('/friends'))}>好友</MenuItem>
+                  )}
+                  <MenuItem onClick={() => run(() => setProfileOpen(true))}>个人资料</MenuItem>
                   <MenuItem onClick={() => run(openChangelog)}>更新日志</MenuItem>
                   <MenuItem danger onClick={() => run(doLogout)}>
                     退出登录
@@ -271,22 +285,36 @@ function Layout() {
         <Outlet />
       </main>
 
-      <AvatarSheet
-        open={avatarOpen}
-        title={isMyView ? '换个头像' : `${viewingMember?.name || '她'}的头像`}
-        hint={isMyView ? '她在饭圈和顶部都能看到这张头像' : '这张头像会出现在她的饭圈动态里'}
-        fallbackEmoji={avatarEmoji}
-        url={avatarUrl}
-        onSave={async (url) => {
-          if (isMyView || !memberId) await saveAdminAvatar(url)
-          else {
-            await saveMemberAvatar(memberId, url)
-            setMyAvatar(url)
-            reloadMembers()
-          }
-        }}
-        onClose={() => setAvatarOpen(false)}
-      />
+      {profileOpen && (
+        <ProfileSheet
+          open
+          title={isMyView ? '我的资料' : `${viewingMember?.name || memberName || '她'}的资料`}
+          name={isMyView ? adminName : memberName || viewingMember?.name || ''}
+          avatarUrl={avatarUrl}
+          fallbackEmoji={avatarEmoji}
+          hint={isMyView ? '改完头像和昵称，好友那边立刻就能看到' : '昵称和头像改完，你的好友立刻能看到'}
+          onSaveAvatar={async (url) => {
+            if (isMyView || !memberId) await saveAdminAvatar(url)
+            else {
+              await saveMemberAvatar(memberId, url)
+              setMyAvatar(url)
+              reloadMembers()
+            }
+          }}
+          onSaveName={async (n) => {
+            if (isMyView || !memberId) await saveAdminName(n)
+            else {
+              if (members.some((x) => x.id !== memberId && x.name.toLowerCase() === n.trim().toLowerCase())) {
+                throw new Error('这个昵称已被其他成员使用，请换一个')
+              }
+              await updateMember(memberId, { name: n.trim() })
+              setMyName(n.trim())
+              reloadMembers()
+            }
+          }}
+          onClose={() => setProfileOpen(false)}
+        />
+      )}
 
       <nav className="pb-safe fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-md border-t border-brand-100 bg-white/95 backdrop-blur">
         {tabs.map((t) => {

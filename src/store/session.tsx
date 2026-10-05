@@ -21,10 +21,14 @@ type SessionValue = {
   memberId: string | null
   memberName: string
   memberAvatar: string
+  /** 登录用的邀请码（adminMao 就是管理口令）：给别人加好友时用 */
+  code: string
   enter: (code: string) => Promise<boolean>
   setViewMember: (m: { id: string; name: string; avatarUrl?: string | null } | null) => void
   /** 她自己换完头像后同步进登录态（不用重新登录就能看到） */
   setMyAvatar: (url: string | null) => void
+  /** 她自己改完昵称后同步进登录态 */
+  setMyName: (name: string) => void
   logout: () => void
 }
 
@@ -97,6 +101,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setState((s) => (s ? { ...s, memberAvatar: url ?? '' } : s))
   }, [])
 
+  /** 她自己改昵称后立刻生效 */
+  const setMyName = useCallback((name: string) => {
+    setState((s) => (s ? { ...s, memberName: name } : s))
+  }, [])
+
   const logout = useCallback(() => setState(null), [])
 
   const value = useMemo<SessionValue>(
@@ -107,12 +116,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       memberId: state?.memberId ?? null,
       memberName: state?.memberName ?? '',
       memberAvatar: state?.memberAvatar ?? '',
+      code: state?.code ?? '',
       enter,
       setViewMember,
       setMyAvatar,
+      setMyName,
       logout,
     }),
-    [state, isAdmin, enter, setViewMember, setMyAvatar, logout]
+    [state, isAdmin, enter, setViewMember, setMyAvatar, setMyName, logout]
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

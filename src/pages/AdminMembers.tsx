@@ -47,6 +47,9 @@ export default function AdminMembers() {
     const n = name.trim()
     const c = code.trim()
     if (!n) return toast.show('给她起个昵称吧～', 'err')
+    if (members.some((m) => m.name.toLowerCase() === n.toLowerCase())) {
+      return toast.show('这个昵称已经有人用了，请换一个', 'err')
+    }
     if (!c) return toast.show('邀请码不能为空', 'err')
     if (members.some((m) => m.code === c)) return toast.show('这个邀请码已经有人用了', 'err')
     setBusy(true)
@@ -68,6 +71,9 @@ export default function AdminMembers() {
     const n = d.name.trim()
     const c = d.code.trim()
     if (!n) return toast.show('昵称不能为空', 'err')
+    if (members.some((x) => x.id !== m.id && x.name.toLowerCase() === n.toLowerCase())) {
+      return toast.show('这个昵称已经有人用了，请换一个', 'err')
+    }
     if (!c) return toast.show('邀请码不能为空', 'err')
     if (members.some((x) => x.id !== m.id && x.code === c)) return toast.show('邀请码重复了', 'err')
     try {
@@ -246,7 +252,11 @@ export default function AdminMembers() {
       )}
 
       <p className="px-1 text-[11px] leading-relaxed text-slate-400">
-        提示：在顶部点一下头像就能换自己的头像；这里可以顺手帮每个她设置。
+        提示：在顶部点一下头像就能改自己的头像和昵称；这里可以顺手帮每个她设置。
+        <br />
+        她自己也能改昵称和头像（点头像 → 个人资料），改完你这边刷新就同步。
+        <br />
+        好友关系在「好友」页管理：不是好友的账户互相看不到任何动态、点赞和评论。
         <br />
         「她看到我叫」只对这一个人生效：A 看到我叫 maoge、B 看到我叫老干部，互不影响；留空则用上面那个统一昵称。
       </p>

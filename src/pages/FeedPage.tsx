@@ -7,6 +7,7 @@ import { useRealtime } from '../lib/realtime'
 import { timeCn } from '../lib/date'
 import { useSession } from '../store/session'
 import { useMembers } from '../store/members'
+import { useFriends } from '../store/friends'
 import { useSettings } from '../store/settings'
 import { SLOT_LABEL, type PostComment, type PostWithMeta } from '../lib/types'
 
@@ -17,6 +18,7 @@ export default function FeedPage() {
   const toast = useToast()
   const { isAdmin, role, memberId, memberName, memberAvatar } = useSession()
   const { members } = useMembers()
+  const { friendIds, displayName, avatarOf: friendAvatar, isFriend } = useFriends()
   const { viewerAdminName, adminAvatar } = useSettings()
   const [posts, setPosts] = useState<PostWithMeta[]>([])
   const [draft, setDraft] = useState({ content: '', photo_url: '' })
@@ -35,13 +37,23 @@ export default function FeedPage() {
   const asMemberView = isAdmin && role === 'her'
   const feedIsAdmin = isAdmin && !asMemberView
 
+  // friendIds 是数组，直接进依赖会导致每次渲染都重载，拼成字符串当 key
+  const friendKey = friendIds.join(',')
+
   const load = useCallback(async () => {
     try {
-      setPosts(await listPosts({ isAdmin: feedIsAdmin, memberId, includeSelf: true }))
+      setPosts(
+        await listPosts({
+          isAdmin: feedIsAdmin,
+          memberId,
+          includeSelf: true,
+          friendIds: friendKey ? friendKey.split(',') : [],
+        })
+      )
     } catch (e) {
       toast.show((e as Error).message, 'err')
     }
-  }, [feedIsAdmin, memberId, toast])
+  }, [feedIsAdmin, memberId, friendKey, toast])
 
   useEffect(() => {
     void load()
@@ -53,6 +65,7 @@ export default function FeedPage() {
       { table: 'posts', on: () => void load() },
       { table: 'post_likes', on: () => void load() },
       { table: 'post_comments', on: () => void load() },
+      { table: 'friendships', on: () => void load() },
     ],
     { onPoll: () => void load() }
   )
@@ -60,19 +73,20 @@ export default function FeedPage() {
   /**
    * 昵称显示：我发的 → 当前视图眼里我叫什么（可在「成员」页按人单独设置，没单独设置就用统一昵称）；
    * 她本人 → 她自己的昵称（登录态里有，不依赖成员列表）；
-   * 其他人 → 成员表里的昵称（她看不到别人，所以只有我能用到这条分支）
+   * 其他人 → 好友列表里的显示名（有备注用备注），不是好友就走成员表兜底（只有我能用到）
    */
   const nameOf = (id: string | null): string => {
     if (!id) return viewerAdminName
     if (id === memberId && memberName) return memberName
+    if (isFriend(id)) return displayName(id) || '她'
     return members.find((m) => m.id === id)?.name ?? '她'
   }
 
-  /** 头像：我的用统一头像，她的用成员表里那张（她本人用登录态里的），没传就用默认表情 */
+  /** 头像：我的用统一头像；她本人用登录态里的；好友用好友列表里的（带备注的人也一样） */
   const avatarOf = (id: string | null): { url: string; emoji: string } => {
     if (!id) return { url: adminAvatar, emoji: '👨‍🍳' }
-    if (id === memberId) return { url: memberAvatar || (members.find((m) => m.id === id)?.avatar_url ?? ''), emoji: '👧' }
-    return { url: members.find((m) => m.id === id)?.avatar_url ?? '', emoji: '👧' }
+    if (id === memberId) return { url: memberAvatar || friendAvatar(id) || (members.find((m) => m.id === id)?.avatar_url ?? ''), emoji: '👧' }
+    return { url: friendAvatar(id) || (members.find((m) => m.id === id)?.avatar_url ?? ''), emoji: '👧' }
   }
 
   const likedByViewer = (p: PostWithMeta) =>
@@ -126,9 +140,17 @@ export default function FeedPage() {
     }
   }
 
+  /** 这条评论能针对性回复谁：没有明确目标（或目标就是自己）就不显示「回复」 */
+  const startReplyTarget = (p: PostWithMeta, c: PostComment): string | null => {
+    const targetId = c.member_id ?? p.member_id ?? null
+    if (!targetId) return null
+    if (!feedIsAdmin && targetId === memberId) return null // 不用回复自己
+    return targetId
+  }
+
   /** 点某条评论的「回复」：默认回复这条评论的主人；这条评论是我发的就回复动态的主人 */
   const startReply = (p: PostWithMeta, c: PostComment) => {
-    const targetId = c.member_id ?? p.member_id ?? null
+    const targetId = startReplyTarget(p, c) ?? null
     setReplyTarget((t) => ({ ...t, [p.id]: { id: targetId, label: targetId ? nameOf(targetId) : '' } }))
   }
 
@@ -143,7 +165,7 @@ export default function FeedPage() {
       await addComment(p.id, meKey, text, target?.id ?? null)
       setComments((c) => ({ ...c, [p.id]: '' }))
       cancelReply(p.id)
-      toast.show(target?.id ? `已回复 ${target.label}，只有她能看到 🔒` : '已评论')
+      toast.show(target?.id ? `🔒 已回复 ${target.label}` : '已评论')
       await load()
     } catch (e) {
       toast.show((e as Error).message, 'err')
@@ -178,9 +200,7 @@ export default function FeedPage() {
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-600">饭圈（{posts.length} 条）</h2>
         <span className="text-[11px] text-slate-400">
-          {isAdmin
-            ? '你能看到所有人的动态、点赞和评论'
-            : '你发的动态他也能看到哦~'}
+          {feedIsAdmin ? '你能看到所有人的动态、点赞和评论' : '好友圈'}
         </span>
       </div>
 
@@ -219,11 +239,11 @@ export default function FeedPage() {
               </button>
             )}
           </div>
-          {!isAdmin && (
+          {/* {!feedIsAdmin && (
             <p className="text-[11px] text-brand-600">
-              🔒 对他可见
+              🔒 仅好友可见
             </p>
-          )}
+          )} */}
           <button className="btn-primary w-full" disabled={posting} onClick={publish}>
             {posting ? '发布中…' : '发布到饭圈'}
           </button>
@@ -296,7 +316,7 @@ export default function FeedPage() {
                       <span className="text-slate-700">{c.content}</span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
-                      {isAdmin && (
+                      {startReplyTarget(p, c) !== null && (
                         <button className="text-slate-300" onClick={() => startReply(p, c)}>
                           回复
                         </button>

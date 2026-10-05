@@ -84,11 +84,11 @@ export default function Login() {
           {busy ? '进入中…' : '进 入'}
         </button>
 
-        {configured && import.meta.env.DEV && (
+        {/* {configured && import.meta.env.DEV && (
           <p className="text-center text-[11px] text-slate-400">
             开发模式：邀请码 {INVITE_CODE} ／ 管理口令 {ADMIN_CODE}
           </p>
-        )}
+        )} */}
         {!configured && (
           <p className="whitespace-pre-line rounded-xl bg-amber-50 p-2 text-[11px] leading-relaxed text-amber-700">
             还没连上 Supabase：复制 .env.example 为 .env 并填入 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 后重启 npm run
