@@ -112,7 +112,18 @@ export function useRealtime(channelName: string, watches: Watch[], options: Opti
     if (isRealtimeBroken()) startPolling()
     else subscribe()
 
+    // 页面从后台切换回前台时，主动触发一次轮询/刷新，避免从桌面切回来时数据还是旧的
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        pollRef.current?.()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('focus', onVisibilityChange)
+
     return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('focus', onVisibilityChange)
       stopPolling()
       const c = channel
       channel = null

@@ -153,11 +153,24 @@ function Layout() {
       : adminName
 
   const enableBell = async () => {
+    if (typeof window !== 'undefined' && !window.isSecureContext) {
+      toast.show('通知需要 HTTPS 环境，请使用 HTTPS 访问', 'err')
+      return
+    }
     const p = await requestNotifyPermission()
-    toast.show(
-      p === 'granted' ? '已开启通知 🔔' : p === 'unsupported' ? '当前浏览器不支持通知' : '通知未授权',
-      p === 'granted' ? 'ok' : 'err'
-    )
+    if (p === 'granted') {
+      toast.show('已开启通知 🔔')
+    } else if (p === 'unsupported') {
+      // 针对 iPhone / Safari 给出明确指引（需 iOS 16.4+ 且添加到主屏幕打开）
+      const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent)
+      if (isIOS) {
+        toast.show('iPhone 请先“添加到主屏幕”，在桌面打开即可开启通知 📲', 'err')
+      } else {
+        toast.show('当前浏览器未开放通知权限，可在手机/浏览器系统设置中开启', 'err')
+      }
+    } else {
+      toast.show('通知未授权，请在浏览器地址栏或系统设置中允许通知', 'err')
+    }
   }
 
   const doLogout = () => {

@@ -27,6 +27,9 @@ export default function FeedPage() {
   const [comments, setComments] = useState<Record<string, string>>({})
   const [replyTarget, setReplyTarget] = useState<ReplyTarget>({})
 
+  const [likingId, setLikingId] = useState<string | null>(null)
+  const [sendingId, setSendingId] = useState<string | null>(null)
+
   // 我发的动态 / 点赞 / 评论都记 member_id = null；她用她自己的 member id
   const meKey = isAdmin ? null : memberId
 
@@ -132,11 +135,14 @@ export default function FeedPage() {
   }
 
   const like = async (p: PostWithMeta) => {
+    setLikingId(p.id)
     try {
       await toggleLike(p.id, meKey)
       await load()
     } catch (e) {
       toast.show((e as Error).message, 'err')
+    } finally {
+      setTimeout(() => setLikingId(null), 450)
     }
   }
 
@@ -160,6 +166,7 @@ export default function FeedPage() {
     const text = (comments[p.id] ?? '').trim()
     if (!text) return
     const target = replyTarget[p.id]
+    setSendingId(p.id)
     try {
       // 针对性回复：填了目标成员就只有她能看到；没目标就是公开评论
       await addComment(p.id, meKey, text, target?.id ?? null)
@@ -169,6 +176,8 @@ export default function FeedPage() {
       await load()
     } catch (e) {
       toast.show((e as Error).message, 'err')
+    } finally {
+      setSendingId(null)
     }
   }
 
@@ -244,7 +253,13 @@ export default function FeedPage() {
               🔒 仅好友可见
             </p>
           )} */}
-          <button className="btn-primary w-full" disabled={posting} onClick={publish}>
+          <button
+            className={`btn-primary w-full transition-transform active:scale-[0.98] ${
+              posting ? 'opacity-70 pointer-events-none' : ''
+            }`}
+            disabled={posting}
+            onClick={publish}
+          >
             {posting ? '发布中…' : '发布到饭圈'}
           </button>
         </div>
@@ -252,12 +267,12 @@ export default function FeedPage() {
 
       {!showComposer && (
         <p className="rounded-xl bg-brand-50 px-3 py-2 text-[11px] text-brand-700">
-          🍚 每天记录三餐后会自动发到这里（可带照片），在下面点赞和评论～
+          🍚 每天记录三餐后会自动发到这里，在下面点赞和评论～
         </p>
       )}
       {showComposer && (
         <p className="px-1 text-[11px] text-slate-400">
-          🍚 记录三餐时会自动发一条到这里，也可以在这里手动发（可带照片）
+          🍚 记录三餐时会自动发一条到这里，也可以手动发
         </p>
       )}
 
@@ -267,8 +282,10 @@ export default function FeedPage() {
         const liked = likedByViewer(p)
         const target = replyTarget[p.id]
         const who = avatarOf(p.member_id)
+        const isLiking = likingId === p.id
+        const isSending = sendingId === p.id
         return (
-          <div key={p.id} className="card space-y-2">
+          <div key={p.id} className="card space-y-2 animate-pop-in">
             <div className="flex items-center gap-2">
               <Avatar url={who.url} emoji={who.emoji} size={38} />
               <div className="min-w-0 flex-1">
@@ -276,7 +293,6 @@ export default function FeedPage() {
                 <div className="text-[11px] text-slate-400">
                   {timeCn(p.created_at)}
                   {p.meal_slot ? ` · ${SLOT_LABEL[p.meal_slot]}` : ''}
-                  {p.day ? ` · ${p.day}` : ''}
                 </div>
               </div>
               {canDeletePost(p) && (
@@ -294,18 +310,23 @@ export default function FeedPage() {
 
             <div className="flex items-center gap-3 pt-1">
               <button
-                className={`text-sm transition active:scale-95 ${liked ? 'animate-heart text-rose-500' : 'text-slate-400'}`}
+                className={`inline-flex items-center gap-1 text-sm transition active:scale-90 ${
+                  isLiking ? 'animate-heart' : ''
+                } ${liked ? 'text-rose-500' : 'text-slate-400'}`}
                 onClick={() => like(p)}
               >
-                {liked ? '❤️' : '🤍'} {p.likes.length}
+                <span className={`inline-block transition-transform duration-200 ${isLiking ? 'scale-125' : ''}`}>
+                  {liked ? '❤️' : '🤍'}
+                </span>
+                <span>{p.likes.length}</span>
               </button>
               <span className="text-xs text-slate-400">💬 {p.comments.length}</span>
             </div>
 
             {p.comments.length > 0 && (
-              <div className="space-y-1 rounded-xl bg-slate-50 p-2">
+              <div className="space-y-1 rounded-xl bg-slate-50 p-2 transition-all">
                 {p.comments.map((c) => (
-                  <div key={c.id} className="flex items-start gap-2 text-xs">
+                  <div key={c.id} className="animate-fade flex items-start gap-2 text-xs">
                     <span className="min-w-0 flex-1">
                       {c.reply_to && (
                         <span className="mr-1 rounded bg-brand-50 px-1 text-[10px] text-brand-600">
@@ -354,8 +375,14 @@ export default function FeedPage() {
                   }
                 }}
               />
-              <button className="btn-soft shrink-0 px-3 text-xs" onClick={() => send(p)}>
-                发送
+              <button
+                className={`btn-soft shrink-0 px-3 text-xs transition-all active:scale-95 ${
+                  isSending ? 'opacity-60 scale-95 pointer-events-none' : ''
+                }`}
+                disabled={isSending}
+                onClick={() => send(p)}
+              >
+                {isSending ? '发送中…' : '发送'}
               </button>
             </div>
           </div>

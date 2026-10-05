@@ -22,9 +22,30 @@ export function browserNotify(title: string, body: string): void {
 }
 
 export async function requestNotifyPermission(): Promise<NotificationPermission | 'unsupported'> {
-  if (typeof Notification === 'undefined') return 'unsupported'
+  // 1. 如果在非安全上下文（HTTP）下，浏览器直接禁用了 Notification API
+  if (typeof window !== 'undefined' && !window.isSecureContext) {
+    return 'unsupported'
+  }
+
+  // 2. iOS Safari / PWA 支持检测
+  if (typeof Notification === 'undefined') {
+    return 'unsupported'
+  }
+
   if (Notification.permission !== 'default') return Notification.permission
-  return await Notification.requestPermission()
+
+  try {
+    // 现代浏览器支持 Promise 形式，旧版 WebKit 仅支持回调
+    const res = Notification.requestPermission()
+    if (res && typeof res.then === 'function') {
+      return await res
+    }
+    return await new Promise((resolve) => {
+      Notification.requestPermission((p) => resolve(p))
+    })
+  } catch {
+    return 'unsupported'
+  }
 }
 
 /** 提示音（下单/提交时后台“叮”一下） */

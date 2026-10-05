@@ -25,17 +25,26 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '1.8.0',
+    version: '1.8.1',
     date: '2026-10-05',
-    title: '好友系统上线',
+    title: '交互动效升级与多项体验优化',
     items: [
-      { kind: 'new', text: '新增好友功能' },
-      // { kind: 'new', text: '不是好友，饭圈动态、点赞、评论一条都看不到，也不能互动' },
-      // { kind: 'new', text: 'adminMao 默认和所有账户都是好友，依然能看到所有人的动态' },
-      { kind: 'new', text: '可以给好友添加备注' },
-      { kind: 'new', text: '个人资料与安全性；能改自己的头像和昵称' },
+      { kind: 'improve', text: '交互动效提升：饭圈动态加入弹出动画，点赞增加爱心跳动动效，发布动态与发送评论均增加触控微动效' },
+      { kind: 'fix', text: '去除动态日期重复：修正动态卡片日期拼接逻辑，仅保留精简发布时间与餐次标签' },
+      { kind: 'fix', text: '桌面端即时刷新：Service Worker 改为网络优先策略，并在切回前台时自动刷新最新数据，避免从桌面点入显示旧内容' },
+      { kind: 'improve', text: '手机通知体验优化：增强旧版 WebKit 与移动端兼容，针对 iPhone 引导添加到主屏幕后再开启系统通知' },
     ],
   },
+  // {
+  //   version: '1.8.0',
+  //   date: '2026-10-05',
+  //   title: '个人资料与安全加固',
+  //   items: [
+  //     { kind: 'new', text: '昵称唯一性支持：个人资料支持自定义唯一昵称，后台与个人中心均增加重名校验' },
+  //     { kind: 'improve', text: '邀请码安全保护：个人资料与好友页面彻底隐藏登录邀请码展示，避免口令泄露' },
+  //     { kind: 'improve', text: '简化界面入口：暂时隐藏未启用功能，保持操作界面轻简聚焦' },
+  //   ],
+  // },
   // {
   //   version: '1.7.0',
   //   date: '2026-10-04',
