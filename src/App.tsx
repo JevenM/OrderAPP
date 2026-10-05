@@ -59,7 +59,7 @@ function Shell() {
   }
 
   return (
-    <UnreadProvider enabled={isAdmin}>
+    <UnreadProvider enabled={true}>
       <MembersProvider enabled={isAdmin}>
         <FriendsProvider>
           <Routes>

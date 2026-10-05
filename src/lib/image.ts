@@ -70,24 +70,32 @@ function render(img: HTMLImageElement, w: number, h: number, quality: number): P
 export async function compressImage(file: File, targetBytes = TARGET_PHOTO_BYTES): Promise<CompressedImage> {
   const img = await loadImage(file)
 
+  // 针对特大原图（例如 10MB~50MB），先根据分辨率预收缩，初始长边限制在 1280 像素
   const scale = Math.min(1, MAX_EDGE / Math.max(img.width, img.height))
   let w = Math.max(1, Math.round(img.width * scale))
   let h = Math.max(1, Math.round(img.height * scale))
-  let quality = 0.82
+  let quality = 0.8
 
   let blob = await render(img, w, h, quality)
   let rounds = 0
 
-  while (blob.size > targetBytes && rounds < 24) {
+  // 增大循环轮次，增加阶梯步进收缩算法，保证超大图片也能稳定压进 20KB（targetBytes）以内
+  while (blob.size > targetBytes && rounds < 35) {
     rounds += 1
-    if (quality > 0.45) {
-      quality = Math.max(0.4, quality - 0.12)
-    } else if (w > 240 && h > 240) {
-      w = Math.round(w * 0.72)
-      h = Math.round(h * 0.72)
-      quality = 0.72
+    if (quality > 0.5) {
+      quality = Math.max(0.45, quality - 0.1)
+    } else if (w > 320 && h > 320) {
+      w = Math.round(w * 0.75)
+      h = Math.round(h * 0.75)
+      quality = 0.7
+    } else if (quality > 0.25) {
+      quality = Math.max(0.2, quality - 0.08)
+    } else if (w > 160 && h > 160) {
+      w = Math.round(w * 0.8)
+      h = Math.round(h * 0.8)
+      quality = 0.35
     } else {
-      break // 已经不能再压了，就用当前结果
+      break // 已经极限缩小，退出循环
     }
     blob = await render(img, w, h, quality)
   }

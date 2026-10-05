@@ -25,6 +25,15 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.8.2',
+    date: '2026-10-05',
+    title: '互动消息实时提醒与超大图智能压缩',
+    items: [
+      { kind: 'new', text: '饭圈互动即时提醒：发布新动态、点赞你的动态、发表评论或定向回复时，实时弹出消息提示、声音与系统通知' },
+      { kind: 'improve', text: '超大图片压缩支持：上传限制放宽至 50MB，大幅优化多轮阶梯压缩算法，几十兆高清原图也能稳定无损压进 20KB 左右' },
+    ],
+  },
+  {
     version: '1.8.1',
     date: '2026-10-05',
     title: '交互动效升级与多项体验优化',

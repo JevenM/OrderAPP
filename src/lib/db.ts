@@ -225,6 +225,9 @@ export async function updateMember(
 
 /* ------------------------------ 头像 ------------------------------ */
 
+/** 客户端图片上传大小上限：放宽到 50MB，并由前端高压缩算法自动压至 20KB 左右 */
+const MAX_IMAGE_FILE_BYTES = 50 * 1024 * 1024
+
 const AVATAR_BUCKET = 'avatars'
 /** 头像压到 60KB：既要比 20KB 的三餐图清楚一些，又不能让免费额度吃紧 */
 const AVATAR_TARGET_BYTES = 60 * 1024
@@ -235,7 +238,7 @@ const AVATAR_TARGET_BYTES = 60 * 1024
  */
 export async function uploadAvatar(file: File): Promise<string> {
   if (!file.type.startsWith('image/')) throw new Error('头像上传失败：请选择图片文件')
-  if (file.size > 10 * 1024 * 1024) throw new Error('头像上传失败：图片超过 10MB，换一张小一点的吧')
+  if (file.size > MAX_IMAGE_FILE_BYTES) throw new Error('头像上传失败：图片超过 50MB，换一张小一点的吧')
 
   let upload: File = file
   try {
@@ -634,7 +637,7 @@ export type UploadedPhoto = {
 
 /** 上传图片：先压缩到 20KB 左右再传，省流量也省 Supabase 存储 */
 export async function uploadMealPhoto(file: File): Promise<UploadedPhoto> {
-  if (file.size > 10 * 1024 * 1024) throw new Error('上传图片失败：图片超过 10MB，换一张小一点的吧')
+  if (file.size > MAX_IMAGE_FILE_BYTES) throw new Error('上传图片失败：图片超过 50MB，换一张小一点的吧')
 
   const originalSize = file.size
   let upload: File = file
