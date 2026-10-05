@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { APP_TITLE, ADMIN_CODE, INVITE_CODE, configured, probeSupabase } from '../lib/supabase'
+import { APP_TITLE, configured, probeSupabase } from '../lib/supabase'
 import { useSession } from '../store/session'
 
 export default function Login() {
