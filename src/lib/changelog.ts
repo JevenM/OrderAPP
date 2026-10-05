@@ -29,7 +29,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-10-05',
     title: '好友系统上线',
     items: [
-      { kind: 'new', text: '新增好友功能：在「好友」页输入对方的专属昵称搜索并发申请，对方接受后才是好友' },
+      { kind: 'new', text: '新增好友功能' },
       // { kind: 'new', text: '不是好友，饭圈动态、点赞、评论一条都看不到，也不能互动' },
       // { kind: 'new', text: 'adminMao 默认和所有账户都是好友，依然能看到所有人的动态' },
       { kind: 'new', text: '可以给好友添加备注' },
