@@ -432,3 +432,23 @@ export const CHANGELOG: ChangelogEntry[] = [
 | **刷新后 404** | 已用 Hash 路由（`#/order`），正常不会出现 |
 | **收不到通知** | 后台右上角点「🔔 通知」授权；iOS Safari 需先「添加到主屏幕」再打开，且系统需 iOS 16.4+ |
 | **Node 报错 / 构建失败** | Node 版本太低，Vite 5 需要 18+（推荐 20） |
+
+
+##### 好友功能
+
+1. 入口屏蔽
+在 src/App.tsx 中设置了总开关：
+
+```ts
+/** 好友功能开关：暂时屏蔽入口，后续需要时设为 true 即可一键恢复 */
+export const ENABLE_FRIENDS = false
+```
+普通用户界面：底部导航栏的「好友」Tab（👭 好友）已隐藏，回到原有的 3 个 Tab（点菜、三餐、饭圈）。
+管理员界面：顶部右上角「更多 ⋯」下拉菜单中的「好友」选项已隐藏。
+页面路由：/friends 路由已受控禁用，不会被意外访问。
+2. 后续恢复方式
+所有好友核心代码、组件和逻辑均完整保留。若未来需要重新打开好友入口，只需将 src/App.tsx 中的：
+```ts
+export const ENABLE_FRIENDS = true
+```
+改为 true 即可立刻全量恢复。
