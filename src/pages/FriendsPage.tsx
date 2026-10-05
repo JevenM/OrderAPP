@@ -295,7 +295,7 @@ export default function FriendsPage() {
                 <div className="flex items-center gap-2">
                   <input
                     className="input flex-1 text-xs"
-                    placeholder={`备注（只有你能看到，不填就显示「${f.name}」）`}
+                    placeholder={`备注`}
                     value={note}
                     onChange={(e) => setNotes((n) => ({ ...n, [f.memberId]: e.target.value }))}
                     onKeyDown={(e) => {

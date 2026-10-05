@@ -25,6 +25,9 @@ import AdminMeals from './pages/AdminMeals'
 import AdminDishes from './pages/AdminDishes'
 import AdminMembers from './pages/AdminMembers'
 
+/** 好友功能开关：暂时屏蔽入口，后续需要时设为 true 即可一键恢复 */
+export const ENABLE_FRIENDS = false
+
 const HOME: Record<Role, string> = { her: '/order', me: '/admin/orders' }
 
 export default function App() {
@@ -65,7 +68,7 @@ function Shell() {
               <Route path="/order" element={<OrderPage />} />
               <Route path="/meals" element={<MealLogPage />} />
               <Route path="/feed" element={<FeedPage />} />
-              <Route path="/friends" element={<FriendsPage />} />
+              {ENABLE_FRIENDS && <Route path="/friends" element={<FriendsPage />} />}
               <Route path="/admin/orders" element={<AdminOrders />} />
               <Route path="/admin/meals" element={<AdminMeals />} />
               <Route path="/admin/dishes" element={<AdminDishes />} />
@@ -133,7 +136,7 @@ function Layout() {
           { to: '/order', label: '点菜', emoji: '🧾' },
           { to: '/meals', label: '三餐', emoji: '🍚' },
           { to: '/feed', label: '饭圈', emoji: '📸' },
-          { to: '/friends', label: '好友', emoji: '👫', badge: incoming.length },
+          ...(ENABLE_FRIENDS ? [{ to: '/friends', label: '好友', emoji: '👫', badge: incoming.length }] : []),
         ]
       : [
           { to: '/admin/orders', label: '订单', emoji: '🧾', badge: unread.orders },
@@ -240,7 +243,7 @@ function Layout() {
                   {role === 'me' && (
                     <MenuItem onClick={() => run(enableBell)}>开启推送通知</MenuItem>
                   )}
-                  {role === 'me' && (
+                  {ENABLE_FRIENDS && role === 'me' && (
                     <MenuItem onClick={() => run(() => navigate('/friends'))}>好友</MenuItem>
                   )}
                   <MenuItem onClick={() => run(() => setProfileOpen(true))}>个人资料</MenuItem>
