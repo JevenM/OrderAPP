@@ -13,6 +13,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
     const swUrl = `${import.meta.env.BASE_URL}sw.js`
-    navigator.serviceWorker.register(swUrl).catch(() => undefined)
+    navigator.serviceWorker.register(swUrl).catch((error) => {
+      console.error('Service Worker 注册失败:', error)
+    })
   })
 }

@@ -365,7 +365,7 @@ export default function CouplePage() {
       <section className="card space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="font-semibold">💬 甜蜜聊天</h3>
+            <h3 className="font-semibold">💬 甜蜜聊天留言板</h3>
             <p className="text-[11px] text-slate-400">双方实时同步，支持文字与表情</p>
           </div>
           <button className="text-xs text-brand-600" onClick={clearMessages}>

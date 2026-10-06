@@ -25,6 +25,15 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.5',
+    date: '2026-10-06',
+    title: '修复 Service Worker 加载错误',
+    items: [
+      { kind: 'fix', text: '修复 Service Worker 混入 TypeScript 语法导致页面控制台报错的问题' },
+      { kind: 'fix', text: '网络失败且无缓存时返回有效离线响应，避免请求处理异常' },
+    ],
+  },
+  {
     version: '1.9.4',
     date: '2026-10-06',
     title: '互动空间全功能双向实时同步',

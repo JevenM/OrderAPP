@@ -32,9 +32,17 @@ self.addEventListener('fetch', (e) => {
         const cached = await caches.match(req)
         if (cached) return cached
         if (req.mode === 'navigate') {
-          return (await caches.match('./index.html')) || (await caches.match('./'))
+          return (
+            (await caches.match('./index.html')) ||
+            (await caches.match('./')) ||
+            new Response('Offline', {
+              status: 503,
+              statusText: 'Service Unavailable',
+              headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+            })
+          )
         }
-        return undefined as any
+        return Response.error()
       })
   )
 })
