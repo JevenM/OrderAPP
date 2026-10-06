@@ -4,14 +4,16 @@ import { useToast } from '../components/Toast'
 import {
   broadcastCoupleEvent,
   broadcastCoupleMessage,
+  createCoupleWish,
   listCoupleMessages,
+  listCoupleWishes,
   subscribeCoupleEvents,
   subscribeCoupleMessages,
 } from '../lib/db'
 import { useFriends } from '../store/friends'
 import { useSession } from '../store/session'
 
-type Wish = { id: number; text: string; level: '轻松' | '认真' | '挑战'; owner: string }
+type Wish = { id: string; text: string; level: '轻松' | '认真' | '挑战'; owner: string }
 type ChatItem = { id: string; sender_id: string; receiver_id: string; content: string; created_at: string }
 type QuestionKind = '轻松版' | '走心版' | '自定义'
 type Question = { id: string; title: string; a: string; b: string; kind: QuestionKind }
@@ -82,13 +84,7 @@ export default function CouplePage() {
   const [wishText, setWishText] = useState('')
   const [wishLevel, setWishLevel] = useState<Wish['level']>('轻松')
   const [drawn, setDrawn] = useState<Wish | null>(null)
-  const [wishesList, setWishesList] = useState<Wish[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(key('wishes', myId, friendId)) ?? '[]') as Wish[]
-    } catch {
-      return []
-    }
-  })
+  const [wishesList, setWishesList] = useState<Wish[]>([])
 
   const [messageText, setMessageText] = useState('')
   const [messages, setMessages] = useState<ChatItem[]>(() => {
@@ -124,6 +120,36 @@ export default function CouplePage() {
       : BUILT_IN_QUESTIONS.filter((q) => q.kind === questionKind)
   const loveMessage = LOVE_MESSAGES[dayNumber() % LOVE_MESSAGES.length]
 
+  // 好友确定后从 Supabase 恢复心愿，刷新页面也不会丢失
+  useEffect(() => {
+    if (!memberId || !friendId) {
+      setWishesList([])
+      return
+    }
+
+    let cancelled = false
+    void listCoupleWishes(memberId, friendId)
+      .then((remote) => {
+        if (!cancelled) {
+          const next = remote.map((item) => ({
+            id: item.id,
+            text: item.text,
+            level: item.level,
+            owner: item.owner_name,
+          }))
+          setWishesList(next)
+          localStorage.setItem(key('wishes', memberId, friendId), JSON.stringify(next))
+        }
+      })
+      .catch((error: Error) => {
+        if (!cancelled) toast.show(error.message, 'err')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [memberId, friendId, toast])
+
   // 初始化加载聊天记录并订阅广播与远端更新
   useEffect(() => {
     if (!myId || !friendId) return
@@ -153,11 +179,15 @@ export default function CouplePage() {
 
     const unsubEvent = subscribeCoupleEvents(myId, friendId, (evt) => {
       if (evt.type === 'wish_add') {
-        setWishesList((prev) => {
-          if (prev.some((w) => w.id === evt.data.id)) return prev
-          const next = [...prev, evt.data]
+        void listCoupleWishes(myId, friendId).then((remote) => {
+          const next = remote.map((item) => ({
+            id: item.id,
+            text: item.text,
+            level: item.level,
+            owner: item.owner_name,
+          }))
+          setWishesList(next)
           localStorage.setItem(key('wishes', myId, friendId), JSON.stringify(next))
-          return next
         })
         toast.show(`「${evt.data.owner}」放进了一个小心愿`)
       } else if (evt.type === 'wish_draw') {
@@ -227,20 +257,37 @@ export default function CouplePage() {
     }
   }
 
-  const addWish = () => {
+  const addWish = async () => {
     const text = wishText.trim()
     if (!text) return toast.show('先写下一个想让对方完成的小心愿～', 'err')
-    const item: Wish = { id: Date.now(), text, level: wishLevel, owner: memberName || '我' }
-    const next = [...wishesList, item]
-    setWishesList(next)
-    localStorage.setItem(key('wishes', myId, friendId), JSON.stringify(next))
-    setWishText('')
-    toast.show('心愿已放进秘密池')
-    if (friendId) {
-      void broadcastCoupleEvent(myId, friendId, {
+    if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+
+    try {
+      const saved = await createCoupleWish({
+        ownerId: memberId,
+        userA: memberId,
+        userB: friendId,
+        text,
+        level: wishLevel,
+        ownerName: memberName || '我',
+      })
+      const item: Wish = {
+        id: saved.id,
+        text: saved.text,
+        level: saved.level,
+        owner: saved.owner_name,
+      }
+      const next = [...wishesList, item]
+      setWishesList(next)
+      localStorage.setItem(key('wishes', memberId, friendId), JSON.stringify(next))
+      setWishText('')
+      toast.show('心愿已放进秘密池')
+      void broadcastCoupleEvent(memberId, friendId, {
         type: 'wish_add',
         data: item,
       })
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
     }
   }
 

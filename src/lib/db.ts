@@ -526,10 +526,63 @@ function coupleChannelName(userA: string, userB: string): string {
   return `couple-chat-${first}-${second}`
 }
 
+export type CoupleWish = {
+  id: string
+  owner_id: string
+  member_a: string
+  member_b: string
+  text: string
+  level: '轻松' | '认真' | '挑战'
+  owner_name: string
+  created_at: string
+}
+
+function couplePair(userA: string, userB: string): [string, string] {
+  return userA < userB ? [userA, userB] : [userB, userA]
+}
+
+export async function listCoupleWishes(userA: string, userB: string): Promise<CoupleWish[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_wishes')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .order('created_at', { ascending: true })
+  if (error) fail(error, '加载心愿')
+  return (data ?? []) as CoupleWish[]
+}
+
+export async function createCoupleWish(input: {
+  ownerId: string
+  userA: string
+  userB: string
+  text: string
+  level: CoupleWish['level']
+  ownerName: string
+}): Promise<CoupleWish> {
+  const [memberA, memberB] = couplePair(input.userA, input.userB)
+  const { data, error } = await supabase
+    .from('couple_wishes')
+    .insert({
+      owner_id: input.ownerId,
+      member_a: memberA,
+      member_b: memberB,
+      text: input.text.trim(),
+      level: input.level,
+      owner_name: input.ownerName,
+    })
+    .select()
+    .single()
+  if (error || !data) fail(error, '保存心愿')
+  return data as CoupleWish
+}
+
 export type CoupleEventPayload =
   | { type: 'chat'; data: { id: string; sender_id: string; receiver_id: string; content: string; created_at: string } }
-  | { type: 'wish_add'; data: { id: number; text: string; level: '轻松' | '认真' | '挑战'; owner: string } }
-  | { type: 'wish_draw'; data: { id: number; text: string; level: '轻松' | '认真' | '挑战'; owner: string; drawer: string } }
+  | { type: 'wish_add'; data: { id: string; text: string; level: '轻松' | '认真' | '挑战'; owner: string } }
+  | { type: 'wish_draw'; data: { id: string; text: string; level: '轻松' | '认真' | '挑战'; owner: string; drawer: string } }
   | { type: 'choice_submit'; data: { questionId: string; senderId: string; choice: string } }
   | { type: 'question_change'; data: { question: { id: string; title: string; a: string; b: string; kind: '轻松版' | '走心版' | '自定义' } } }
 

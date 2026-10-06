@@ -25,6 +25,15 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.6',
+    date: '2026-10-06',
+    title: '心愿池持久化保存',
+    items: [
+      { kind: 'fix', text: '秘密心愿改为保存到 Supabase，刷新页面或重新进入互动空间后仍可恢复' },
+      { kind: 'improve', text: '心愿新增成功后再同步到对方，避免网络失败时出现看似已保存但实际丢失的内容' },
+    ],
+  },
+  {
     version: '1.9.5',
     date: '2026-10-06',
     title: '修复 Service Worker 加载错误',
