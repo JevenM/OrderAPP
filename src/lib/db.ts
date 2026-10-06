@@ -317,6 +317,50 @@ export async function listFriendships(memberId: string): Promise<Friendship[]> {
   return (data ?? []) as Friendship[]
 }
 
+/** 管理员查看所有成员之间的好友关系。 */
+export async function listAllFriendships(): Promise<Friendship[]> {
+  const { data, error } = await withTimeout(
+    supabase.from('friendships').select('*').order('updated_at', { ascending: false }),
+    15_000,
+    '加载好友关系'
+  )
+  if (error) fail(error, '加载好友关系')
+  return (data ?? []) as Friendship[]
+}
+
+/** 管理员直接把两个成员设为好友；已有申请则直接通过。 */
+export async function adminSetFriendship(memberAId: string, memberBId: string): Promise<void> {
+  if (memberAId === memberBId) throw new Error('不能把同一个人设置成自己的好友')
+  const existing = (await listFriendships(memberAId)).find(
+    (f) => f.requester_id === memberBId || f.addressee_id === memberBId
+  )
+  if (existing?.status === 'accepted') return
+  if (existing) {
+    const { error } = await supabase
+      .from('friendships')
+      .update({ status: 'accepted', updated_at: new Date().toISOString() })
+      .eq('id', existing.id)
+    if (error) fail(error, '设置好友关系')
+    return
+  }
+  const { error } = await supabase.from('friendships').insert({
+    requester_id: memberAId,
+    addressee_id: memberBId,
+    status: 'accepted',
+  })
+  if (error) fail(error, '设置好友关系')
+}
+
+/** 管理员解除两个成员之间的好友关系。 */
+export async function adminRemoveFriendship(memberAId: string, memberBId: string): Promise<void> {
+  const existing = (await listFriendships(memberAId)).find(
+    (f) => f.requester_id === memberBId || f.addressee_id === memberBId
+  )
+  if (!existing) return
+  const { error } = await supabase.from('friendships').delete().eq('id', existing.id)
+  if (error) fail(error, '解除好友关系')
+}
+
 async function membersById(ids: string[]): Promise<Map<string, Member>> {
   if (!ids.length) return new Map()
   const { data } = await supabase.from('members').select('*').in('id', ids)
@@ -473,6 +517,134 @@ export async function setFriendNote(myId: string, friendId: string, note: string
     .update({ [col]: note.trim() || null, updated_at: new Date().toISOString() })
     .eq('id', f.id)
   if (error) fail(error, '保存备注')
+}
+
+/* --------------------------- 互动空间甜蜜聊天 --------------------------- */
+
+function coupleChannelName(userA: string, userB: string): string {
+  const [first, second] = userA < userB ? [userA, userB] : [userB, userA]
+  return `couple-chat-${first}-${second}`
+}
+
+export type CoupleEventPayload =
+  | { type: 'chat'; data: { id: string; sender_id: string; receiver_id: string; content: string; created_at: string } }
+  | { type: 'wish_add'; data: { id: number; text: string; level: '轻松' | '认真' | '挑战'; owner: string } }
+  | { type: 'wish_draw'; data: { id: number; text: string; level: '轻松' | '认真' | '挑战'; owner: string; drawer: string } }
+  | { type: 'choice_submit'; data: { questionId: string; senderId: string; choice: string } }
+  | { type: 'question_change'; data: { question: { id: string; title: string; a: string; b: string; kind: '轻松版' | '走心版' | '自定义' } } }
+
+export function subscribeCoupleEvents(
+  userA: string,
+  userB: string,
+  onEvent: (event: CoupleEventPayload) => void
+): () => void {
+  if (!userA || !userB || userA === userB) return () => {}
+  const channelName = coupleChannelName(userA, userB)
+  const channel = supabase.channel(channelName)
+  channel
+    .on('broadcast', { event: 'couple_event' }, (payload) => {
+      if (payload.payload) onEvent(payload.payload as CoupleEventPayload)
+    })
+    .subscribe()
+
+  return () => {
+    void supabase.removeChannel(channel)
+  }
+}
+
+export async function broadcastCoupleEvent(
+  userA: string,
+  userB: string,
+  event: CoupleEventPayload
+): Promise<void> {
+  if (!userA || !userB || userA === userB) return
+  const channelName = coupleChannelName(userA, userB)
+  const channel = supabase.channel(channelName)
+  await channel.subscribe()
+  await channel.send({
+    type: 'broadcast',
+    event: 'couple_event',
+    payload: event,
+  })
+}
+
+export function subscribeCoupleMessages(
+  userA: string,
+  userB: string,
+  onMessage: (msg: { id: string; sender_id: string; receiver_id: string; content: string; created_at: string }) => void
+): () => void {
+  if (!userA || !userB || userA === userB) return () => {}
+  const channelName = coupleChannelName(userA, userB)
+  const channel = supabase.channel(channelName)
+  channel
+    .on('broadcast', { event: 'new_message' }, (payload) => {
+      if (payload.payload) onMessage(payload.payload)
+    })
+    .subscribe()
+
+  return () => {
+    void supabase.removeChannel(channel)
+  }
+}
+
+export async function broadcastCoupleMessage(
+  senderId: string,
+  receiverId: string,
+  content: string
+): Promise<{ id: string; sender_id: string; receiver_id: string; content: string; created_at: string }> {
+  const clean = content.trim()
+  if (!clean) throw new Error('消息内容不能为空')
+  const msg = {
+    id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    sender_id: senderId,
+    receiver_id: receiverId,
+    content: clean,
+    created_at: new Date().toISOString(),
+  }
+
+  // 尝试持久化到 Supabase 表（若未建表或失败则静默降级，保障即时通信体验）
+  try {
+    await supabase.from('couple_messages').insert({
+      id: msg.id,
+      sender_id: senderId,
+      receiver_id: receiverId,
+      content: clean,
+      created_at: msg.created_at,
+    })
+  } catch {
+    // 忽略未建表异常
+  }
+
+  // 通过实时广播通道推送给对端
+  const channelName = coupleChannelName(senderId, receiverId)
+  const channel = supabase.channel(channelName)
+  await channel.subscribe()
+  await channel.send({
+    type: 'broadcast',
+    event: 'new_message',
+    payload: msg,
+  })
+
+  return msg
+}
+
+export async function listCoupleMessages(
+  userA: string,
+  userB: string
+): Promise<{ id: string; sender_id: string; receiver_id: string; content: string; created_at: string }[]> {
+  if (!userA || !userB || userA === userB) return []
+  try {
+    const { data, error } = await supabase
+      .from('couple_messages')
+      .select('*')
+      .or(`and(sender_id.eq.${userA},receiver_id.eq.${userB}),and(sender_id.eq.${userB},receiver_id.eq.${userA})`)
+      .order('created_at', { ascending: true })
+      .limit(100)
+    if (!error && data) return data
+  } catch {
+    // 降级返回空
+  }
+  return []
 }
 
 /* ------------------------------ 订单 ------------------------------ */

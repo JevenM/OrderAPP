@@ -100,6 +100,15 @@ export interface FriendSearchResult {
   friendshipId: string | null
 }
 
+/** 互动空间甜蜜聊天消息 */
+export interface CoupleMessage {
+  id: string
+  sender_id: string
+  receiver_id: string
+  content: string
+  created_at: string
+}
+
 export interface Dish {
   id: string
   name: string

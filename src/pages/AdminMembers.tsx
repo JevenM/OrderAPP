@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { createMember, randomCode, removeMember, updateMember } from '../lib/db'
 import { useToast } from '../components/Toast'
 import Avatar from '../components/Avatar'
@@ -9,6 +10,7 @@ import type { Member } from '../lib/types'
 
 export default function AdminMembers() {
   const toast = useToast()
+  const navigate = useNavigate()
   const { members, reload, loading } = useMembers()
   const { adminName, saveAdminName, adminAvatar, saveAdminAvatar } = useSettings()
   const [avatarFor, setAvatarFor] = useState<string | null>(null)
@@ -98,6 +100,16 @@ export default function AdminMembers() {
 
   return (
     <div className="space-y-4">
+      <div className="card flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold">👫 好友关系管理</h3>
+          <p className="text-[11px] text-slate-400">查看谁和谁是好友，指定任意两人成为专属好友</p>
+        </div>
+        <button className="btn-soft shrink-0 text-xs" onClick={() => navigate('/admin/friendships')}>
+          去管理
+        </button>
+      </div>
+
       <div className="card space-y-2">
         <h3 className="text-sm font-semibold">🙋 我的昵称</h3>
         <div className="flex items-center gap-3">
@@ -256,7 +268,7 @@ export default function AdminMembers() {
         <br />
         她自己也能改昵称和头像（点头像 → 个人资料），改完你这边刷新就同步。
         <br />
-        好友关系在「好友」页管理：不是好友的账户互相看不到任何动态、点赞和评论。
+        好友关系在顶部「更多」里的「好友关系管理」中设置：不是好友的账户互相看不到任何动态、点赞和评论。
         <br />
         「她看到我叫」只对这一个人生效：A 看到我叫 maoge、B 看到我叫老干部，互不影响；留空则用上面那个统一昵称。
       </p>

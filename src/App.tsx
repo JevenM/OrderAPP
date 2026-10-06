@@ -6,27 +6,28 @@ import ProfileSheet from './components/ProfileSheet'
 import { saveMemberAvatar } from './components/AvatarSheet'
 import { updateMember } from './lib/db'
 import ChangelogModal from './components/ChangelogModal'
-import { APP_TITLE, configured } from './lib/supabase'
+import { configured } from './lib/supabase'
 import { requestNotifyPermission } from './lib/notify'
 import { SessionProvider, useSession } from './store/session'
 import { SettingsProvider, useSettings } from './store/settings'
 import { UnreadProvider, useUnread } from './store/unread'
 import { MembersProvider, useMembers } from './store/members'
-import { FriendsProvider, useFriends } from './store/friends'
+import { FriendsProvider } from './store/friends'
 import { ChangelogProvider, useChangelog } from './store/changelog'
 import type { Role } from './lib/types'
 import Login from './pages/Login'
 import OrderPage from './pages/OrderPage'
 import MealLogPage from './pages/MealLogPage'
 import FeedPage from './pages/FeedPage'
-import FriendsPage from './pages/FriendsPage'
+import CouplePage from './pages/CouplePage'
+import AdminFriendships from './pages/AdminFriendships'
 import AdminOrders from './pages/AdminOrders'
 import AdminMeals from './pages/AdminMeals'
 import AdminDishes from './pages/AdminDishes'
 import AdminMembers from './pages/AdminMembers'
 
-/** 好友功能开关：暂时屏蔽入口，后续需要时设为 true 即可一键恢复 */
-export const ENABLE_FRIENDS = false
+/** 互动空间开关；好友管理面板不对普通用户展示 */
+export const ENABLE_FRIENDS = true
 
 const HOME: Record<Role, string> = { her: '/order', me: '/admin/orders' }
 
@@ -68,7 +69,8 @@ function Shell() {
               <Route path="/order" element={<OrderPage />} />
               <Route path="/meals" element={<MealLogPage />} />
               <Route path="/feed" element={<FeedPage />} />
-              {ENABLE_FRIENDS && <Route path="/friends" element={<FriendsPage />} />}
+              {!isAdmin && ENABLE_FRIENDS && <Route path="/couple" element={<CouplePage />} />}
+              {isAdmin && <Route path="/admin/friendships" element={<AdminFriendships />} />}
               <Route path="/admin/orders" element={<AdminOrders />} />
               <Route path="/admin/meals" element={<AdminMeals />} />
               <Route path="/admin/dishes" element={<AdminDishes />} />
@@ -115,7 +117,6 @@ function Layout() {
     useSession()
   const { adminName, adminAvatar, saveAdminAvatar, saveAdminName } = useSettings()
   const { members, reload: reloadMembers } = useMembers()
-  const { incoming } = useFriends()
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const unread = useUnread()
@@ -136,7 +137,7 @@ function Layout() {
           { to: '/order', label: '点菜', emoji: '🧾' },
           { to: '/meals', label: '三餐', emoji: '🍚' },
           { to: '/feed', label: '饭圈', emoji: '📸' },
-          ...(ENABLE_FRIENDS ? [{ to: '/friends', label: '好友', emoji: '👫', badge: incoming.length }] : []),
+          ...(!isAdmin && ENABLE_FRIENDS ? [{ to: '/couple', label: '互动', emoji: '💞' }] : []),
         ]
       : [
           { to: '/admin/orders', label: '订单', emoji: '🧾', badge: unread.orders },
@@ -210,7 +211,7 @@ function Layout() {
             <Avatar url={avatarUrl} emoji={avatarEmoji} size={38} />
           </button>
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-[15px] font-semibold leading-tight text-brand-600">{APP_TITLE}</h1>
+            {/* <h1 className="truncate text-[15px] font-semibold leading-tight text-brand-600">{APP_TITLE}</h1> */}
             <p className="truncate text-[11px] leading-tight text-slate-400">{subtitle}</p>
           </div>
 
@@ -256,8 +257,8 @@ function Layout() {
                   {role === 'me' && (
                     <MenuItem onClick={() => run(enableBell)}>开启推送通知</MenuItem>
                   )}
-                  {ENABLE_FRIENDS && role === 'me' && (
-                    <MenuItem onClick={() => run(() => navigate('/friends'))}>好友</MenuItem>
+                  {isAdmin && role === 'me' && (
+                    <MenuItem onClick={() => run(() => navigate('/admin/friendships'))}>好友关系管理</MenuItem>
                   )}
                   <MenuItem onClick={() => run(() => setProfileOpen(true))}>个人资料</MenuItem>
                   <MenuItem onClick={() => run(openChangelog)}>更新日志</MenuItem>
