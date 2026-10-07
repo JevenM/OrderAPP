@@ -25,6 +25,20 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.7',
+    date: '2026-10-07',
+    title: '互动空间互通修复',
+    items: [
+      { kind: 'new', text: '今日专属情话需要双方都完成早中晚三餐打卡才解锁，两边看到同一句' },
+      { kind: 'improve', text: '秘密心愿池改为双方共享，抽签结果双方同步，不再区分轻松/认真/挑战' },
+      { kind: 'fix', text: '甜蜜聊天留言修复：留言正确入库，双方都能看到彼此的消息与历史记录' },
+      { kind: 'new', text: '同步抉择双人同题：出题/换题双方实时同步，双方作答后动画揭晓默契结果' },
+      { kind: 'improve', text: '同步抉择作答期间锁定换题与分类切换，等对方答完揭晓后才能换下一题' },
+      { kind: 'new', text: '对方抽中心愿时，你可实时收到动画弹框提醒，关闭后不再重复弹出' },
+      { kind: 'improve', text: '甜蜜留言板每条留言上方显示发送者昵称' },
+    ],
+  },
+  {
     version: '1.9.6',
     date: '2026-10-06',
     title: '心愿池持久化保存',

@@ -532,7 +532,8 @@ export type CoupleWish = {
   member_a: string
   member_b: string
   text: string
-  level: '轻松' | '认真' | '挑战'
+  /** 历史遗留字段：心愿池不再区分难度，数据库默认值兜底 */
+  level?: '轻松' | '认真' | '挑战'
   owner_name: string
   created_at: string
 }
@@ -559,7 +560,6 @@ export async function createCoupleWish(input: {
   userA: string
   userB: string
   text: string
-  level: CoupleWish['level']
   ownerName: string
 }): Promise<CoupleWish> {
   const [memberA, memberB] = couplePair(input.userA, input.userB)
@@ -570,7 +570,6 @@ export async function createCoupleWish(input: {
       member_a: memberA,
       member_b: memberB,
       text: input.text.trim(),
-      level: input.level,
       owner_name: input.ownerName,
     })
     .select()
@@ -640,45 +639,47 @@ export function subscribeCoupleMessages(
   }
 }
 
+export type CoupleChatMessage = {
+  id: string
+  sender_id: string
+  receiver_id: string
+  content: string
+  created_at: string
+}
+
 export async function broadcastCoupleMessage(
   senderId: string,
   receiverId: string,
   content: string
-): Promise<{ id: string; sender_id: string; receiver_id: string; content: string; created_at: string }> {
+): Promise<CoupleChatMessage> {
   const clean = content.trim()
   if (!clean) throw new Error('消息内容不能为空')
-  const msg = {
-    id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+
+  // 持久化入库（id 由数据库生成 uuid）：对方任何时候进来都能拉到历史留言
+  try {
+    const { data, error } = await supabase
+      .from('couple_messages')
+      .insert({ sender_id: senderId, receiver_id: receiverId, content: clean })
+      .select()
+      .single()
+    if (!error && data) return data as CoupleChatMessage
+  } catch {
+    // 表不存在等情况走下面的降级通道
+  }
+
+  // 降级：本地生成消息并走临时广播，至少保证在线双方实时可见
+  const fallback: CoupleChatMessage = {
+    id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `msg-${Date.now()}`,
     sender_id: senderId,
     receiver_id: receiverId,
     content: clean,
     created_at: new Date().toISOString(),
   }
-
-  // 尝试持久化到 Supabase 表（若未建表或失败则静默降级，保障即时通信体验）
-  try {
-    await supabase.from('couple_messages').insert({
-      id: msg.id,
-      sender_id: senderId,
-      receiver_id: receiverId,
-      content: clean,
-      created_at: msg.created_at,
-    })
-  } catch {
-    // 忽略未建表异常
-  }
-
-  // 通过实时广播通道推送给对端
   const channelName = coupleChannelName(senderId, receiverId)
   const channel = supabase.channel(channelName)
   await channel.subscribe()
-  await channel.send({
-    type: 'broadcast',
-    event: 'new_message',
-    payload: msg,
-  })
-
-  return msg
+  await channel.send({ type: 'broadcast', event: 'new_message', payload: fallback })
+  return fallback
 }
 
 export async function listCoupleMessages(
@@ -698,6 +699,136 @@ export async function listCoupleMessages(
     // 降级返回空
   }
   return []
+}
+
+/* ------------------------ 互动空间双人同步（心愿 / 抉择） ------------------------ */
+
+export type CoupleQuizQuestion = {
+  id: string
+  title: string
+  a: string
+  b: string
+  kind: '轻松版' | '走心版' | '自定义'
+}
+
+/** 每对好友一行的同步抉择会话：换题覆盖、双方提交齐了自动 revealed */
+export interface CoupleQuizRow {
+  member_a: string
+  member_b: string
+  question: CoupleQuizQuestion | null
+  choice_a: 'A' | 'B' | null
+  choice_b: 'A' | 'B' | null
+  status: 'answering' | 'revealed'
+  updated_at: string
+}
+
+export type CoupleEventType = 'wish_add' | 'wish_draw' | 'love_unlock' | 'quiz_note'
+
+/** 好友对共享的追加式互动日志：对端离线也不丢，回来后可回放 */
+export interface CoupleEventRow {
+  id: string
+  member_a: string
+  member_b: string
+  sender_id: string
+  type: string
+  payload: Record<string, unknown>
+  created_at: string
+}
+
+/** 回放最近 N 条互动事件（按时间正序返回） */
+export async function listCoupleEvents(userA: string, userB: string, limit = 50): Promise<CoupleEventRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_events')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) fail(error, '加载互动动态')
+  return ((data ?? []) as CoupleEventRow[]).reverse()
+}
+
+/** 追加一条互动事件（心愿新增、抽签结果等），实时推送给对端 */
+export async function appendCoupleEvent(
+  userA: string,
+  userB: string,
+  senderId: string,
+  type: CoupleEventType,
+  payload: Record<string, unknown>
+): Promise<void> {
+  if (!userA || !userB || userA === userB) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_events').insert({
+    member_a: memberA,
+    member_b: memberB,
+    sender_id: senderId,
+    type,
+    payload,
+  })
+  if (error) fail(error, '同步互动动态')
+}
+
+/** 读取当前同步抉择会话；还没开过题时返回 null */
+export async function fetchCoupleQuiz(userA: string, userB: string): Promise<CoupleQuizRow | null> {
+  if (!userA || !userB || userA === userB) return null
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_quiz')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .maybeSingle()
+  if (error) fail(error, '加载同步抉择')
+  return (data as CoupleQuizRow | null) ?? null
+}
+
+/** 出题 / 换题：覆盖题目并清空双方选择，两边回到同一题重新作答 */
+export async function resetCoupleQuiz(userA: string, userB: string, question: CoupleQuizQuestion): Promise<void> {
+  if (!userA || !userB || userA === userB) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase
+    .from('couple_quiz')
+    .upsert(
+      {
+        member_a: memberA,
+        member_b: memberB,
+        question,
+        choice_a: null,
+        choice_b: null,
+        status: 'answering',
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'member_a,member_b' }
+    )
+  if (error) fail(error, '同步题目')
+}
+
+/** 提交自己的选择；双方都选好后状态自动变为 revealed，两边同时揭晓 */
+export async function saveCoupleQuizChoice(
+  userA: string,
+  userB: string,
+  memberId: string,
+  choice: 'A' | 'B'
+): Promise<void> {
+  if (!userA || !userB || userA === userB) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const col = memberId === memberA ? 'choice_a' : 'choice_b'
+  const current = await fetchCoupleQuiz(userA, userB)
+  if (!current?.question) throw new Error('还没有进行中的题目')
+  const nextA = col === 'choice_a' ? choice : current.choice_a
+  const nextB = col === 'choice_b' ? choice : current.choice_b
+  const { error } = await supabase
+    .from('couple_quiz')
+    .update({
+      [col]: choice,
+      status: nextA && nextB ? 'revealed' : 'answering',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+  if (error) fail(error, '提交选择')
 }
 
 /* ------------------------------ 订单 ------------------------------ */
