@@ -529,8 +529,8 @@ export default function CouplePage() {
       <section className="card space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="font-semibold">💌 今日专属情话</h3>
-            <p className="text-[11px] text-slate-400">🔒 各自完成今天的三餐打卡，情话就会同时解锁</p>
+            <h3 className="font-semibold">💌今日专属情话</h3>
+            <p className="text-[11px] text-slate-400">🔐完成今日三餐打卡，情话同时解锁</p>
           </div>
           <span
             className={`chip ${
@@ -539,7 +539,7 @@ export default function CouplePage() {
                 : 'border-slate-200 bg-slate-50 text-slate-400'
             }`}
           >
-            {loveUnlocked ? '已解锁' : '未解锁'}
+            {loveUnlocked ? '🔓' : '🔒'}
           </span>
         </div>
         {loveUnlocked ? (
@@ -548,9 +548,9 @@ export default function CouplePage() {
           </div>
         ) : (
           <div className="space-y-2 rounded-2xl bg-slate-50 p-4">
-            <MealCheck label="我的打卡" list={myMeals} />
+            <MealCheck label="我" list={myMeals} />
             {friendId ? (
-              <MealCheck label={`${friendName}的打卡`} list={peerMeals} />
+              <MealCheck label={`${friendName}`} list={peerMeals} />
             ) : (
               <p className="text-center text-[11px] text-slate-400">先添加好友，才能一起解锁情话哦</p>
             )}
@@ -565,10 +565,10 @@ export default function CouplePage() {
       <section className="card space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="font-semibold">🎁 秘密心愿抽签</h3>
-            <p className="text-[11px] text-slate-400">你们俩的专属心愿池，抽到谁的心愿谁来完成</p>
+            <h3 className="font-semibold">🎁秘密心愿抽签</h3>
+            <p className="text-[11px] text-slate-400">专属心愿池，抽到谁的心愿谁来完成</p>
           </div>
-          <span className="chip border-brand-200 bg-brand-50 text-brand-600">{wishesList.length} 个心愿</span>
+          <span className="chip border-brand-200 bg-brand-50 text-brand-600">{wishesList.length} 个❤</span>
         </div>
         {drawn && (
           <div className="animate-pop-in rounded-2xl border border-brand-200 bg-brand-50 p-4 text-center">
@@ -599,7 +599,7 @@ export default function CouplePage() {
       <section className="card space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="font-semibold">💬 甜蜜聊天留言板</h3>
+            <h3 className="font-semibold">💬甜蜜聊天留言板</h3>
             <p className="text-[11px] text-slate-400">仅你们双方可见，留言实时同步</p>
           </div>
           <button className="text-xs text-brand-600" onClick={clearMessages}>
@@ -634,7 +634,7 @@ export default function CouplePage() {
         <div className="flex gap-2">
           <input
             className="input flex-1"
-            placeholder="输入文字或表情，如：想你啦 🥰"
+            placeholder="如：想你啦 🥰"
             value={messageText}
             onChange={(e) => setMessageText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && void sendMessage()}
@@ -648,7 +648,7 @@ export default function CouplePage() {
       {/* 同步抉择：共享会话保证双方同题，双方作答后动画揭晓 */}
       <section className="card space-y-3">
         <div>
-          <h3 className="font-semibold">💞 同步抉择</h3>
+          <h3 className="font-semibold">💞同步抉择</h3>
           <p className="text-[11px] text-slate-400">题目与选择双方实时同步，一起在线玩更配哦</p>
         </div>
         <div className="grid grid-cols-3 gap-2">
@@ -751,7 +751,7 @@ export default function CouplePage() {
       </section>
 
       <p className="px-1 text-center text-[11px] leading-relaxed text-slate-400">
-        小提示：心愿、留言与抉择双方实时同步，记得一起上线玩。
+        小提示：实时同步，记得一起上线玩。
       </p>
 
       {/* 抽签推送弹框：对方抽中心愿时弹一次，关闭后不再弹 */}
