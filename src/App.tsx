@@ -13,6 +13,7 @@ import { SettingsProvider, useSettings } from './store/settings'
 import { UnreadProvider, useUnread } from './store/unread'
 import { MembersProvider, useMembers } from './store/members'
 import { FriendsProvider } from './store/friends'
+import FeedNotifyPanel from './components/FeedNotifyPanel'
 import { ChangelogProvider, useChangelog } from './store/changelog'
 import type { Role } from './lib/types'
 import Login from './pages/Login'
@@ -122,7 +123,7 @@ function Layout() {
   const unread = useUnread()
   const { open: openChangelog } = useChangelog()
   const toast = useToast()
-  const [menu, setMenu] = useState<'member' | 'more' | null>(null)
+  const [menu, setMenu] = useState<'member' | 'more' | 'feed' | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
 
   /** 顶部头像：看到谁的脸就用谁的头像；「我」的视角用自己的 */
@@ -130,6 +131,8 @@ function Layout() {
   const isMyView = role === 'me' || !memberId
   const avatarUrl = isMyView ? adminAvatar : (memberAvatar || viewingMember?.avatar_url || '')
   const avatarEmoji = isMyView ? '👨‍🍳' : '👧'
+  /** 消息收件箱身份：管理员固定 'me'，她是自己的成员 id */
+  const feedIdentity = isAdmin ? 'me' : memberId ?? ''
 
   const tabs: { to: string; label: string; emoji: string; badge?: number }[] =
     role === 'her'
@@ -216,11 +219,22 @@ function Layout() {
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">
-            {role === 'me' && (
-              <button className={HEAD_BTN} title="开启浏览器推送" onClick={enableBell}>
+            {/* 消息通知：好友发动态 / 点赞 / 评论时未读 +1，点开查看后消失 */}
+            <div className="relative">
+              <button
+                className={`${HEAD_BTN} relative`}
+                title="消息通知"
+                onClick={() => setMenu((m) => (m === 'feed' ? null : 'feed'))}
+              >
                 🔔
+                {unread.feedUnread > 0 && (
+                  <span className="absolute -right-1.5 -top-1.5 min-w-[16px] animate-pop-in rounded-full bg-rose-500 px-1 text-center text-[10px] font-semibold leading-4 text-white">
+                    {unread.feedUnread > 99 ? '99+' : unread.feedUnread}
+                  </span>
+                )}
               </button>
-            )}
+              {menu === 'feed' && <FeedNotifyPanel identity={feedIdentity} onClose={() => setMenu(null)} />}
+            </div>
             {isAdmin && (
               <div className="relative">
                 <button

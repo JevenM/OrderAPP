@@ -25,6 +25,15 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.9',
+    date: '2026-10-08',
+    title: '饭圈消息通知',
+    items: [
+      { kind: 'new', text: '发布动态、点赞或评论你的动态时，右上角🔔显示未读条数并实时提醒' },
+      { kind: 'new', text: '点开消息面板可查看通知列表（点击跳转饭圈），查看后未读自动清零' },
+    ],
+  },
+  {
     version: '1.9.8',
     date: '2026-10-08',
     title: '打卡更新与情话揭晓',

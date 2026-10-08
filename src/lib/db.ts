@@ -1136,15 +1136,21 @@ export async function createPost(input: {
   meal_slot?: MealSlot | null
   day?: string | null
 }): Promise<void> {
-  const { error } = await supabase.from('posts').insert({
-    author: input.author,
-    member_id: input.member_id,
-    content: input.content.trim(),
-    photo_url: input.photo_url ?? '',
-    meal_slot: input.meal_slot ?? null,
-    day: input.day ?? null,
-  })
-  if (error) fail(error, '发布动态')
+  const { data, error } = await supabase
+    .from('posts')
+    .insert({
+      author: input.author,
+      member_id: input.member_id,
+      content: input.content.trim(),
+      photo_url: input.photo_url ?? '',
+      meal_slot: input.meal_slot ?? null,
+      day: input.day ?? null,
+    })
+    .select('id')
+    .single()
+  if (error || !data) fail(error, '发布动态')
+  // 通知我的好友们有新动态（失败不影响发帖）
+  void notifyFeedPost(input.member_id, data.id, input.content.trim())
 }
 
 /** 她记录完三餐后自动发一条动态；同一天同一餐次只发一条，重复填写就更新 */
@@ -1197,6 +1203,8 @@ export async function toggleLike(postId: string, memberId: string | null): Promi
   }
   const { error } = await supabase.from('post_likes').insert({ post_id: postId, member_id: memberId })
   if (error) fail(error, '点赞')
+  // 通知动态主人收到新赞（失败不影响点赞）
+  void notifyFeedLike(memberId, postId)
   return true
 }
 
@@ -1217,11 +1225,184 @@ export async function addComment(
     .from('post_comments')
     .insert({ post_id: postId, member_id: memberId, content: text, reply_to: replyTo })
   if (error) fail(error, '发表评论')
+  // 通知被回复的人或动态主人（失败不影响评论）
+  void notifyFeedComment(memberId, postId, text, replyTo)
 }
 
 export async function removeComment(id: string): Promise<void> {
   const { error } = await supabase.from('post_comments').delete().eq('id', id)
   if (error) fail(error, '删除评论')
+}
+
+/* ------------------------ 饭圈消息通知（顶栏未读角标） ------------------------ */
+
+export type FeedNoticeType = 'post' | 'like' | 'comment' | 'reply'
+
+export interface FeedNotificationRow {
+  id: string
+  /** 接收人：members.id 或 'me'（管理员，与 posts.member_id 空值口径一致） */
+  recipient: string
+  sender_name: string
+  type: FeedNoticeType
+  post_id: string | null
+  title: string
+  body: string
+  read_at: string | null
+  created_at: string
+}
+
+/** 管理员在通知体系里的身份 key（与 posts.member_id 为空对应） */
+const ME_KEY = 'me'
+
+/** 操作人昵称：管理员读全局昵称设置，成员读 members.name */
+async function resolveActorName(memberId: string | null): Promise<string> {
+  if (!memberId) {
+    try {
+      return await getSetting('admin_name', ADMIN_NAME)
+    } catch {
+      return ADMIN_NAME
+    }
+  }
+  const { data } = await supabase.from('members').select('name').eq('id', memberId).maybeSingle()
+  return data?.name || '好友'
+}
+
+/** 批量落通知：任一条失败都不影响主流程 */
+async function insertFeedNotices(
+  recipients: string[],
+  notice: Omit<FeedNotificationRow, 'id' | 'recipient' | 'read_at' | 'created_at'>
+): Promise<void> {
+  const unique = [...new Set(recipients.filter(Boolean))]
+  if (!unique.length) return
+  try {
+    await supabase.from('feed_notifications').insert(unique.map((recipient) => ({ ...notice, recipient })))
+  } catch {
+    // 通知失败静默跳过
+  }
+}
+
+/** 通知对象：她 → 已接受的好友成员 + 管理员（隐式好友）；管理员 → 所有成员 */
+async function feedAudience(actorMemberId: string | null): Promise<string[]> {
+  if (!actorMemberId) {
+    const { data } = await supabase.from('members').select('id')
+    return (data ?? []).map((m: { id: string }) => m.id)
+  }
+  const { data } = await supabase
+    .from('friendships')
+    .select('requester_id, addressee_id')
+    .eq('status', 'accepted')
+    .or(`requester_id.eq.${actorMemberId},addressee_id.eq.${actorMemberId}`)
+  const peers = (data ?? []).map((f: { requester_id: string; addressee_id: string }) =>
+    f.requester_id === actorMemberId ? f.addressee_id : f.requester_id
+  )
+  return [...peers, ME_KEY]
+}
+
+const clip = (text: string, max = 30) => (text.length > max ? `${text.slice(0, max)}…` : text)
+
+/** 发布动态 → 通知我的好友们 */
+export async function notifyFeedPost(memberId: string | null, postId: string, content: string): Promise<void> {
+  try {
+    const [name, audience] = await Promise.all([resolveActorName(memberId), feedAudience(memberId)])
+    await insertFeedNotices(audience, {
+      sender_name: name,
+      type: 'post',
+      post_id: postId,
+      title: `${name}发了新动态`,
+      body: clip(content.trim()) || '分享了美食',
+    })
+  } catch {
+    // 通知失败不影响发帖
+  }
+}
+
+/** 点赞 → 通知动态主人 */
+export async function notifyFeedLike(memberId: string | null, postId: string): Promise<void> {
+  try {
+    const { data: post } = await supabase.from('posts').select('member_id').eq('id', postId).maybeSingle()
+    if (!post) return
+    const owner = post.member_id ?? ME_KEY
+    if (owner === (memberId ?? ME_KEY)) return // 自己赞自己不发通知
+    const name = await resolveActorName(memberId)
+    await insertFeedNotices([owner], {
+      sender_name: name,
+      type: 'like',
+      post_id: postId,
+      title: `${name}赞了你的动态`,
+      body: '你的饭圈动态收到一个新❤️',
+    })
+  } catch {
+    // 通知失败不影响点赞
+  }
+}
+
+/** 评论 / 定向回复 → 通知被回复的人（定向）或动态主人（公开） */
+export async function notifyFeedComment(
+  memberId: string | null,
+  postId: string,
+  content: string,
+  replyTo: string | null
+): Promise<void> {
+  try {
+    let recipient: string
+    let title: string
+    if (replyTo) {
+      recipient = replyTo
+      title = '回复了你'
+    } else {
+      const { data: post } = await supabase.from('posts').select('member_id').eq('id', postId).maybeSingle()
+      if (!post) return
+      recipient = post.member_id ?? ME_KEY
+      title = '评论了你的动态'
+    }
+    if (recipient === (memberId ?? ME_KEY)) return // 自己评论自己不发通知
+    const name = await resolveActorName(memberId)
+    await insertFeedNotices([recipient], {
+      sender_name: name,
+      type: replyTo ? 'reply' : 'comment',
+      post_id: postId,
+      title: `${name}${title}`,
+      body: clip(content.trim()),
+    })
+  } catch {
+    // 通知失败不影响评论
+  }
+}
+
+/** 某个身份（members.id 或 'me'）的消息列表，新的在前 */
+export async function listFeedNotifications(identity: string, limit = 50): Promise<FeedNotificationRow[]> {
+  if (!identity) return []
+  const { data, error } = await supabase
+    .from('feed_notifications')
+    .select('*')
+    .eq('recipient', identity)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) fail(error, '加载消息通知')
+  return (data ?? []) as FeedNotificationRow[]
+}
+
+/** 未读消息条数（顶栏角标） */
+export async function unreadFeedNotificationsCount(identity: string): Promise<number> {
+  if (!identity) return 0
+  const { count, error } = await supabase
+    .from('feed_notifications')
+    .select('id', { count: 'exact', head: true })
+    .eq('recipient', identity)
+    .is('read_at', null)
+  if (error) fail(error, '统计未读消息')
+  return count ?? 0
+}
+
+/** 打开消息面板后全部标记已读（角标随之消失） */
+export async function markFeedNotificationsRead(identity: string): Promise<void> {
+  if (!identity) return
+  const { error } = await supabase
+    .from('feed_notifications')
+    .update({ read_at: new Date().toISOString() })
+    .eq('recipient', identity)
+    .is('read_at', null)
+  if (error) fail(error, '标记消息已读')
 }
 
 /* ------------------------------ 应用设置 ------------------------------ */
