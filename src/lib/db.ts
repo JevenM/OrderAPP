@@ -855,6 +855,33 @@ export async function saveCoupleQuizChoice(
   const atCol = col === 'choice_a' ? 'choice_a_at' : 'choice_b_at'
   const current = await fetchCoupleQuiz(userA, userB)
   if (!current?.question) throw new Error('还没有进行中的题目')
+  let historyId = current.history_id
+  if (!historyId) {
+    const { data: history, error: historyError } = await supabase
+      .from('couple_quiz_history')
+      .insert({
+        member_a: memberA,
+        member_b: memberB,
+        question_id: current.question.id,
+        question_title: current.question.title,
+        question_kind: current.question.kind,
+        option_a: current.question.a,
+        option_b: current.question.b,
+        choice_a: current.choice_a,
+        choice_b: current.choice_b,
+        status: current.status,
+      })
+      .select('id')
+      .single()
+    if (historyError || !history) fail(historyError ?? new Error('未返回历史记录编号'), '补存答题历史')
+    historyId = history.id as string
+    const { error: linkError } = await supabase
+      .from('couple_quiz')
+      .update({ history_id: historyId })
+      .eq('member_a', memberA)
+      .eq('member_b', memberB)
+    if (linkError) fail(linkError, '关联答题历史')
+  }
   const existingChoice = col === 'choice_a' ? current.choice_a : current.choice_b
   if (existingChoice) throw new Error('你已经提交过答案，请等待对方回答后揭晓')
   const nextA = col === 'choice_a' ? choice : current.choice_a

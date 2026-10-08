@@ -417,8 +417,9 @@ export default function CouplePage() {
   const loveUnlocked = Boolean(friendId) && mealDone(myMeals) === 3 && mealDone(peerMeals) === 3
   const loveSeenKey = memberId && friendId ? key('love-seen', memberId, friendId) : ''
 
-  /* ------------------------------ 情话揭晓动画 ------------------------------ */
+  /* ------------------------------ 揭晓动画 ------------------------------ */
   const [loveReveal, setLoveReveal] = useState(false)
+  const [quizReveal, setQuizReveal] = useState(false)
   const lovePrevRef = useRef<boolean | null>(null)
 
   // 双方三餐打卡齐的那一刻同时揭晓：本方打完最后一餐、或对方实时打完，解锁从 false 变 true 时播放
@@ -549,6 +550,7 @@ export default function CouplePage() {
       if (!quizLoadedRef.current) {
         quizLoadedRef.current = true
       } else if (nowRevealed && !revealedRef.current) {
+        setQuizReveal(true)
         toast.show('双方都选好啦，默契揭晓 🎉')
       }
       revealedRef.current = nowRevealed
@@ -987,16 +989,20 @@ export default function CouplePage() {
             {quiz.revealed && quiz.myChoice && quiz.peerChoice ? (
               <div
                 key={`reveal-${quiz.question.id}`}
-                className="animate-pop-in space-y-1 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-center"
+                className={`animate-pop-in space-y-1 rounded-2xl border p-4 text-center shadow-sm ${
+                  quiz.myChoice === quiz.peerChoice
+                    ? 'border-rose-200 bg-rose-50 text-rose-700'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                }`}
               >
-                <div className="animate-heart text-2xl">🎉</div>
-                <div className="break-words text-sm font-semibold text-emerald-700">
+                <div className="animate-heart text-2xl">{quiz.myChoice === quiz.peerChoice ? '💖' : '✨'}</div>
+                <div className={`break-words text-sm font-semibold ${quiz.myChoice === quiz.peerChoice ? 'text-rose-700' : 'text-emerald-700'}`}>
                   我选了「{choiceLabel(quiz.myChoice, quiz.question)}」
                 </div>
-                <div className="break-words text-sm text-emerald-600">
+                <div className={`break-words text-sm ${quiz.myChoice === quiz.peerChoice ? 'text-rose-600' : 'text-emerald-600'}`}>
                   {friendName} 选了「{choiceLabel(quiz.peerChoice, quiz.question)}」
                 </div>
-                <div className="text-xs text-emerald-500">
+                <div className={`text-xs ${quiz.myChoice === quiz.peerChoice ? 'text-rose-500' : 'text-emerald-500'}`}>
                   {quiz.myChoice === quiz.peerChoice ? '默契满分 💖' : '各有想法也是浪漫 ✨'}
                 </div>
               </div>
@@ -1054,6 +1060,26 @@ export default function CouplePage() {
       <p className="px-1 text-center text-[11px] leading-relaxed text-slate-400">
         小提示：实时同步，记得一起上线玩。
       </p>
+
+      {/* 同步抉择揭晓动画：双方提交后短暂展示氛围特效 */}
+      {quizReveal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-hidden p-6">
+          <div className={`absolute inset-0 ${quiz.myChoice === quiz.peerChoice ? 'bg-gradient-to-br from-rose-400 via-pink-500 to-fuchsia-500' : 'bg-gradient-to-br from-emerald-400 via-teal-500 to-cyan-500'} opacity-95`} />
+          {confettiBits.map((b, i) => (
+            <span key={`quiz-${i}`} className="animate-confetti pointer-events-none absolute -top-6" style={{ left: b.left, animationDelay: b.delay, animationDuration: b.duration, fontSize: b.size }}>
+              {b.emoji}
+            </span>
+          ))}
+          <div className="animate-pop-in relative w-full max-w-sm rounded-3xl bg-white/95 p-7 text-center shadow-2xl">
+            <div className="animate-heart text-5xl">{quiz.myChoice === quiz.peerChoice ? '💖' : '🌿'}</div>
+            <div className={`mt-2 text-xs font-medium tracking-widest ${quiz.myChoice === quiz.peerChoice ? 'text-rose-500' : 'text-emerald-500'}`}>
+              {quiz.myChoice === quiz.peerChoice ? '默契满分，答案一致' : '答案不同，也各有想法'}
+            </div>
+            <p className="mt-4 text-lg font-semibold text-slate-700">同步抉择结果已揭晓</p>
+            <button className="btn-primary mt-5 w-full" onClick={() => setQuizReveal(false)}>查看结果</button>
+          </div>
+        </div>
+      )}
 
       {/* 情话揭晓动画：双方三餐打卡齐的那一刻同时绽放 */}
       {loveReveal && (

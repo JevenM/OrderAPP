@@ -25,6 +25,24 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.17',
+    date: '2026-10-09',
+    title: '同步抉择揭晓氛围优化',
+    items: [
+      { kind: 'improve', text: '双方答案一致时使用粉色默契主题，不一致时使用绿色想法主题' },
+      { kind: 'new', text: '同步抉择揭晓增加全屏渐变、彩带粒子和弹出动画效果' },
+    ],
+  },
+  {
+    version: '1.9.16',
+    date: '2026-10-09',
+    title: '情侣答题历史修复',
+    items: [
+      // { kind: 'fix', text: '管理员情侣对筛选改为读取已接受的好友对，并保留已有历史中的成员对' },
+      { kind: 'fix', text: '兼容迁移前的同步抉择会话，提交时自动补存数据库历史；新增迁移可回填旧会话记录' },
+    ],
+  },
+  {
     version: '1.9.15',
     date: '2026-10-09',
     title: '同步抉择提交锁定',

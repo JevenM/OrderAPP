@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { exportCoupleQuizHistoryCsv, exportCoupleQuizHistoryJson, type CoupleQuizHistoryExportRow } from '../lib/export'
-import { listAllCoupleQuizHistory, type CoupleQuizHistoryRow } from '../lib/db'
+import { listAllCoupleQuizHistory, listAllFriendships, type CoupleQuizHistoryRow } from '../lib/db'
 import { useToast } from '../components/Toast'
 import { useMembers } from '../store/members'
 
@@ -8,19 +8,23 @@ export default function AdminCoupleHistory() {
   const toast = useToast()
   const { members, loading: membersLoading } = useMembers()
   const [rows, setRows] = useState<CoupleQuizHistoryRow[]>([])
+  const [friendshipPairs, setFriendshipPairs] = useState<{ key: string; label: string }[]>([])
   const [pair, setPair] = useState('all')
   const [status, setStatus] = useState<'all' | 'revealed' | 'answering'>('all')
   const [loading, setLoading] = useState(true)
 
   const memberById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members])
   const pairs = useMemo(() => {
-    const ids = new Set<string>()
-    rows.forEach((row) => ids.add(`${row.member_a}|${row.member_b}`))
-    return [...ids].map((key) => {
-      const [a, b] = key.split('|')
-      return { key, label: `${memberById.get(a)?.name ?? '未知成员'} ↔ ${memberById.get(b)?.name ?? '未知成员'}` }
+    const byKey = new Map<string, string>()
+    friendshipPairs.forEach((item) => byKey.set(item.key, item.label))
+    rows.forEach((row) => {
+      const key = `${row.member_a}|${row.member_b}`
+      if (!byKey.has(key)) {
+        byKey.set(key, `${memberById.get(row.member_a)?.name ?? '未知成员'} ↔ ${memberById.get(row.member_b)?.name ?? '未知成员'}`)
+      }
     })
-  }, [rows, memberById])
+    return [...byKey].map(([key, label]) => ({ key, label }))
+  }, [friendshipPairs, rows, memberById])
   const filtered = useMemo(
     () => rows.filter((row) => (pair === 'all' || `${row.member_a}|${row.member_b}` === pair) && (status === 'all' || row.status === status)),
     [rows, pair, status]
@@ -37,13 +41,18 @@ export default function AdminCoupleHistory() {
   const reload = useCallback(async () => {
     setLoading(true)
     try {
-      setRows(await listAllCoupleQuizHistory())
+      const [history, friendships] = await Promise.all([listAllCoupleQuizHistory(), listAllFriendships()])
+      setRows(history)
+      setFriendshipPairs(friendships.filter((f) => f.status === 'accepted').map((f) => {
+        const [a, b] = [f.requester_id, f.addressee_id].sort()
+        return { key: `${a}|${b}`, label: `${memberById.get(a)?.name ?? '未知成员'} ↔ ${memberById.get(b)?.name ?? '未知成员'}` }
+      }))
     } catch (error) {
       toast.show((error as Error).message, 'err')
     } finally {
       setLoading(false)
     }
-  }, [toast])
+  }, [memberById, toast])
 
   useEffect(() => {
     void reload()

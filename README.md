@@ -229,7 +229,7 @@ Supabase 控制台 → **SQL Editor**，按顺序执行：
 | `supabase/migrations/0014_couple_wishes.sql` | 建秘密心愿表 | **启用互动空间时执行** |
 | `supabase/migrations/0015_couple_sync.sql` | 建互动事件与同步抉择表并加入 Realtime，支持每道题提交自定义文字答案 | **启用互动空间时执行；已部署旧版时需重新执行以更新答案约束** |
 | `supabase/migrations/0016_feed_notifications.sql` | 建饭圈通知表、未读查询策略并加入 Realtime | **启用饭圈通知时必须执行** |
-| `supabase/migrations/0017_couple_quiz_history.sql` | 保存同步抉择每次答题历史，并为当前会话关联历史记录 | **启用答题历史和管理员导出时必须执行** |
+| `supabase/migrations/0017_couple_quiz_history.sql、0018_backfill_couple_quiz_history.sql` | 保存同步抉择每次答题历史，并为当前会话关联历史记录 | **启用答题历史和管理员导出时必须执行** |
 
 > 多成员功能上线前产生的历史订单/三餐，`member_id` 为 NULL，后台显示为「未归属」，数据不丢。
 > 新功能迁移请按编号顺序执行；重复执行幂等脚本不会影响已有数据。
