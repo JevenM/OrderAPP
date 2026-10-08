@@ -716,10 +716,31 @@ export interface CoupleQuizRow {
   member_a: string
   member_b: string
   question: CoupleQuizQuestion | null
-  choice_a: 'A' | 'B' | null
-  choice_b: 'A' | 'B' | null
+  choice_a: string | null
+  choice_b: string | null
   status: 'answering' | 'revealed'
+  history_id: string | null
   updated_at: string
+}
+
+export interface CoupleQuizHistoryRow {
+  id: string
+  member_a: string
+  member_b: string
+  question_id: string
+  question_title: string
+  question_kind: string
+  option_a: string
+  option_b: string
+  choice_a: string | null
+  choice_b: string | null
+  status: 'answering' | 'revealed'
+  matched: boolean | null
+  started_at: string
+  choice_a_at: string | null
+  choice_b_at: string | null
+  revealed_at: string | null
+  created_at: string
 }
 
 export type CoupleEventType = 'wish_add' | 'wish_draw' | 'love_unlock' | 'quiz_note'
@@ -784,10 +805,24 @@ export async function fetchCoupleQuiz(userA: string, userB: string): Promise<Cou
   return (data as CoupleQuizRow | null) ?? null
 }
 
-/** 出题 / 换题：覆盖题目并清空双方选择，两边回到同一题重新作答 */
-export async function resetCoupleQuiz(userA: string, userB: string, question: CoupleQuizQuestion): Promise<void> {
-  if (!userA || !userB || userA === userB) return
+/** 出题 / 换题：创建历史快照，再更新双方共享的当前会话 */
+export async function resetCoupleQuiz(userA: string, userB: string, question: CoupleQuizQuestion): Promise<string | null> {
+  if (!userA || !userB || userA === userB) return null
   const [memberA, memberB] = couplePair(userA, userB)
+  const { data: history, error: historyError } = await supabase
+    .from('couple_quiz_history')
+    .insert({
+      member_a: memberA,
+      member_b: memberB,
+      question_id: question.id,
+      question_title: question.title,
+      question_kind: question.kind,
+      option_a: question.a,
+      option_b: question.b,
+    })
+    .select('id')
+    .single()
+  if (historyError) fail(historyError, '保存答题历史')
   const { error } = await supabase
     .from('couple_quiz')
     .upsert(
@@ -798,37 +833,72 @@ export async function resetCoupleQuiz(userA: string, userB: string, question: Co
         choice_a: null,
         choice_b: null,
         status: 'answering',
+        history_id: history.id,
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'member_a,member_b' }
     )
   if (error) fail(error, '同步题目')
+  return history.id as string
 }
 
-/** 提交自己的选择；双方都选好后状态自动变为 revealed，两边同时揭晓 */
+/** 提交自己的选择，并同步更新对应历史；双方都选好后状态自动变为 revealed */
 export async function saveCoupleQuizChoice(
   userA: string,
   userB: string,
   memberId: string,
-  choice: 'A' | 'B'
+  choice: string
 ): Promise<void> {
   if (!userA || !userB || userA === userB) return
   const [memberA, memberB] = couplePair(userA, userB)
   const col = memberId === memberA ? 'choice_a' : 'choice_b'
+  const atCol = col === 'choice_a' ? 'choice_a_at' : 'choice_b_at'
   const current = await fetchCoupleQuiz(userA, userB)
   if (!current?.question) throw new Error('还没有进行中的题目')
+  const existingChoice = col === 'choice_a' ? current.choice_a : current.choice_b
+  if (existingChoice) throw new Error('你已经提交过答案，请等待对方回答后揭晓')
   const nextA = col === 'choice_a' ? choice : current.choice_a
   const nextB = col === 'choice_b' ? choice : current.choice_b
+  const nextStatus = nextA && nextB ? 'revealed' : 'answering'
+  const now = new Date().toISOString()
   const { error } = await supabase
     .from('couple_quiz')
-    .update({
-      [col]: choice,
-      status: nextA && nextB ? 'revealed' : 'answering',
-      updated_at: new Date().toISOString(),
-    })
+    .update({ [col]: choice, status: nextStatus, updated_at: now })
     .eq('member_a', memberA)
     .eq('member_b', memberB)
   if (error) fail(error, '提交选择')
+  if (current.history_id) {
+    const { error: historyError } = await supabase
+      .from('couple_quiz_history')
+      .update({
+        [col]: choice,
+        [atCol]: now,
+        status: nextStatus,
+        matched: nextStatus === 'revealed' ? nextA === nextB : null,
+        ...(nextStatus === 'revealed' ? { revealed_at: now } : {}),
+      })
+      .eq('id', current.history_id)
+    if (historyError) fail(historyError, '更新答题历史')
+  }
+  if (nextStatus === 'revealed' && current.status !== 'revealed') {
+    const recipient = memberId === memberA ? memberB : memberA
+    await notifyCoupleQuizReveal(recipient, current.question.title)
+  }
+}
+
+export async function listCoupleQuizHistory(userA: string, userB: string, limit = 200): Promise<CoupleQuizHistoryRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase.from('couple_quiz_history').select('*')
+    .eq('member_a', memberA).eq('member_b', memberB).order('created_at', { ascending: false }).limit(limit)
+  if (error) fail(error, '加载答题历史')
+  return (data ?? []) as CoupleQuizHistoryRow[]
+}
+
+export async function listAllCoupleQuizHistory(limit = 1000): Promise<CoupleQuizHistoryRow[]> {
+  const { data, error } = await supabase.from('couple_quiz_history').select('*').order('created_at', { ascending: false }).limit(limit)
+  if (error) fail(error, '加载全部答题历史')
+  return (data ?? []) as CoupleQuizHistoryRow[]
 }
 
 /* ------------------------------ 订单 ------------------------------ */
@@ -1236,7 +1306,7 @@ export async function removeComment(id: string): Promise<void> {
 
 /* ------------------------ 饭圈消息通知（顶栏未读角标） ------------------------ */
 
-export type FeedNoticeType = 'post' | 'like' | 'comment' | 'reply'
+export type FeedNoticeType = 'post' | 'like' | 'comment' | 'reply' | 'quiz'
 
 export interface FeedNotificationRow {
   id: string
@@ -1275,9 +1345,14 @@ async function insertFeedNotices(
   const unique = [...new Set(recipients.filter(Boolean))]
   if (!unique.length) return
   try {
-    await supabase.from('feed_notifications').insert(unique.map((recipient) => ({ ...notice, recipient })))
-  } catch {
-    // 通知失败静默跳过
+    const { error } = await supabase
+      .from('feed_notifications')
+      .insert(unique.map((recipient) => ({ ...notice, recipient })))
+    if (error) {
+      console.warn('写入饭圈通知失败', error)
+    }
+  } catch (error) {
+    console.warn('写入饭圈通知失败', error)
   }
 }
 
@@ -1299,6 +1374,22 @@ async function feedAudience(actorMemberId: string | null): Promise<string[]> {
 }
 
 const clip = (text: string, max = 30) => (text.length > max ? `${text.slice(0, max)}…` : text)
+
+/** 同步抉择双方都作答后，通知未提交答案的一方；通知落库后即使离线也能在铃铛看到 */
+async function notifyCoupleQuizReveal(recipient: string, title: string): Promise<void> {
+  try {
+    const name = await resolveActorName(null)
+    await insertFeedNotices([recipient], {
+      sender_name: name,
+      type: 'quiz',
+      post_id: null,
+      title: '同步抉择已揭晓',
+      body: `「${clip(title, 24)}」双方都选好啦，快去看看结果`,
+    })
+  } catch (error) {
+    console.warn('写入同步抉择通知失败', error)
+  }
+}
 
 /** 发布动态 → 通知我的好友们 */
 export async function notifyFeedPost(memberId: string | null, postId: string, content: string): Promise<void> {

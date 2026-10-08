@@ -4,7 +4,7 @@ import { listFeedNotifications, type FeedNotificationRow } from '../lib/db'
 import { timeCn } from '../lib/date'
 import { useUnread } from '../store/unread'
 
-const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️' }
+const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️', quiz: '💞' }
 
 /**
  * 顶栏消息通知面板：
@@ -33,9 +33,9 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
     }
   }, [identity, markFeedRead])
 
-  const openFeed = () => {
+  const openNotice = (n: FeedNotificationRow) => {
     onClose()
-    navigate('/feed')
+    navigate(n.type === 'quiz' ? '/couple' : '/feed')
   }
 
   return (
@@ -62,7 +62,7 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
           <button
             key={n.id}
             className="flex w-full items-start gap-2 border-b border-slate-50 px-3 py-2.5 text-left last:border-0 active:bg-brand-50"
-            onClick={openFeed}
+            onClick={() => openNotice(n)}
           >
             <span className="text-base leading-5">{ICON[n.type] ?? '🔔'}</span>
             <span className="min-w-0 flex-1">

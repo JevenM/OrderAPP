@@ -77,6 +77,10 @@ export function UnreadProvider({ enabled, children }: { enabled: boolean; childr
   useEffect(() => {
     if (!enabled || !feedIdentity) return
     void refreshFeed()
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refreshFeed()
+    }, 10_000)
+    return () => window.clearInterval(timer)
   }, [enabled, feedIdentity, refreshFeed])
 
   /** 打开消息面板：本地立即清零，服务端全部标记已读 */

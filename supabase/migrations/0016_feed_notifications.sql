@@ -12,7 +12,7 @@ create table if not exists public.feed_notifications (
   id          uuid primary key default gen_random_uuid(),
   recipient   text not null,                -- 接收人：members.id 或 'me'（管理员，与 posts.member_id 空值口径对应）
   sender_name text not null default '',     -- 操作人昵称（落库时快照，免联查）
-  type        text not null,                -- post 发布动态 / like 点赞 / comment 评论 / reply 定向回复
+  type        text not null,                -- post 发布动态 / like 点赞 / comment 评论 / reply 定向回复 / quiz 同步抉择揭晓
   post_id     text,                         -- 相关动态 id（点击跳转饭圈用）
   title       text not null,                -- 一句话标题，如「XX 赞了你的动态」
   body        text not null default '',     -- 内容摘要

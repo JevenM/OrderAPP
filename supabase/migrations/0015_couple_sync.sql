@@ -33,9 +33,20 @@ create table if not exists public.couple_quiz (
   updated_at timestamptz not null default now(),
   primary key (member_a, member_b),
   constraint couple_quiz_ordered_pair check (member_a < member_b),
-  constraint couple_quiz_choice_a_valid check (choice_a in ('A', 'B') or choice_a is null),
-  constraint couple_quiz_choice_b_valid check (choice_b in ('A', 'B') or choice_b is null)
+  constraint couple_quiz_choice_a_valid check (choice_a is null or (char_length(trim(choice_a)) between 1 and 120)),
+  constraint couple_quiz_choice_b_valid check (choice_b is null or (char_length(trim(choice_b)) between 1 and 120))
 );
+
+-- 已执行过旧版脚本的项目也可重复执行，移除仅允许 A/B 的旧约束并补上文字答案约束。
+do $$
+begin
+  alter table public.couple_quiz drop constraint if exists couple_quiz_choice_a_valid;
+  alter table public.couple_quiz drop constraint if exists couple_quiz_choice_b_valid;
+  alter table public.couple_quiz add constraint couple_quiz_choice_a_valid check (choice_a is null or (char_length(trim(choice_a)) between 1 and 120));
+  alter table public.couple_quiz add constraint couple_quiz_choice_b_valid check (choice_b is null or (char_length(trim(choice_b)) between 1 and 120));
+exception when duplicate_object then
+  null;
+end $$;
 
 alter table public.couple_events enable row level security;
 alter table public.couple_quiz enable row level security;

@@ -28,9 +28,18 @@ type QuestionKind = '轻松版' | '走心版' | '自定义'
 type Question = { id: string; title: string; a: string; b: string; kind: QuestionKind }
 type QuizView = {
   question: Question | null
-  myChoice: 'A' | 'B' | null
-  peerChoice: 'A' | 'B' | null
+  myChoice: string | null
+  peerChoice: string | null
   revealed: boolean
+}
+
+type ChoiceMode = 'preset' | 'custom'
+
+const choiceLabel = (choice: string | null, question: Question): string => {
+  if (!choice) return ''
+  if (choice === 'A') return question.a
+  if (choice === 'B') return question.b
+  return choice
 }
 
 const LOVE_MESSAGES = [
@@ -385,6 +394,8 @@ export default function CouplePage() {
   /* ------------------------------ 同步抉择 ------------------------------ */
   const [questionKind, setQuestionKind] = useState<QuestionKind>('轻松版')
   const [quiz, setQuiz] = useState<QuizView>({ question: null, myChoice: null, peerChoice: null, revealed: false })
+  const [choiceMode, setChoiceMode] = useState<ChoiceMode>('preset')
+  const [customAnswer, setCustomAnswer] = useState('')
   const [customTitle, setCustomTitle] = useState('')
   const [customA, setCustomA] = useState('')
   const [customB, setCustomB] = useState('')
@@ -404,6 +415,7 @@ export default function CouplePage() {
   const loveMessage = LOVE_MESSAGES[dayNumber() % LOVE_MESSAGES.length]
   const mealDone = (list: Meal[]) => REQUIRED_SLOTS.filter((s) => list.some((m) => m.slot === s)).length
   const loveUnlocked = Boolean(friendId) && mealDone(myMeals) === 3 && mealDone(peerMeals) === 3
+  const loveSeenKey = memberId && friendId ? key('love-seen', memberId, friendId) : ''
 
   /* ------------------------------ 情话揭晓动画 ------------------------------ */
   const [loveReveal, setLoveReveal] = useState(false)
@@ -413,8 +425,10 @@ export default function CouplePage() {
   useEffect(() => {
     const prev = lovePrevRef.current
     lovePrevRef.current = loveUnlocked
-    if (prev !== null && loveUnlocked && !prev) setLoveReveal(true)
-  }, [loveUnlocked])
+    if (prev !== null && loveUnlocked && !prev && loveSeenKey && readCache<string | null>(loveSeenKey, null) !== todayStr()) {
+      setLoveReveal(true)
+    }
+  }, [loveUnlocked, loveSeenKey])
 
   // 彩带粒子参数固定在一次会话内，避免每次渲染跳动
   const confettiBits = useMemo(
@@ -530,6 +544,8 @@ export default function CouplePage() {
       const theirs = row.member_a === memberId ? row.choice_b : row.choice_a
       const nowRevealed = row.status === 'revealed'
       setQuiz({ question: q, myChoice: mine, peerChoice: theirs, revealed: nowRevealed })
+      setChoiceMode(mine && mine !== q.a && mine !== q.b ? 'custom' : 'preset')
+      setCustomAnswer(mine && mine !== q.a && mine !== q.b ? mine : '')
       if (!quizLoadedRef.current) {
         quizLoadedRef.current = true
       } else if (nowRevealed && !revealedRef.current) {
@@ -658,8 +674,10 @@ export default function CouplePage() {
     revealedRef.current = false
     setQuestionKind(kind)
     setQuiz({ question: nextQ, myChoice: null, peerChoice: null, revealed: false })
+    setChoiceMode('preset')
+    setCustomAnswer('')
     if (memberId && friendId) {
-      // 出题写入共享会话：对方实时收到同一道题
+      // 出题同时创建历史快照，对方实时收到同一道题
       void resetCoupleQuiz(memberId, friendId, nextQ).catch((error: Error) => toast.show(error.message, 'err'))
     }
   }
@@ -711,14 +729,21 @@ export default function CouplePage() {
     }
   }
 
-  const submitChoice = (val: 'A' | 'B') => {
-    if (!quiz.question || quiz.revealed || quiz.myChoice === val) return
-    setQuiz((prev) => ({ ...prev, myChoice: val }))
+  const submitChoice = (val: string) => {
+    const choice = val.trim()
+    if (!quiz.question || quiz.revealed || quiz.myChoice || !choice) return
+    const previousChoice = quiz.myChoice
+    setCustomAnswer(choiceMode === 'custom' ? choice : '')
+    setQuiz((prev) => ({ ...prev, myChoice: choice }))
     if (memberId && friendId) {
-      void saveCoupleQuizChoice(memberId, friendId, memberId, val)
+      void saveCoupleQuizChoice(memberId, friendId, memberId, choice)
         .then(() => fetchCoupleQuiz(memberId, friendId))
         .then((row) => applyQuizRow(row))
-        .catch((error: Error) => toast.show(error.message, 'err'))
+        .catch((error: Error) => {
+          setQuiz((prev) => ({ ...prev, myChoice: previousChoice }))
+          if (!previousChoice) setCustomAnswer('')
+          toast.show(error.message, 'err')
+        })
     }
   }
 
@@ -743,21 +768,21 @@ export default function CouplePage() {
 
   return (
     <div className="space-y-4">
-      <div className="overflow-hidden rounded-3xl bg-gradient-to-br from-brand-500 via-rose-400 to-orange-300 p-5 text-white shadow-card">
+      <div className="min-w-0 overflow-hidden rounded-3xl bg-gradient-to-br from-brand-500 via-rose-400 to-orange-300 p-4 text-white shadow-card sm:p-5">
         <div className="text-xs opacity-80">FRIENDSHIP PLAYGROUND</div>
-        <h2 className="mt-1 text-xl font-bold">和 {friendName} 的互动空间</h2>
-        <p className="mt-1 text-xs opacity-90">把一日三餐、心愿和小默契，变成每天都想打开的惊喜。</p>
+        <h2 className="mt-1 break-words text-xl font-bold">和 {friendName} 的互动空间</h2>
+        <p className="mt-1 break-words text-xs opacity-90">把一日三餐、心愿和小默契，变成每天都想打开的惊喜。</p>
       </div>
 
       {/* 今日专属情话：双方三餐打卡完毕才解锁，两边看到同一句 */}
       <section className="card space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold">💌今日专属情话</h3>
+        <div className="flex min-w-0 items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <h3 className="break-words font-semibold">💌今日专属情话</h3>
             <p className="text-[11px] text-slate-400">🔐完成今日三餐打卡，情话同时解锁</p>
           </div>
           <span
-            className={`chip ${
+            className={`chip shrink-0 ${
               loveUnlocked
                 ? 'border-amber-200 bg-amber-50 text-amber-600'
                 : 'border-slate-200 bg-slate-50 text-slate-400'
@@ -787,9 +812,9 @@ export default function CouplePage() {
 
       {/* 秘密心愿池：好友双方共享，抽签结果双方同步 */}
       <section className="card space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold">🎁秘密心愿抽签</h3>
+        <div className="flex min-w-0 items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <h3 className="break-words font-semibold">🎁秘密心愿抽签</h3>
             <p className="text-[11px] text-slate-400">专属心愿池，抽到谁的心愿谁来完成</p>
           </div>
           <span className="chip border-brand-200 bg-brand-50 text-brand-600">{wishesList.length} 个❤</span>
@@ -799,18 +824,18 @@ export default function CouplePage() {
             <div className="text-xs text-brand-500">
               「{drawn.drawer}」抽中了「{drawn.owner}」的心愿
             </div>
-            <div className="mt-1 text-lg font-semibold text-brand-700">“{drawn.text}”</div>
+            <div className="mt-1 break-words text-lg font-semibold text-brand-700">“{drawn.text}”</div>
           </div>
         )}
-        <div className="flex gap-2">
+        <div className="flex min-w-0 flex-col gap-2 min-[420px]:flex-row">
           <input
-            className="input flex-1"
+            className="input min-w-0 flex-1"
             placeholder="比如：给我捏肩"
             value={wishText}
             onChange={(e) => setWishText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && void addWish()}
           />
-          <button className="btn-soft px-4" onClick={() => void addWish()}>
+          <button className="btn-soft shrink-0 px-4" onClick={() => void addWish()}>
             放入心愿池
           </button>
         </div>
@@ -821,9 +846,9 @@ export default function CouplePage() {
 
       {/* 甜蜜留言板：入库持久化，双方实时可见 */}
       <section className="card space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold">💬甜蜜聊天留言板</h3>
+        <div className="flex min-w-0 items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <h3 className="break-words font-semibold">💬甜蜜聊天留言板</h3>
             <p className="text-[11px] text-slate-400">仅你们双方可见，留言实时同步</p>
           </div>
           <button className="text-xs text-brand-600" onClick={clearMessages}>
@@ -842,9 +867,19 @@ export default function CouplePage() {
                 key={m.id}
                 className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}
               >
-                <span className="px-1 text-[10px] text-slate-400">{name}</span>
+                <span className="px-1 text-[10px] text-slate-400">
+                  {name} · {new Date(m.created_at).toLocaleString('zh-CN', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false,
+                  })}
+                </span>
                 <span
-                  className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${
+                  className={`max-w-[80%] break-words rounded-2xl px-3 py-2 text-sm ${
                     isMine ? 'bg-brand-500 text-white' : 'bg-white text-slate-600 shadow-sm'
                   }`}
                 >
@@ -855,15 +890,15 @@ export default function CouplePage() {
           })}
           <div ref={chatBottomRef} />
         </div>
-        <div className="flex gap-2">
+        <div className="flex min-w-0 flex-col gap-2 min-[420px]:flex-row">
           <input
-            className="input flex-1"
+            className="input min-w-0 flex-1"
             placeholder="如：想你啦 🥰"
             value={messageText}
             onChange={(e) => setMessageText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && void sendMessage()}
           />
-          <button className="btn-primary px-4" onClick={() => void sendMessage()}>
+          <button className="btn-primary shrink-0 px-4" onClick={() => void sendMessage()}>
             发送
           </button>
         </div>
@@ -875,11 +910,11 @@ export default function CouplePage() {
           <h3 className="font-semibold">💞同步抉择</h3>
           <p className="text-[11px] text-slate-400">题目与选择双方实时同步，一起在线玩更配哦</p>
         </div>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-3">
           {(['轻松版', '走心版', '自定义'] as QuestionKind[]).map((kind) => (
             <button
               key={kind}
-              className={`rounded-xl border px-2 py-2 text-xs ${
+              className={`min-w-0 rounded-xl border px-2 py-2 text-xs ${
                 questionKind === kind ? 'border-brand-400 bg-brand-50 text-brand-600' : 'border-slate-200'
               } ${quiz.question && !quiz.revealed ? 'cursor-not-allowed opacity-40' : ''}`}
               disabled={Boolean(quiz.question) && !quiz.revealed}
@@ -893,21 +928,61 @@ export default function CouplePage() {
           <>
             <div className="rounded-2xl bg-orange-50 p-3">
               <span className="chip border-orange-200 bg-white text-orange-600">{quiz.question.kind}</span>
-              <h4 className="mt-2 font-semibold">{quiz.question.title}</h4>
+              <h4 className="mt-2 break-words font-semibold">{quiz.question.title}</h4>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              {(['A', 'B'] as const).map((opt) => (
+            <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
+              {(['A', 'B'] as const).map((opt) => {
+                const answer = opt === 'A' ? quiz.question!.a : quiz.question!.b
+                return (
+                  <button
+                    key={opt}
+                    className={`min-w-0 break-words rounded-2xl border p-3 text-left text-sm ${
+                      quiz.myChoice === opt || quiz.myChoice === answer
+                        ? 'border-brand-400 bg-brand-50 text-brand-600'
+                        : 'border-slate-200'
+                    }`}
+                    onClick={() => {
+                      setChoiceMode('preset')
+                      submitChoice(answer)
+                    }}
+                    disabled={quiz.revealed || Boolean(quiz.myChoice)}
+                  >
+                    <span className="mr-1 font-semibold">{opt}</span>
+                    <span>{answer}</span>
+                  </button>
+                )
+              })}
+              <button
+                className={`min-w-0 rounded-2xl border p-3 text-left text-sm ${
+                  choiceMode === 'custom' ? 'border-brand-400 bg-brand-50 text-brand-600' : 'border-slate-200'
+                }`}
+                onClick={() => setChoiceMode('custom')}
+                disabled={quiz.revealed || Boolean(quiz.myChoice)}
+              >
+                <span className="mr-1 font-semibold">C</span>
+                <span>自定义回答</span>
+              </button>
+            </div>
+            {choiceMode === 'custom' && !quiz.revealed && (
+              <div className="flex min-w-0 flex-col gap-2 min-[420px]:flex-row">
+                <input
+                  className="input min-w-0 flex-1"
+                  placeholder="填写你自己的答案"
+                  maxLength={120}
+                  value={customAnswer}
+                  disabled={Boolean(quiz.myChoice)}
+                  onChange={(e) => setCustomAnswer(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && submitChoice(customAnswer)}
+                />
                 <button
-                  key={opt}
-                  className={`rounded-2xl border p-3 text-sm ${
-                    quiz.myChoice === opt ? 'border-brand-400 bg-brand-50 text-brand-600' : 'border-slate-200'
-                  }`}
-                  onClick={() => submitChoice(opt)}
+                  className="btn-primary shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => submitChoice(customAnswer)}
+                  disabled={Boolean(quiz.myChoice) || !customAnswer.trim()}
                 >
-                  {opt} · {opt === 'A' ? quiz.question!.a : quiz.question!.b}
+                  提交回答
                 </button>
-              ))}
-            </div>
+              </div>
+            )}
 
             {quiz.revealed && quiz.myChoice && quiz.peerChoice ? (
               <div
@@ -915,14 +990,14 @@ export default function CouplePage() {
                 className="animate-pop-in space-y-1 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-center"
               >
                 <div className="animate-heart text-2xl">🎉</div>
-                <div className="text-sm font-semibold text-emerald-700">
-                  我选了 {quiz.myChoice} · {quiz.myChoice === 'A' ? quiz.question.a : quiz.question.b}
+                <div className="break-words text-sm font-semibold text-emerald-700">
+                  我选了「{choiceLabel(quiz.myChoice, quiz.question)}」
                 </div>
-                <div className="text-sm text-emerald-600">
-                  {friendName} 选了 {quiz.peerChoice} · {quiz.peerChoice === 'A' ? quiz.question.a : quiz.question.b}
+                <div className="break-words text-sm text-emerald-600">
+                  {friendName} 选了「{choiceLabel(quiz.peerChoice, quiz.question)}」
                 </div>
                 <div className="text-xs text-emerald-500">
-                  {quiz.myChoice === quiz.peerChoice ? '默契满分 💖' : '互补也是浪漫 ✨'}
+                  {quiz.myChoice === quiz.peerChoice ? '默契满分 💖' : '各有想法也是浪漫 ✨'}
                 </div>
               </div>
             ) : quiz.myChoice ? (
@@ -952,16 +1027,18 @@ export default function CouplePage() {
               value={customTitle}
               onChange={(e) => setCustomTitle(e.target.value)}
             />
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
               <input
-                className="input"
+                className="input min-w-0"
                 placeholder="选项 A"
+                maxLength={120}
                 value={customA}
                 onChange={(e) => setCustomA(e.target.value)}
               />
               <input
-                className="input"
+                className="input min-w-0"
                 placeholder="选项 B"
+                maxLength={120}
                 value={customB}
                 onChange={(e) => setCustomB(e.target.value)}
               />
@@ -998,7 +1075,19 @@ export default function CouplePage() {
             <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
               你们今天的三餐都打卡完成啦，这是只属于你们的一句话
             </p>
-            <button className="btn-primary mt-5 w-full" onClick={() => setLoveReveal(false)}>
+            <button
+              className="btn-primary mt-5 w-full"
+              onClick={() => {
+                if (loveSeenKey) {
+                  try {
+                    localStorage.setItem(loveSeenKey, JSON.stringify(todayStr()))
+                  } catch {
+                    // 存储失败不影响关闭本次动画
+                  }
+                }
+                setLoveReveal(false)
+              }}
+            >
               收下这份甜蜜 💖
             </button>
           </div>

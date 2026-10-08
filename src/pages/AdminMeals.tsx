@@ -308,19 +308,25 @@ export default function AdminMeals() {
 
       <div className="card space-y-2">
         <h3 className="text-xs font-medium text-slate-400">最近 7 天</h3>
-        <div className="flex justify-between gap-1">
+        <div className="grid grid-cols-7 gap-1">
           {overview.map((o) => (
             <button
               key={o.day}
               onClick={() => setDay(o.day)}
-              className={`flex flex-1 flex-col items-center gap-1 rounded-lg py-1.5 text-[10px] ${
+              className={`min-w-0 rounded-lg px-0.5 py-1.5 text-[10px] ${
                 o.day === day ? 'bg-brand-50 text-brand-600' : 'text-slate-400'
               }`}
             >
-              <span>{o.day.slice(8)}</span>
-              <span className="text-sm">
-                {o.total === 0 ? '·' : `${'✅'.repeat(o.eaten)}${'🫤'.repeat(o.little)}${'❌'.repeat(o.skipped)}`}
-              </span>
+              <span className="block truncate">{o.day.slice(8)}</span>
+              {o.total === 0 ? (
+                <span className="mt-1 block text-sm leading-4">·</span>
+              ) : (
+                <span className="mt-1 grid grid-cols-3 gap-px text-[10px] leading-4" title={`✅ ${o.eaten} · 🫤 ${o.little} · ❌ ${o.skipped}`}>
+                  <span>✅{o.eaten}</span>
+                  <span>🫤{o.little}</span>
+                  <span>❌{o.skipped}</span>
+                </span>
+              )}
             </button>
           ))}
         </div>

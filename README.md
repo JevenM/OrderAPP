@@ -223,8 +223,16 @@ Supabase 控制台 → **SQL Editor**，按顺序执行：
 | `supabase/migrations/0008_comment_privacy.sql` | `post_comments` 加 `reply_to` 列（针对性回复） | **要用「回复某人」就必须执行**，否则会报 reply_to 列不存在 |
 | `supabase/migrations/0009_member_my_name.sql` | `members` 加 `my_name` 列（每个她看到的我） | **要用「她看到我叫」就必须执行**，不改旧数据，留空继续用统一昵称 |
 | `supabase/migrations/0010_avatars.sql` | `members` 加 `avatar_url` 列，并建 `avatars` bucket + 放开读写 | **要上传头像就必须执行**，脚本已包含 bucket 创建，不用手动建 |
+| `supabase/migrations/0011_friends.sql` | 建好友关系表，支持好友申请与接受 | **启用好友功能时执行** |
+| `supabase/migrations/0012_members_unique_name.sql` | 为成员昵称增加唯一约束 | **启用好友功能时执行** |
+| `supabase/migrations/0013_couple_messages.sql` | 建互动空间聊天消息表 | **启用互动空间时执行** |
+| `supabase/migrations/0014_couple_wishes.sql` | 建秘密心愿表 | **启用互动空间时执行** |
+| `supabase/migrations/0015_couple_sync.sql` | 建互动事件与同步抉择表并加入 Realtime，支持每道题提交自定义文字答案 | **启用互动空间时执行；已部署旧版时需重新执行以更新答案约束** |
+| `supabase/migrations/0016_feed_notifications.sql` | 建饭圈通知表、未读查询策略并加入 Realtime | **启用饭圈通知时必须执行** |
+| `supabase/migrations/0017_couple_quiz_history.sql` | 保存同步抉择每次答题历史，并为当前会话关联历史记录 | **启用答题历史和管理员导出时必须执行** |
 
 > 多成员功能上线前产生的历史订单/三餐，`member_id` 为 NULL，后台显示为「未归属」，数据不丢。
+> 新功能迁移请按编号顺序执行；重复执行幂等脚本不会影响已有数据。
 
 照片上传（可选）：Storage → New bucket，名 `meal-photos`，**Public**。不建也不影响其它功能。
 
@@ -296,7 +304,7 @@ supabase functions deploy notify-email --no-verify-jwt
 | 菜单 | 我 | 新增/编辑/删除/上下架菜品（名称、emoji 分组选择、分类含奶茶/饮品、描述、价格、排序）；顶部审核她申请的新菜（收进菜单 / 婉拒），Tab 带红点 |
 | 成员 | 我 | 新增多个「她」（各自昵称 + 独立邀请码），可改名 / 改码 / 删除；**每人单独设置「她看到我叫」**（专属称呼，留空用统一昵称）；顶部下拉切换查看对象；最上面可改**我的昵称**（统一昵称） |
 | 饭圈 | 她 | 看「我发的 + 自己发的」动态，**自己也能手动发动态/删自己的**（只有我和她本人能看到）；**点赞 / 评论只看得到「我」的 + 自己的** |
-| 饭圈 | 我 | 看到**所有人**的动态、点赞、评论（每个她都标了名字），自己也能发带图动态，可点赞 / 评论 / 删除任意动态；点评论的「回复」可发**只有那个人能看到**的回复 🔒 |
+| 饭圈 | 我 | 看到**所有人**的动态、点赞、评论（每个她都标了名字），自己也能发带图动态，可点赞 / 评论 / 删除任意动态；点评论的「回复」可发**只有那个人能看到**的回复 🔒；右上角🔔可查看动态、点赞、评论通知，打开面板后未读自动清零 |
 
 ---
 

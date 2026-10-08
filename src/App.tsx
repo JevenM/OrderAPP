@@ -22,6 +22,7 @@ import MealLogPage from './pages/MealLogPage'
 import FeedPage from './pages/FeedPage'
 import CouplePage from './pages/CouplePage'
 import AdminFriendships from './pages/AdminFriendships'
+import AdminCoupleHistory from './pages/AdminCoupleHistory'
 import AdminOrders from './pages/AdminOrders'
 import AdminMeals from './pages/AdminMeals'
 import AdminDishes from './pages/AdminDishes'
@@ -72,6 +73,7 @@ function Shell() {
               <Route path="/feed" element={<FeedPage />} />
               {!isAdmin && ENABLE_FRIENDS && <Route path="/couple" element={<CouplePage />} />}
               {isAdmin && <Route path="/admin/friendships" element={<AdminFriendships />} />}
+              {isAdmin && <Route path="/admin/couple-history" element={<AdminCoupleHistory />} />}
               <Route path="/admin/orders" element={<AdminOrders />} />
               <Route path="/admin/meals" element={<AdminMeals />} />
               <Route path="/admin/dishes" element={<AdminDishes />} />
@@ -272,7 +274,10 @@ function Layout() {
                     <MenuItem onClick={() => run(enableBell)}>开启推送通知</MenuItem>
                   )}
                   {isAdmin && role === 'me' && (
-                    <MenuItem onClick={() => run(() => navigate('/admin/friendships'))}>好友关系管理</MenuItem>
+                    <>
+                      <MenuItem onClick={() => run(() => navigate('/admin/friendships'))}>好友关系管理</MenuItem>
+                      <MenuItem onClick={() => run(() => navigate('/admin/couple-history'))}>情侣答题历史</MenuItem>
+                    </>
                   )}
                   <MenuItem onClick={() => run(() => setProfileOpen(true))}>个人资料</MenuItem>
                   <MenuItem onClick={() => run(openChangelog)}>更新日志</MenuItem>
