@@ -39,6 +39,11 @@ export default {
         },
         float: { '0%,100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-6px)' } },
         heart: { '0%': { transform: 'scale(1)' }, '45%': { transform: 'scale(1.35)' }, '100%': { transform: 'scale(1)' } },
+        confetti: {
+          '0%': { transform: 'translateY(-12vh) rotate(0deg)', opacity: '1' },
+          '85%': { opacity: '1' },
+          '100%': { transform: 'translateY(112vh) rotate(540deg)', opacity: '0' },
+        },
         shimmer: { '0%': { backgroundPosition: '-200% 0' }, '100%': { backgroundPosition: '200% 0' } },
         wiggle: {
           '0%,100%': { transform: 'rotate(0deg)' },
@@ -55,6 +60,7 @@ export default {
         'pop-in': 'pop-in .26s cubic-bezier(.22,1,.36,1) both',
         float: 'float 3.6s ease-in-out infinite',
         heart: 'heart .45s ease-out',
+        confetti: 'confetti 2.8s linear forwards',
         shimmer: 'shimmer 1.6s linear infinite',
         wiggle: 'wiggle .5s ease-in-out',
       },

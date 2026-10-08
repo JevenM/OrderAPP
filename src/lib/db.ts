@@ -1161,7 +1161,11 @@ export async function publishMealPost(input: {
 
   const payload = { content: input.content, photo_url: input.photo_url }
   if (existing) {
-    const { error } = await supabase.from('posts').update(payload).eq('id', existing.id)
+    // 重复提交同一天同一餐：覆盖内容，并把 created_at 刷新到此刻（饭圈动态置顶、时间同步更新）
+    const { error } = await supabase
+      .from('posts')
+      .update({ ...payload, created_at: new Date().toISOString() })
+      .eq('id', existing.id)
     if (error) fail(error, '更新饭圈动态')
     return
   }
