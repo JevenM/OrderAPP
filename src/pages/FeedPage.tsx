@@ -335,6 +335,7 @@ export default function FeedPage() {
                       )}
                       <span className="font-medium text-slate-600">{nameOf(c.member_id)}：</span>
                       <span className="text-slate-700">{c.content}</span>
+                      <span className="ml-1 whitespace-nowrap text-[10px] text-slate-400">{timeCn(c.created_at)}</span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                       {startReplyTarget(p, c) !== null && (

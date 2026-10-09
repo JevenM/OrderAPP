@@ -1509,16 +1509,28 @@ export async function notifyFeedComment(
 }
 
 /** 某个身份（members.id 或 'me'）的消息列表，新的在前 */
-export async function listFeedNotifications(identity: string, limit = 50): Promise<FeedNotificationRow[]> {
+export async function listFeedNotifications(identity: string, limit = 5, offset = 0): Promise<FeedNotificationRow[]> {
   if (!identity) return []
+  const from = Math.max(0, offset)
   const { data, error } = await supabase
     .from('feed_notifications')
     .select('*')
     .eq('recipient', identity)
     .order('created_at', { ascending: false })
-    .limit(limit)
+    .range(from, from + Math.max(1, limit) - 1)
   if (error) fail(error, '加载消息通知')
   return (data ?? []) as FeedNotificationRow[]
+}
+
+export async function markFeedNotificationRead(identity: string, notificationId: string): Promise<void> {
+  if (!identity || !notificationId) return
+  const { error } = await supabase
+    .from('feed_notifications')
+    .update({ read_at: new Date().toISOString() })
+    .eq('id', notificationId)
+    .eq('recipient', identity)
+    .is('read_at', null)
+  if (error) fail(error, '标记消息已读')
 }
 
 /** 未读消息条数（顶栏角标） */

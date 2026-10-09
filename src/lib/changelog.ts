@@ -25,6 +25,16 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.20',
+    date: '2026-10-09',
+    title: '饭圈消息查看体验优化',
+    items: [
+      { kind: 'improve', text: '铃铛默认显示最近五条消息，全部消息支持分页查看' },
+      { kind: 'improve', text: '消息列表区分未读与已读，点击单条消息后标记已读' },
+      { kind: 'new', text: '饭圈评论显示本地化评论时间' },
+    ],
+  },
+  {
     version: '1.9.19',
     date: '2026-10-09',
     title: '同步抉择通知结果查看',
