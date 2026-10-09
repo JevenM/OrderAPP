@@ -578,6 +578,19 @@ export async function createCoupleWish(input: {
   return data as CoupleWish
 }
 
+export async function listAllCoupleWishes(): Promise<CoupleWish[]> {
+  const { data, error } = await supabase.from('couple_wishes').select('*').order('created_at', { ascending: false })
+  if (error) fail(error, '加载全部秘密心愿')
+  return (data ?? []) as CoupleWish[]
+}
+
+export async function updateCoupleWish(id: string, text: string): Promise<void> {
+  const value = text.trim()
+  if (!value) throw new Error('心愿内容不能为空')
+  const { error } = await supabase.from('couple_wishes').update({ text: value }).eq('id', id)
+  if (error) fail(error, '修改秘密心愿')
+}
+
 export type CoupleEventPayload =
   | { type: 'chat'; data: { id: string; sender_id: string; receiver_id: string; content: string; created_at: string } }
   | { type: 'wish_add'; data: { id: string; text: string; level: '轻松' | '认真' | '挑战'; owner: string } }
@@ -909,8 +922,15 @@ export async function saveCoupleQuizChoice(
   }
   if (nextStatus === 'revealed' && current.status !== 'revealed') {
     const recipient = memberId === memberA ? memberB : memberA
-    await notifyCoupleQuizReveal(recipient, current.question.title)
+    await notifyCoupleQuizReveal(recipient, historyId, current.question.title)
   }
+}
+
+export async function fetchCoupleQuizHistory(id: string): Promise<CoupleQuizHistoryRow | null> {
+  if (!id) return null
+  const { data, error } = await supabase.from('couple_quiz_history').select('*').eq('id', id).maybeSingle()
+  if (error) fail(error, '加载答题历史')
+  return (data as CoupleQuizHistoryRow | null) ?? null
 }
 
 export async function listCoupleQuizHistory(userA: string, userB: string, limit = 200): Promise<CoupleQuizHistoryRow[]> {
@@ -1246,8 +1266,8 @@ export async function createPost(input: {
     .select('id')
     .single()
   if (error || !data) fail(error, '发布动态')
-  // 通知我的好友们有新动态（失败不影响发帖）
-  void notifyFeedPost(input.member_id, data.id, input.content.trim())
+  // 等待通知记录落库后再返回，确保发布完成时好友铃铛已可读取通知
+  await notifyFeedPost(input.member_id, data.id, input.content.trim())
 }
 
 /** 她记录完三餐后自动发一条动态；同一天同一餐次只发一条，重复填写就更新 */
@@ -1272,14 +1292,15 @@ export async function publishMealPost(input: {
     if (error) fail(error, '更新饭圈动态')
     return
   }
-  const { error } = await supabase.from('posts').insert({
+  const { data, error } = await supabase.from('posts').insert({
     author: 'her' as PostAuthor,
     member_id: input.member_id,
     day: input.day,
     meal_slot: input.slot,
     ...payload,
-  })
-  if (error) fail(error, '发布饭圈动态')
+  }).select('id').single()
+  if (error || !data) fail(error, '发布饭圈动态')
+  await notifyFeedPost(input.member_id, data.id, input.content.trim())
 }
 
 export async function removePost(id: string): Promise<void> {
@@ -1403,13 +1424,13 @@ async function feedAudience(actorMemberId: string | null): Promise<string[]> {
 const clip = (text: string, max = 30) => (text.length > max ? `${text.slice(0, max)}…` : text)
 
 /** 同步抉择双方都作答后，通知未提交答案的一方；通知落库后即使离线也能在铃铛看到 */
-async function notifyCoupleQuizReveal(recipient: string, title: string): Promise<void> {
+async function notifyCoupleQuizReveal(recipient: string, historyId: string, title: string): Promise<void> {
   try {
     const name = await resolveActorName(null)
     await insertFeedNotices([recipient], {
       sender_name: name,
       type: 'quiz',
-      post_id: null,
+      post_id: historyId,
       title: '同步抉择已揭晓',
       body: `「${clip(title, 24)}」双方都选好啦，快去看看结果`,
     })

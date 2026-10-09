@@ -1,6 +1,11 @@
-import type { CoupleQuizHistoryRow } from './db'
+import type { CoupleQuizHistoryRow, CoupleWish } from './db'
 
 export type CoupleQuizHistoryExportRow = CoupleQuizHistoryRow & {
+  member_a_name: string
+  member_b_name: string
+}
+
+export type CoupleWishExportRow = CoupleWish & {
   member_a_name: string
   member_b_name: string
 }
@@ -41,5 +46,15 @@ export function exportCoupleQuizHistoryCsv(rows: CoupleQuizHistoryExportRow[], f
 }
 
 export function exportCoupleQuizHistoryJson(rows: CoupleQuizHistoryExportRow[], filename: string): void {
+  download(JSON.stringify(rows, null, 2), filename, 'application/json;charset=utf-8')
+}
+
+export function exportCoupleWishesCsv(rows: CoupleWishExportRow[], filename: string): void {
+  const headers = ['成员 A', '成员 B', '心愿主人', '心愿内容', '创建时间']
+  const lines = rows.map((row) => [row.member_a_name, row.member_b_name, row.owner_name, row.text, row.created_at].map(csvCell).join(','))
+  download(`\uFEFF${[headers.map(csvCell).join(','), ...lines].join('\r\n')}`, filename, 'text/csv;charset=utf-8')
+}
+
+export function exportCoupleWishesJson(rows: CoupleWishExportRow[], filename: string): void {
   download(JSON.stringify(rows, null, 2), filename, 'application/json;charset=utf-8')
 }

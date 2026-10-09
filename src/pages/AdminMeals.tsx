@@ -318,15 +318,14 @@ export default function AdminMeals() {
               }`}
             >
               <span className="block truncate">{o.day.slice(8)}</span>
-              {o.total === 0 ? (
-                <span className="mt-1 block text-sm leading-4">·</span>
-              ) : (
-                <span className="mt-1 grid grid-cols-3 gap-px text-[10px] leading-4" title={`✅ ${o.eaten} · 🫤 ${o.little} · ❌ ${o.skipped}`}>
-                  <span>✅{o.eaten}</span>
-                  <span>🫤{o.little}</span>
-                  <span>❌{o.skipped}</span>
-                </span>
-              )}
+              <span className="mt-1 grid grid-cols-3 gap-px text-center text-[10px] leading-4" title={`✅ ${o.eaten} · 🫤 ${o.little} · ❌ ${o.skipped}`}>
+                <span className="min-w-0">✅</span>
+                <span className="min-w-0">🫤</span>
+                <span className="min-w-0">❌</span>
+                <span className="min-w-0 truncate">{o.eaten}</span>
+                <span className="min-w-0 truncate">{o.little}</span>
+                <span className="min-w-0 truncate">{o.skipped}</span>
+              </span>
             </button>
           ))}
         </div>

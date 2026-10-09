@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useToast } from '../components/Toast'
 import {
   appendCoupleEvent,
   broadcastCoupleMessage,
   createCoupleWish,
   fetchCoupleQuiz,
+  fetchCoupleQuizHistory,
   listCoupleEvents,
   listCoupleMessages,
   listCoupleWishes,
@@ -13,6 +14,7 @@ import {
   resetCoupleQuiz,
   saveCoupleQuizChoice,
   type CoupleEventRow,
+  type CoupleQuizHistoryRow,
   type CoupleQuizRow,
 } from '../lib/db'
 import { todayStr } from '../lib/date'
@@ -336,6 +338,8 @@ function MealCheck({ label, list }: { label: string; list: Meal[] }) {
 export default function CouplePage() {
   const toast = useToast()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const noticeQuizId = searchParams.get('quiz')
   const { memberId, memberName } = useSession()
   const { friends } = useFriends()
   const selectedFriend = friends.find((f) => f.memberId !== '__admin__')
@@ -420,6 +424,8 @@ export default function CouplePage() {
   /* ------------------------------ 揭晓动画 ------------------------------ */
   const [loveReveal, setLoveReveal] = useState(false)
   const [quizReveal, setQuizReveal] = useState(false)
+  const [noticeQuiz, setNoticeQuiz] = useState<CoupleQuizHistoryRow | null>(null)
+  const [noticeQuizLoading, setNoticeQuizLoading] = useState(false)
   const lovePrevRef = useRef<boolean | null>(null)
 
   // 双方三餐打卡齐的那一刻同时揭晓：本方打完最后一餐、或对方实时打完，解锁从 false 变 true 时播放
@@ -648,6 +654,43 @@ export default function CouplePage() {
     void reloadEvents()
     void reloadMeals()
   }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals])
+
+  useEffect(() => {
+    if (!noticeQuizId || !memberId || !friendId) {
+      setNoticeQuiz(null)
+      return
+    }
+    let active = true
+    setNoticeQuizLoading(true)
+    void fetchCoupleQuizHistory(noticeQuizId)
+      .then((row) => {
+        if (!active) return
+        const [memberA, memberB] = orderedPair(memberId, friendId)
+        if (!row || row.member_a !== memberA || row.member_b !== memberB) {
+          toast.show('找不到这道题的揭晓记录', 'err')
+          setNoticeQuiz(null)
+          return
+        }
+        setNoticeQuiz(row)
+      })
+      .catch((error) => {
+        if (active) toast.show((error as Error).message, 'err')
+      })
+      .finally(() => {
+        if (active) setNoticeQuizLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [noticeQuizId, memberId, friendId, toast])
+
+  const closeNoticeQuiz = () => {
+    setNoticeQuiz(null)
+    setSearchParams((params) => {
+      params.delete('quiz')
+      return params
+    }, { replace: true })
+  }
 
   // 自定义题库本地持久化（按互动对象隔离）
   useEffect(() => {
@@ -1078,6 +1121,45 @@ export default function CouplePage() {
             <p className="mt-4 text-lg font-semibold text-slate-700">同步抉择结果已揭晓</p>
             <button className="btn-primary mt-5 w-full" onClick={() => setQuizReveal(false)}>查看结果</button>
           </div>
+        </div>
+      )}
+
+      {noticeQuizId && (noticeQuizLoading || noticeQuiz) && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/50 p-4" onClick={closeNoticeQuiz}>
+          <section className="animate-pop-in max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            {noticeQuizLoading ? (
+              <p className="py-8 text-center text-sm text-slate-400">正在加载揭晓结果…</p>
+            ) : noticeQuiz && (
+              <>
+                <div className="text-center text-3xl">{noticeQuiz.matched ? '💖' : '🌿'}</div>
+                <p className={`mt-1 text-center text-xs font-medium ${noticeQuiz.matched ? 'text-rose-500' : 'text-emerald-600'}`}>
+                  {noticeQuiz.matched ? '默契满分，答案一致' : '答案不同，也各有想法'}
+                </p>
+                <h2 className="mt-3 break-words text-center text-base font-semibold text-slate-800">{noticeQuiz.question_title}</h2>
+                <div className="mt-4 space-y-2">
+                  <div className={`break-words rounded-xl p-3 text-sm ${noticeQuiz.matched ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                    我选了「{choiceLabel(noticeQuiz.member_a === memberId ? noticeQuiz.choice_a : noticeQuiz.choice_b, {
+                      id: noticeQuiz.question_id,
+                      title: noticeQuiz.question_title,
+                      kind: noticeQuiz.question_kind as QuestionKind,
+                      a: noticeQuiz.option_a,
+                      b: noticeQuiz.option_b,
+                    })}」
+                  </div>
+                  <div className={`break-words rounded-xl p-3 text-sm ${noticeQuiz.matched ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                    {friendName} 选了「{choiceLabel(noticeQuiz.member_a === memberId ? noticeQuiz.choice_b : noticeQuiz.choice_a, {
+                      id: noticeQuiz.question_id,
+                      title: noticeQuiz.question_title,
+                      kind: noticeQuiz.question_kind as QuestionKind,
+                      a: noticeQuiz.option_a,
+                      b: noticeQuiz.option_b,
+                    })}」
+                  </div>
+                </div>
+                <button className="btn-primary mt-5 w-full" onClick={closeNoticeQuiz}>关闭</button>
+              </>
+            )}
+          </section>
         </div>
       )}
 

@@ -25,6 +25,24 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.19',
+    date: '2026-10-09',
+    title: '同步抉择通知结果查看',
+    items: [
+      { kind: 'improve', text: '点击同步抉择揭晓通知即可查看对应题目与双方答案，不受之后切换题目影响' },
+    ],
+  },
+  {
+    version: '1.9.18',
+    date: '2026-10-09',
+    title: '互动与提醒管理优化',
+    items: [
+      { kind: 'fix', text: '修复三餐动态未触发饭圈铃铛通知的问题，发布成功后确保好友可收到通知' },
+      // { kind: 'new', text: '管理员可按情侣对查看、编辑并导出秘密心愿列表' },
+      // { kind: 'fix', text: '最近七天打卡概览改为图标与统计数字分行展示，避免人数较多时横向溢出' },
+    ],
+  },
+  {
     version: '1.9.17',
     date: '2026-10-09',
     title: '同步抉择揭晓氛围优化',

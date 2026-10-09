@@ -35,7 +35,7 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
 
   const openNotice = (n: FeedNotificationRow) => {
     onClose()
-    navigate(n.type === 'quiz' ? '/couple' : '/feed')
+    navigate(n.type === 'quiz' ? `/couple${n.post_id ? `?quiz=${encodeURIComponent(n.post_id)}` : ''}` : '/feed')
   }
 
   return (
