@@ -65,6 +65,9 @@ const BOARD_CELL_META: Record<BoardCellKind, { icon: string; label: string }> = 
   goal: { icon: '🏁', label: '冲线' },
 }
 
+/** 骰子 1-6 点的面（Unicode 骰子字模，超过 6 点用 🎲 兜底） */
+const DICE_FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
+
 /** 情侣飞行棋格子内容池：生成棋盘时随机抽取，每个格子的内容都从这里选 */
 const BOARD_CELL_POOL: CoupleBoardCell[] = [
   { kind: 'task', text: '小猫叫3声' },
@@ -473,18 +476,22 @@ function buildBoardCells(size: number): CoupleBoardCell[] {
 }
 
 /**
- * 掷骰结算（纯函数）：返回下一份棋局快照；踩到大冒险格时返回抽到的题目，
- * 由调用方负责落库记录。
+ * 掷骰结算（纯函数）：返回下一份棋局快照和本次行动的消息（用于弹窗展示）；
+ * 踩到大冒险格时返回抽到的题目，由调用方负责落库记录。
  */
 function applyBoardRoll(
   state: CoupleBoardState,
   player: 0 | 1,
   dice: number,
   names: [string, string]
-): { state: CoupleBoardState; darePrompt: string | null } {
+): { state: CoupleBoardState; darePrompt: string | null; messages: string[]; reroll: boolean } {
   const name = names[player]
   const log: CoupleBoardLogItem[] = [...state.log]
-  const push = (text: string) => log.push({ at: new Date().toISOString(), text })
+  const messages: string[] = []
+  const push = (text: string) => {
+    log.push({ at: new Date().toISOString(), text })
+    messages.push(text)
+  }
   const positions: [number, number] = [...state.positions]
   const paused: [number, number] = [...state.paused]
   let winner: 0 | 1 | null = state.winner
@@ -498,6 +505,8 @@ function applyBoardRoll(
     return {
       state: { ...state, positions, paused, log: log.slice(-20), dice: null, turn: (1 - player) as 0 | 1, winner, pending },
       darePrompt: null,
+      messages,
+      reroll: false,
     }
   }
 
@@ -558,6 +567,8 @@ function applyBoardRoll(
   return {
     state: { ...state, positions, paused, log: log.slice(-20), dice, turn, winner, pending },
     darePrompt,
+    messages,
+    reroll: cell?.kind === 'reroll' && positions[player] < state.size - 1,
   }
 }
 
@@ -700,6 +711,10 @@ export default function CouplePage() {
   const [boardStepMin, setBoardStepMin] = useState(1)
   const [boardStepMax, setBoardStepMax] = useState(6)
   const [boardTruthAnswer, setBoardTruthAnswer] = useState('')
+  /* 骰子滚动动画 + 掷骰结果弹窗（走几步 / 暂停 / 重摇） */
+  const [diceRolling, setDiceRolling] = useState(false)
+  const [diceFace, setDiceFace] = useState(1)
+  const [diceResult, setDiceResult] = useState<{ dice: number | null; player: 0 | 1; messages: string[]; reroll: boolean } | null>(null)
 
   const questionPool = questionKind === '自定义'
     ? customQuestions
@@ -965,6 +980,8 @@ export default function CouplePage() {
     ],
     {
       enabled: ready,
+      // 实时推送连不上时的兜底轮询：这里涉及双人互动，比默认 10 秒更勤一些
+      pollMs: 5000,
       onPoll: () => {
         void reloadWishes()
         void reloadMessages()
@@ -1338,17 +1355,23 @@ export default function CouplePage() {
     if (!boardGame || !boardState || !memberId || !friendId) return
     if (boardState.winner !== null || boardState.pending || boardState.turn !== myBoardIndex) return
     setBoardSaving(true)
+    setDiceResult(null)
+    setDiceRolling(true)
+    const startedAt = Date.now()
+    const spin = window.setInterval(() => setDiceFace(1 + Math.floor(Math.random() * 6)), 90)
     try {
       // 先取最新棋局：回合已变化时放弃本次操作，降低双端同时掷骰的覆盖风险
       const fresh = (await fetchCoupleBoardGame(memberId, friendId)) ?? boardGame
       const latest = fresh.state
       if (latest.winner !== null || latest.pending || latest.turn !== myBoardIndex) {
+        window.clearInterval(spin)
+        setDiceRolling(false)
         setBoardGame(fresh)
         return
       }
       const dice = latest.stepMin + Math.floor(Math.random() * (latest.stepMax - latest.stepMin + 1))
       const names = boardNames ?? ['红棋', '蓝棋']
-      const { state: next, darePrompt } = applyBoardRoll(latest, myBoardIndex, dice, names)
+      const { state: next, darePrompt, messages, reroll } = applyBoardRoll(latest, myBoardIndex, dice, names)
       await upsertCoupleBoardGame(memberId, friendId, next)
       setBoardGame({ ...fresh, state: next, updated_at: new Date().toISOString() })
       if (darePrompt) {
@@ -1365,7 +1388,19 @@ export default function CouplePage() {
           .then(() => reloadTruthHistory())
           .catch(() => {})
       }
+      // 骰子动画播满时长再弹结果：展示最终点数和走几步 / 触发的格子
+      window.setTimeout(
+        () => {
+          window.clearInterval(spin)
+          setDiceFace(next.dice ?? 1)
+          setDiceRolling(false)
+          setDiceResult({ dice: next.dice, player: myBoardIndex, messages, reroll })
+        },
+        Math.max(0, 1200 - (Date.now() - startedAt))
+      )
     } catch (error) {
+      window.clearInterval(spin)
+      setDiceRolling(false)
       toast.show((error as Error).message, 'err')
     } finally {
       setBoardSaving(false)
@@ -1411,6 +1446,56 @@ export default function CouplePage() {
       setBoardSaving(false)
     }
   }
+
+  // 对方掷骰 / 开新局时弹提醒：自己掷骰的流程走 diceResult 弹窗，不走这里
+  const prevBoardRef = useRef<CoupleBoardState | null>(null)
+  useEffect(() => {
+    const prev = prevBoardRef.current
+    prevBoardRef.current = boardState
+    if (!boardState || !prev || !boardGame) return
+    // 对方掷骰走完，轮到我了
+    if (
+      boardState.winner === null &&
+      !boardState.pending &&
+      boardState.dice !== null &&
+      boardState.turn === myBoardIndex &&
+      prev.turn !== myBoardIndex
+    ) {
+      toast.show(`🎲 ${friendName} 掷出 ${boardState.dice} 点走完啦，轮到你掷骰了！`)
+    }
+    // 对方生成新棋盘（未掷骰、棋盘内容变化且先手是对方）
+    if (
+      boardState.winner === null &&
+      boardState.dice === null &&
+      prev.cells !== boardState.cells &&
+      boardState.turn !== myBoardIndex
+    ) {
+      toast.show(`🎯 ${friendName} 生成了新棋盘，等 TA 先掷骰～`)
+    }
+    // 对方率先到达终点
+    if (boardState.winner !== null && prev.winner === null && boardState.winner !== myBoardIndex) {
+      toast.show(`🏁 ${friendName} 率先到达终点，这局 TA 赢啦～`)
+    }
+  }, [boardState, boardGame, myBoardIndex, friendName, toast])
+
+  /**
+   * 飞行棋对局中加快同步：等待对方行动（对方掷骰 / 对方作答真心话）时，
+   * 每 2 秒主动拉一次棋局——实时推送可用时它只是冗余兜底，
+   * 推送连不上时也能把回合交接的等待压到 2 秒内。
+   */
+  const awaitingBoardPeer =
+    activeModule === 'board' &&
+    boardGame !== null &&
+    boardGame.state.winner === null &&
+    (boardGame.state.turn !== myBoardIndex ||
+      (boardGame.state.pending !== null && boardGame.state.pending.player !== myBoardIndex))
+  useEffect(() => {
+    if (!awaitingBoardPeer) return
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void reloadBoard()
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [awaitingBoardPeer, reloadBoard])
 
   const submitChoice = (val: string) => {
     const choice = val.trim()
@@ -2095,6 +2180,39 @@ export default function CouplePage() {
             <p className="mt-2 text-[11px] text-slate-400">关闭后这条抽签就不再弹窗提醒啦</p>
             <button className="btn-primary mt-4 w-full" onClick={() => closeDrawModal(drawModal.eventId)}>
               知道啦
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 飞行棋 · 骰子滚动动画 */}
+      {diceRolling && (
+        <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-4 bg-slate-900/50">
+          <div className="animate-bounce text-7xl leading-none text-white drop-shadow-lg">{DICE_FACES[diceFace - 1]}</div>
+          <p className="text-sm text-white/90">{memberName || '我'}的骰子正在滚动…</p>
+        </div>
+      )}
+
+      {/* 飞行棋 · 掷骰结果弹窗：显示走几步和触发的格子 */}
+      {diceResult && !diceRolling && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="animate-pop-in w-full max-w-xs space-y-3 rounded-2xl bg-white p-5 text-center shadow-2xl">
+            <div className="text-5xl leading-none text-slate-800">
+              {diceResult.dice !== null ? (diceResult.dice <= 6 ? DICE_FACES[diceResult.dice - 1] : '🎲') : '⏸'}
+            </div>
+            <p className="text-base font-bold text-slate-800">
+              {diceResult.dice !== null ? `掷出 ${diceResult.dice} 点！` : '本回合被暂停'}
+            </p>
+            <div className="space-y-1 rounded-xl bg-slate-50 p-3 text-left text-xs leading-relaxed text-slate-600">
+              {diceResult.messages.map((text, index) => (
+                <p key={index} className="break-words">{text}</p>
+              ))}
+            </div>
+            {diceResult.reroll && diceResult.player === myBoardIndex && (
+              <p className="text-[11px] text-brand-600">🎲 踩到重摇格，关掉后继续由你掷骰！</p>
+            )}
+            <button className="btn-primary w-full" onClick={() => setDiceResult(null)}>
+              {diceResult.reroll && diceResult.player === myBoardIndex ? '继续掷骰 🎲' : '知道了'}
             </button>
           </div>
         </div>
