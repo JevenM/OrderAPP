@@ -1,7 +1,7 @@
 {
-  "name": "今天吃什么 · 点菜小屋",
+  "name": "What to have today?",
   "short_name": "点菜小屋",
-  "description": "点菜下单 + 一日三餐记录",
+  "description": "点菜 + 三餐记录 + 小游戏",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

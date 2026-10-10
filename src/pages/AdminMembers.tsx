@@ -217,7 +217,7 @@ export default function AdminMembers() {
               />
               {val(m).myName.trim() && (
                 <span className="shrink-0 text-[11px] text-brand-600">
-                  {val(m).name}：你好，{val(m).myName.trim()}
+                  {val(m).name}: Hi, {val(m).myName.trim()}
                 </span>
               )}
             </div>

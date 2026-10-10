@@ -59,11 +59,13 @@ export default function TogetherStatus() {
 
   const myLocation = locations.find((location) => location.member_id === memberId)
   const peerLocation = locations.find((location) => location.member_id === friendId)
-  const together = Boolean(
+  const locationsValid = Boolean(
     sharing && myLocation && peerLocation &&
-    Date.parse(myLocation.expires_at) > now && Date.parse(peerLocation.expires_at) > now &&
-    distanceMeters(myLocation, peerLocation) < 1_000
+    Date.parse(myLocation.expires_at) > now && Date.parse(peerLocation.expires_at) > now
   )
+  const distance = locationsValid && myLocation && peerLocation ? distanceMeters(myLocation, peerLocation) : null
+  const together = distance !== null && distance < 1_000
+  const distanceLabel = distance === null ? null : `${(distance / 1_000).toFixed(2)} km`
 
   const stopSharing = async () => {
     if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current)
@@ -100,10 +102,10 @@ export default function TogetherStatus() {
 
   const status = useMemo(() => {
     if (together) return '在一起'
-    if (sharing && peerLocation && Date.parse(peerLocation.expires_at) > now) return '距离较远'
+    if (distance !== null) return '距离较远'
     if (sharing) return '等对方开启'
     return '开启同在检测'
-  }, [together, sharing, peerLocation, now])
+  }, [together, distance, sharing])
 
   if (role !== 'her' || !memberId) return null
 
@@ -114,7 +116,7 @@ export default function TogetherStatus() {
       onClick={() => void (sharing ? stopSharing() : startSharing())}
     >
       <span className={`text-base leading-none ${together ? 'animate-heart' : 'grayscale opacity-50'}`}>💕</span>
-      <span>{status}</span>
+      <span>{status}{distanceLabel ? ` · ${distanceLabel}` : ''}</span>
     </button>
   )
 }

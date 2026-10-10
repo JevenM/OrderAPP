@@ -29,6 +29,7 @@ export default function OrderPage() {
   const [spinning, setSpinning] = useState(false)
   const [selectedDish, setSelectedDish] = useState<Dish | null>(null)
   const [wheelRotation, setWheelRotation] = useState(0)
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
 
   const load = useCallback(async () => {
     try {
@@ -274,10 +275,25 @@ export default function OrderPage() {
         </p>
       )}
 
-      {grouped.map(([category, list]) => (
+      {grouped.map(([category, list]) => {
+        const expanded = expandedCategories.has(category)
+        return (
         <div key={category}>
-          <h2 className="mb-2 px-1 text-xs font-medium text-slate-400">{category}</h2>
-          <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            className="mb-2 flex w-full items-center justify-between rounded-xl border border-brand-100 bg-white/80 px-3 py-2 text-left text-xs font-medium text-slate-600"
+            onClick={() => setExpandedCategories((current) => {
+              const next = new Set(current)
+              if (next.has(category)) next.delete(category)
+              else next.add(category)
+              return next
+            })}
+            aria-expanded={expanded}
+          >
+            <span>{category}（{list.length}道）</span>
+            <span className="text-brand-500">{expanded ? '收起 ▲' : '展开 ▼'}</span>
+          </button>
+          {expanded && <div className="grid grid-cols-2 gap-2">
             {list.map((d) => {
               const qty = cart[d.id] ?? 0
               return (
@@ -320,9 +336,10 @@ export default function OrderPage() {
                 </div>
               )
             })}
-          </div>
+          </div>}
         </div>
-      ))}
+        )
+      })}
 
       {wheelOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => !spinning && setWheelOpen(false)}>
@@ -391,9 +408,27 @@ export default function OrderPage() {
               const label = key.startsWith(CUSTOM_PREFIX) ? key.slice(CUSTOM_PREFIX.length) : dish?.name ?? '已下架的菜'
               const emoji = key.startsWith(CUSTOM_PREFIX) ? CUSTOM_EMOJI : dish?.emoji ?? '🍽️'
               return (
-                <li key={key} className="flex items-start justify-between gap-2 rounded-lg bg-brand-50/70 px-2 py-1.5 text-xs text-slate-700">
+                <li key={key} className="flex items-center justify-between gap-2 rounded-lg bg-brand-50/70 px-2 py-1.5 text-xs text-slate-700">
                   <span className="min-w-0 break-words">{emoji} {label}</span>
-                  <span className="shrink-0 font-semibold text-brand-600">×{qty}</span>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-sm font-semibold text-brand-600 shadow-sm disabled:opacity-50"
+                      aria-label={`减少${label}`}
+                      onClick={() => changeKey(key, -1)}
+                    >
+                      −
+                    </button>
+                    <span className="min-w-5 text-center font-semibold text-brand-600">{qty}</span>
+                    <button
+                      type="button"
+                      className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-sm font-semibold text-brand-600 shadow-sm"
+                      aria-label={`增加${label}`}
+                      onClick={() => changeKey(key, 1)}
+                    >
+                      +
+                    </button>
+                  </div>
                 </li>
               )
             })}

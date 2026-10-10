@@ -158,7 +158,7 @@ function Layout() {
   const subtitle = isAdmin && role === 'her' && memberId
     ? `正在查看：${memberName || '她'}`
     : role === 'her'
-      ? `嗨，${memberName || '她'} 👋`
+      ? `Hi, ${memberName || '她'}👋`
       : adminName
 
   const enableBell = async () => {
@@ -322,7 +322,7 @@ function Layout() {
       )}
 
       {/* key 让每次切页都重新播一次入场动画 */}
-      <main key={pathname} className="flex-1 animate-page px-4 py-4">
+      <main key={pathname} className="flex-1 px-4 py-4">
         <Outlet />
       </main>
 
