@@ -25,6 +25,15 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.21',
+    date: '2026-10-10',
+    title: '同在检测与随机点菜',
+    items: [
+      { kind: 'new', text: '双方开启位置共享且距离小于 1 公里时，导航栏点亮连心提示' },
+      { kind: 'new', text: '点餐页新增随机菜品转盘，转动后推荐菜单菜品' },
+    ],
+  },
+  {
     version: '1.9.20',
     date: '2026-10-09',
     title: '饭圈消息查看体验优化',

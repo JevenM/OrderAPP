@@ -25,6 +25,10 @@ export default function OrderPage() {
   const [customName, setCustomName] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [recent, setRecent] = useState<OrderWithItems[]>([])
+  const [wheelOpen, setWheelOpen] = useState(false)
+  const [spinning, setSpinning] = useState(false)
+  const [selectedDish, setSelectedDish] = useState<Dish | null>(null)
+  const [wheelRotation, setWheelRotation] = useState(0)
 
   const load = useCallback(async () => {
     try {
@@ -91,6 +95,24 @@ export default function OrderPage() {
 
   const change = (d: Dish, delta: number) => changeKey(d.id, delta)
 
+  const spinWheel = () => {
+    const menu = dishes.filter((dish) => dish.available)
+    if (!menu.length || spinning) return toast.show('当前菜单没有可抽选的菜品', 'err')
+    const pickedDish = menu[Math.floor(Math.random() * menu.length)]
+    const displayMenu = menu.slice(0, 6)
+    const segment = displayMenu.length > 0 ? 360 / displayMenu.length : 360
+    const turns = 5 + Math.floor(Math.random() * 3)
+    const stopAt = displayMenu.findIndex((dish) => dish.id === pickedDish.id)
+    const target = turns * 360 + (stopAt < 0 ? Math.random() * 360 : 360 - (stopAt * segment + segment / 2))
+    setSelectedDish(null)
+    setSpinning(true)
+    setWheelRotation((current) => current + target)
+    window.setTimeout(() => {
+      setSelectedDish(pickedDish)
+      setSpinning(false)
+    }, 1000)
+  }
+
   const addCustom = () => {
     const name = customName.trim().replace(/\s+/g, ' ')
     if (!name) return toast.show('先写下想吃的菜名～', 'err')
@@ -155,7 +177,7 @@ export default function OrderPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-48">
       <div className="card space-y-3">
         <div>
           <div className="mb-1 text-xs text-slate-500">这一顿</div>
@@ -240,7 +262,10 @@ export default function OrderPage() {
         )}
       </div>
 
-      <input className="input" placeholder="🔍 搜索菜名" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
+      <div className="flex gap-2">
+        <input className="input min-w-0 flex-1" placeholder="🔍 搜索菜名" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
+        <button className="btn-soft shrink-0 px-3 text-sm" onClick={() => { setSelectedDish(null); setWheelOpen(true) }}>不知道吃什么</button>
+      </div>
 
       {grouped.length === 0 && (
         <p className="py-8 text-center text-sm text-slate-400">
@@ -299,6 +324,40 @@ export default function OrderPage() {
         </div>
       ))}
 
+      {wheelOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => !spinning && setWheelOpen(false)}>
+          <section className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-slate-800">今天吃点什么？</h2>
+              <button className="text-slate-400" disabled={spinning} onClick={() => setWheelOpen(false)} title="关闭">✕</button>
+            </div>
+            <div className="relative mx-auto my-5 aspect-square w-full max-w-[17rem]">
+              <div className="absolute -top-1 left-1/2 z-10 -translate-x-1/2 border-x-[10px] border-t-[18px] border-x-transparent border-t-rose-500" />
+              <div
+                className="absolute inset-0 overflow-hidden rounded-full border-4 border-white shadow-lg transition-transform duration-1000 ease-out"
+                style={{ transform: `rotate(${wheelRotation}deg)`, background: 'conic-gradient(#fb7185 0deg 60deg, #fbbf24 60deg 120deg, #34d399 120deg 180deg, #60a5fa 180deg 240deg, #a78bfa 240deg 300deg, #fb923c 300deg 360deg)' }}
+              >
+                {dishes.filter((dish) => dish.available).slice(0, 6).map((dish, index) => (
+                  <span key={dish.id} className="absolute left-1/2 top-1/2 w-[46%] origin-left -translate-y-1/2 truncate pl-7 text-center text-xs font-semibold text-white drop-shadow" style={{ transform: `rotate(${index * 60 + 30}deg)`, transformOrigin: '0 50%' }}>
+                    {dish.emoji} {dish.name}
+                  </span>
+                ))}
+              </div>
+              <button className="absolute left-1/2 top-1/2 z-10 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-4 border-white bg-slate-800 text-sm font-bold text-white shadow-lg disabled:opacity-60" disabled={spinning} onClick={spinWheel}>
+                {spinning ? '转动中' : '随机'}
+              </button>
+            </div>
+            {selectedDish && (
+              <div className="animate-pop-in text-center">
+                <p className="text-xs text-slate-400">今天就吃</p>
+                <p className="mt-1 text-lg font-semibold text-brand-600">{selectedDish.emoji} {selectedDish.name}</p>
+                <button className="btn-primary mt-3 w-full" onClick={() => { change(selectedDish, 1); setWheelOpen(false) }}>加入购物车</button>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
       {recent.length > 0 && (
         <div className="card space-y-2">
           <h2 className="text-xs font-medium text-slate-400">最近下的单</h2>
@@ -317,14 +376,29 @@ export default function OrderPage() {
       )}
 
       {totalQty > 0 && (
-        <div className="sticky bottom-2 z-10 flex items-center justify-between gap-3 rounded-2xl bg-white/95 p-3 shadow-card backdrop-blur">
-          <div className="text-xs text-slate-500">
-            已选 <span className="text-base font-semibold text-brand-600">{totalQty}</span> 份
+        <aside className="fixed bottom-20 right-3 z-20 flex max-h-[55vh] w-56 max-w-[calc(100vw-1.5rem)] flex-col rounded-2xl border border-brand-100 bg-white/95 p-3 shadow-card backdrop-blur sm:right-[max(0.75rem,calc((100vw-28rem)/2))]">
+          <div className="mb-2 flex items-center justify-between gap-2 border-b border-brand-100 pb-2">
+            <div className="text-xs font-medium text-slate-600">
+              已选 <span className="text-base font-semibold text-brand-600">{totalQty}</span> 份
+            </div>
+            <button className="btn-primary shrink-0 px-3 py-1.5 text-xs" disabled={submitting} onClick={submit}>
+              {submitting ? '提交中…' : '提交订单'}
+            </button>
           </div>
-          <button className="btn-primary" disabled={submitting} onClick={submit}>
-            {submitting ? '提交中…' : '提交订单'}
-          </button>
-        </div>
+          <ul className="min-h-0 space-y-1 overflow-y-auto">
+            {picked.map(([key, qty]) => {
+              const dish = dishes.find((entry) => entry.id === key)
+              const label = key.startsWith(CUSTOM_PREFIX) ? key.slice(CUSTOM_PREFIX.length) : dish?.name ?? '已下架的菜'
+              const emoji = key.startsWith(CUSTOM_PREFIX) ? CUSTOM_EMOJI : dish?.emoji ?? '🍽️'
+              return (
+                <li key={key} className="flex items-start justify-between gap-2 rounded-lg bg-brand-50/70 px-2 py-1.5 text-xs text-slate-700">
+                  <span className="min-w-0 break-words">{emoji} {label}</span>
+                  <span className="shrink-0 font-semibold text-brand-600">×{qty}</span>
+                </li>
+              )
+            })}
+          </ul>
+        </aside>
       )}
     </div>
   )

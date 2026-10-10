@@ -53,7 +53,7 @@ node -v    # 必须 ≥ 18，推荐 20。若显示 v16.x，需先升级 Node
 本机已装的 Node 20 路径（如未在 PATH 中，可临时指定）：
 
 ```
-C:\Users\maowenjie\.workbuddy\binaries\node\versions\20.18.0.installing.30176.__extract_temp__\node-v20.18.0-win-x64
+C:\Users\xxx\.workbuddy\binaries\node\versions\20.18.0.installing.30176.__extract_temp__\node-v20.18.0-win-x64
 ```
 
 npm 官方源在本机很慢，建议切国内镜像（已配置过可跳过）：
@@ -81,7 +81,7 @@ cp .env.example .env
 | `VITE_SUPABASE_URL` | Supabase 项目 Settings → API → Project URL |
 | `VITE_SUPABASE_ANON_KEY` | 同上，`anon public` key |
 | `VITE_INVITE_CODE` | 她的邀请码（本地随便填，线上由 Secret 决定） |
-| `VITE_ADMIN_CODE` | 管理口令，**默认 `adminMao`**，可不填 |
+| `VITE_ADMIN_CODE` | 管理口令，可不填 |
 | `VITE_APP_TITLE` | 可选，默认「今天吃什么」 |
 | `VITE_ADMIN_NAME` | 可选，「我的昵称」默认值，默认 `我`（进「成员」页可随时改，改完存数据库） |
 
@@ -91,7 +91,7 @@ cp .env.example .env
 npm run dev
 ```
 
-打开 **http://localhost:5173/**。改代码会热更新。
+打开 http://localhost:5173/。改代码会热更新。
 
 ### 全部可用命令
 
@@ -108,13 +108,13 @@ npm run dev
 
 ### 登录调试
 
-- 本地（`npm run dev`）时，登录页**底部会直接显示当前的邀请码和管理口令**，不用去翻 `.env`。
-- 输入 `VITE_INVITE_CODE` → 进入「她」的视图；输入 `VITE_ADMIN_CODE`（默认 `adminMao`）→ 进入「我」的管理后台。
+- 本地（`npm run dev`）时，登录页当前的邀请码和管理口令在`.env`。
+- 输入 `VITE_INVITE_CODE` → 进入「她」的视图；输入 `VITE_ADMIN_CODE`→ 进入「我」的管理后台。
 - 登录态存在 **localStorage 的 `order-app-session-v2`**。想重置登录态：Chrome DevTools → Application → Local Storage → 删掉这个 key，或点页面右上角「退出」。
 
 ### 用管理员身份查看任意一个「她」
 
-用 `adminMao` 登录后，右上角有一个 👥 按钮（窄屏收在这里比下拉框省地方）：
+用管理员登录后，右上角有一个 👥 按钮（窄屏收在这里比下拉框省地方）：
 
 - 点「我的管理视图」→ 回到后台
 - 点某个成员昵称 → 以她的视角看她的点菜/三餐页
@@ -144,7 +144,7 @@ npm run dev -- --host
 开两个浏览器窗口（或一个正常 + 一个无痕）：
 
 1. 窗口 A 用邀请码登录成「她」，下一个单
-2. 窗口 B 用 `adminMao` 登录成「我」
+2. 窗口 B 用管理员登录成「我」
 
 B 的「订单」Tab 应立刻出现红点并弹通知。若没有，检查 Supabase 项目的 Realtime 是否开启（迁移脚本已把四张表加入 publication）。
 
@@ -194,7 +194,7 @@ git push
 | `VITE_SUPABASE_URL` | ✅ | `https://xxxx.supabase.co` |
 | `VITE_SUPABASE_ANON_KEY` | ✅ | `eyJhbGci...` |
 | `VITE_INVITE_CODE` | ✅ | 她的邀请码 |
-| `VITE_ADMIN_CODE` | ❌ | 不填则用默认 `adminMao` |
+| `VITE_ADMIN_CODE` | ❌ | 不填则用默认管理员 |
 | `VITE_APP_TITLE` | ❌ | 不填则为「今天吃什么」 |
 
 > Secret 名**必须带 `VITE_` 前缀**且大小写完全一致，写成 `INVITE_CODE` 不会被读取，前端会退回默认值 `520`。
@@ -278,8 +278,8 @@ supabase functions deploy notify-email --no-verify-jwt
 
 | 输入 | 进入 | 能看到 |
 | --- | --- | --- |
-| 邀请码（如 `ilovemg6`） | 「她」的视图 | 点菜、三餐 |
-| 管理口令（默认 `adminMao`） | 「我」的后台 | 订单、饮食、菜单、成员；可下拉切换查看任意一个她 |
+| 邀请码（如 `xxx5wq`） | 「她」的视图 | 点菜、三餐 |
+| 管理口令 | 「我」的后台 | 订单、饮食、菜单、成员；可下拉切换查看任意一个她 |
 
 - 她用自己的邀请码登录后，顶栏显示「嗨，**她的昵称** 👋」，饭圈里也显示她的昵称（昵称取自登录态，不需要成员表）。
 - 顶部副标题对管理员显示「我是**我的昵称** · 她的动态实时同步」，统一昵称在「成员」页最上方改，存 `app_settings` 表，所有端实时同步。

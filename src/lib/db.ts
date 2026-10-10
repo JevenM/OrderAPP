@@ -84,6 +84,38 @@ export async function listDishes(): Promise<Dish[]> {
   return (data ?? []) as Dish[]
 }
 
+export interface TogetherLocationRow {
+  member_id: string
+  latitude: number
+  longitude: number
+  accuracy: number
+  updated_at: string
+  expires_at: string
+}
+
+export async function upsertTogetherLocation(input: Omit<TogetherLocationRow, 'updated_at' | 'expires_at'>): Promise<void> {
+  const now = new Date()
+  const { error } = await supabase.from('together_locations').upsert({
+    ...input,
+    updated_at: now.toISOString(),
+    expires_at: new Date(now.getTime() + 120_000).toISOString(),
+  })
+  if (error) fail(error, '同步同在位置')
+}
+
+export async function listTogetherLocations(memberIds: string[]): Promise<TogetherLocationRow[]> {
+  if (!memberIds.length) return []
+  const { data, error } = await supabase.from('together_locations').select('*').in('member_id', memberIds)
+  if (error) fail(error, '读取同在位置')
+  return (data ?? []) as TogetherLocationRow[]
+}
+
+export async function clearTogetherLocation(memberId: string): Promise<void> {
+  if (!memberId) return
+  const { error } = await supabase.from('together_locations').delete().eq('member_id', memberId)
+  if (error) fail(error, '关闭位置共享')
+}
+
 export async function saveDish(dish: Partial<Dish> & { name: string }): Promise<void> {
   const price = Number(dish.price ?? 0)
   const payload = {

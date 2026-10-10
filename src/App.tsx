@@ -14,6 +14,7 @@ import { UnreadProvider, useUnread } from './store/unread'
 import { MembersProvider, useMembers } from './store/members'
 import { FriendsProvider } from './store/friends'
 import FeedNotifyPanel from './components/FeedNotifyPanel'
+import TogetherStatus from './components/TogetherStatus'
 import { ChangelogProvider, useChangelog } from './store/changelog'
 import type { Role } from './lib/types'
 import Login from './pages/Login'
@@ -221,6 +222,7 @@ function Layout() {
             {/* <h1 className="truncate text-[15px] font-semibold leading-tight text-brand-600">{APP_TITLE}</h1> */}
             <p className="truncate text-[11px] leading-tight text-slate-400">{subtitle}</p>
           </div>
+          <TogetherStatus />
 
           <div className="flex shrink-0 items-center gap-1.5">
             {/* 消息通知：好友发动态 / 点赞 / 评论时未读 +1，点开查看后消失 */}

@@ -183,7 +183,7 @@ export const SLOT_LABEL: Record<MealSlot, string> = {
 
 export const MEAL_STATUS: Record<MealStatus, { label: string; emoji: string; cls: string }> = {
   eaten: { label: '吃了', emoji: '✅', cls: 'bg-emerald-50 text-emerald-600 border-emerald-200' },
-  little: { label: '吃得少', emoji: '🫤', cls: 'bg-amber-50 text-amber-600 border-amber-200' },
+  little: { label: '吃得少', emoji: '😔', cls: 'bg-amber-50 text-amber-600 border-amber-200' },
   skipped: { label: '没吃', emoji: '❌', cls: 'bg-rose-50 text-rose-600 border-rose-200' },
 }
 
