@@ -4,7 +4,7 @@ import { listFeedNotifications, markFeedNotificationRead, type FeedNotificationR
 import { timeCn } from '../lib/date'
 import { useUnread } from '../store/unread'
 
-const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️', quiz: '💞', truth: '🎲' }
+const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️', quiz: '💞', truth: '🎲', together: '💕' }
 const PAGE_SIZE = 10
 
 type View = 'preview' | 'all'
@@ -51,6 +51,8 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
       navigate(`/couple${notice.post_id ? `?quiz=${encodeURIComponent(notice.post_id)}` : ''}`)
     } else if (notice.type === 'truth') {
       navigate('/couple?module=truth')
+    } else if (notice.type === 'together') {
+      // 同在检测的入口 💕 就在顶栏，任何页面都有，留在当前页即可
     } else {
       navigate(`/feed${notice.post_id ? `?post=${encodeURIComponent(notice.post_id)}` : ''}`)
     }

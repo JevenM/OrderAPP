@@ -984,6 +984,19 @@ export default function CouplePage() {
       { table: 'couple_board_games', on: (p) => applyBoardRow(p.new as CoupleBoardGameRow) },
       // 飞行棋对局历史：一局结束落库后即时刷新
       { table: 'couple_board_game_history', event: 'INSERT', on: () => void reloadBoardHistory() },
+      // 兜底：铃铛通知表的实时通道已被验证可靠（能收到消息提示），
+      // 收到真心话 / 同步抉择通知时主动刷新对应列表，
+      // 避免业务表的实时事件偶发丢失导致「有提示但列表不更新」
+      {
+        table: 'feed_notifications',
+        event: 'INSERT',
+        on: (p) => {
+          const n = p.new as { recipient?: string; type?: string }
+          if (!memberId || !n || n.recipient !== memberId) return
+          if (n.type === 'truth') void reloadTruthHistory()
+          else if (n.type === 'quiz') void reloadQuiz()
+        },
+      },
       {
         table: 'couple_messages',
         event: 'INSERT',
@@ -1024,6 +1037,28 @@ export default function CouplePage() {
     void reloadBoard()
     void reloadBoardHistory()
   }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory])
+
+  /**
+   * 保底轮询：业务表的实时事件偶发丢失（表未加进实时发布、网络抖动）时，
+   * 每隔 5 秒主动拉一次当前模块的数据，列表最多延迟几秒，不用手动刷新浏览器。
+   */
+  useEffect(() => {
+    if (!ready) return
+    const reloads: Record<string, () => void> = {
+      love: () => void reloadMeals(),
+      wish: () => void reloadWishes(),
+      chat: () => void reloadMessages(),
+      quiz: () => void reloadQuiz(),
+      truth: () => void reloadTruthHistory(),
+      board: () => void reloadBoard(),
+    }
+    const reload = activeModule ? reloads[activeModule] : undefined
+    if (!reload) return
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') reload()
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [ready, activeModule, reloadMeals, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard])
 
   useEffect(() => {
     try {

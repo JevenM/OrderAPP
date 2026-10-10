@@ -1108,6 +1108,18 @@ async function notifyCoupleTruthAnswer(recipient: string, prompt: string): Promi
   }
 }
 
+/** 一方开启同在检测时通知对方：请求 TA 也打开位置共享（铃铛 + 弹提醒） */
+export async function notifyTogetherRequest(recipient: string, senderName: string): Promise<void> {
+  if (!recipient) return
+  await insertFeedNotices([recipient], {
+    sender_name: senderName,
+    type: 'together',
+    post_id: null,
+    title: '💕 同在检测邀请',
+    body: '对方请求打开同在检测，到顶栏点击 💕 一起开启吧',
+  })
+}
+
 /**
  * 记录一次真心话 / 大冒险。
  * 真心话带 answer（必填由调用方保证），默认给对方落一条铃铛通知；
@@ -1693,7 +1705,7 @@ export async function removeComment(id: string): Promise<void> {
 
 /* ------------------------ 饭圈消息通知（顶栏未读角标） ------------------------ */
 
-export type FeedNoticeType = 'post' | 'like' | 'comment' | 'reply' | 'quiz' | 'truth'
+export type FeedNoticeType = 'post' | 'like' | 'comment' | 'reply' | 'quiz' | 'truth' | 'together'
 
 export interface FeedNotificationRow {
   id: string

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { clearTogetherLocation, listTogetherLocations, upsertTogetherLocation, type TogetherLocationRow } from '../lib/db'
+import { clearTogetherLocation, listTogetherLocations, notifyTogetherRequest, upsertTogetherLocation, type TogetherLocationRow } from '../lib/db'
 import { useRealtime } from '../lib/realtime'
 import { useToast } from './Toast'
 import { useFriends } from '../store/friends'
@@ -19,7 +19,7 @@ function distanceMeters(a: TogetherLocationRow, b: TogetherLocationRow): number 
 
 export default function TogetherStatus() {
   const toast = useToast()
-  const { memberId, role } = useSession()
+  const { memberId, memberName, role } = useSession()
   const { friends } = useFriends()
   const friendId = friends.find((friend) => friend.memberId !== '__admin__')?.memberId ?? null
   const [sharing, setSharing] = useState(false)
@@ -81,6 +81,8 @@ export default function TogetherStatus() {
     if (!window.isSecureContext || !navigator.geolocation) return toast.show('定位需要 HTTPS 环境和浏览器定位支持', 'err')
     sharingRef.current = true
     setSharing(true)
+    // 提醒对方：请求 TA 也打开同在检测（铃铛消息 + 弹提醒，失败不影响开启）
+    void notifyTogetherRequest(friendId, memberName || '对方').catch(() => {})
     const id = navigator.geolocation.watchPosition(
       ({ coords }) => {
         void upsertTogetherLocation({
@@ -111,11 +113,19 @@ export default function TogetherStatus() {
 
   return (
     <button
-      className={`flex items-center gap-1 rounded-full px-2 py-1 text-[11px] transition ${together ? 'bg-rose-50 text-rose-600' : 'bg-slate-50 text-slate-400'}`}
+      className={`flex items-center gap-1 rounded-full px-2 py-1 text-[11px] transition ${
+        together ? 'bg-rose-50 text-rose-600' : sharing ? 'bg-rose-50 text-rose-500' : 'bg-slate-50 text-slate-400'
+      }`}
       title={sharing ? '点击停止位置共享' : '点击开启位置共享；双方都开启且相距小于 1 公里时点亮'}
       onClick={() => void (sharing ? stopSharing() : startSharing())}
     >
-      <span className={`text-base leading-none ${together ? 'animate-heart' : 'grayscale opacity-50'}`}>💕</span>
+      <span
+        className={`text-base leading-none ${
+          together ? 'animate-heart' : sharing ? 'animate-pulse' : 'grayscale opacity-50'
+        }`}
+      >
+        💕
+      </span>
       <span>{status}{distanceLabel ? ` · ${distanceLabel}` : ''}</span>
     </button>
   )
