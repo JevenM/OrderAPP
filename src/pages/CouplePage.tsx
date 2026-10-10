@@ -4,7 +4,9 @@ import { useToast } from '../components/Toast'
 import {
   appendCoupleEvent,
   broadcastCoupleMessage,
+  createCoupleTruthDare,
   createCoupleWish,
+  fetchCoupleBoardGame,
   fetchCoupleQuiz,
   fetchCoupleQuizHistory,
   listCoupleQuizBank,
@@ -12,13 +14,21 @@ import {
   listCoupleEvents,
   listCoupleMessages,
   listCoupleQuizHistory,
+  listCoupleTruthDare,
   listCoupleWishes,
   listMealsRange,
   resetCoupleQuiz,
   saveCoupleQuizChoice,
+  upsertCoupleBoardGame,
+  type CoupleBoardCell,
+  type CoupleBoardCellKind,
+  type CoupleBoardGameRow,
+  type CoupleBoardLogItem,
+  type CoupleBoardState,
   type CoupleEventRow,
   type CoupleQuizHistoryRow,
   type CoupleQuizRow,
+  type CoupleTruthDareRow,
 } from '../lib/db'
 import { todayStr } from '../lib/date'
 import { EXTRA_COUPLE_QUESTIONS } from '../lib/coupleQuestions'
@@ -40,24 +50,96 @@ type QuizView = {
 }
 
 type ChoiceMode = 'preset' | 'custom'
-type BoardEventKind = 'task' | 'forward' | 'back' | 'start' | 'pause' | 'swap'
-type BoardEvent = { position: number; kind: BoardEventKind; label: string; detail: string; value?: number; task?: string }
 
-const BOARD_TASKS = [
-  '说一句你最欣赏对方的话',
-  '两个人一起做一个击掌或拥抱动作',
-  '分享今天最开心的一件小事',
-  '给对方一个下回合的加油口号',
-  '一起回忆一个第一次见面的细节',
-]
-const BOARD_EVENT_META: Record<BoardEventKind, { icon: string; label: string }> = {
+/** 飞行棋格子类型（首尾的起点/终点除外） */
+type BoardCellKind = Exclude<CoupleBoardCellKind, 'start' | 'end'>
+
+const BOARD_CELL_META: Record<BoardCellKind, { icon: string; label: string }> = {
   task: { icon: '🎯', label: '任务' },
   forward: { icon: '🚀', label: '前进' },
-  back: { icon: '🌀', label: '回退' },
-  start: { icon: '🏠', label: '回到起点' },
+  back: { icon: '🌀', label: '后退' },
   pause: { icon: '⏸', label: '暂停' },
-  swap: { icon: '🔁', label: '交换位置' },
+  reroll: { icon: '🎲', label: '重摇' },
+  truth: { icon: '💬', label: '真心话' },
+  dare: { icon: '🔥', label: '大冒险' },
+  goal: { icon: '🏁', label: '冲线' },
 }
+
+/** 情侣飞行棋格子内容池：生成棋盘时随机抽取，每个格子的内容都从这里选 */
+const BOARD_CELL_POOL: CoupleBoardCell[] = [
+  { kind: 'task', text: '小猫叫3声' },
+  { kind: 'task', text: '牵手10秒' },
+  { kind: 'task', text: '喂对方吃东西' },
+  { kind: 'task', text: '唱几句情歌' },
+  { kind: 'task', text: '给对方点一份外卖备注指定内容' },
+  { kind: 'task', text: '脸上贴纸条' },
+  { kind: 'task', text: '听对方心跳' },
+  { kind: 'task', text: '弹对方脑门3下' },
+  { kind: 'task', text: '说一句一定的话' },
+  { kind: 'task', text: '说出对方3个优点' },
+  { kind: 'task', text: '请对方一杯奶茶' },
+  { kind: 'task', text: '亲亲对方脑阔' },
+  { kind: 'task', text: '帮对方剪指甲' },
+  { kind: 'dare', text: '做一个大冒险' },
+  { kind: 'task', text: '噪声2分钟' },
+  { kind: 'truth', text: '回答一个真心话' },
+  { kind: 'task', text: '吐舌头2分钟' },
+  { kind: 'task', text: '小猪叫3声' },
+  { kind: 'task', text: '闭眼撅嘴10秒' },
+  { kind: 'task', text: '捏捏对方脸' },
+  { kind: 'task', text: '亲亲对方脸蛋' },
+  { kind: 'task', text: '十指相扣30秒' },
+  { kind: 'task', text: '喂对方喝水' },
+  { kind: 'task', text: '舔对方锁骨' },
+  { kind: 'task', text: '让对方摸指定位置' },
+  { kind: 'task', text: '在对方脸上写字' },
+  { kind: 'task', text: 'kiss3下' },
+  { kind: 'task', text: '每句话末尾加喵~' },
+  { kind: 'task', text: '用嘴接连线' },
+  { kind: 'task', text: '给对方膝枕1分钟' },
+  { kind: 'task', text: '舔对方嘴唇' },
+  { kind: 'task', text: '禁止摸摸2分钟' },
+  { kind: 'task', text: '鼻尖贴近5秒' },
+  { kind: 'task', text: '被对方摸摸头' },
+  { kind: 'task', text: '深情对视至1人笑' },
+  { kind: 'task', text: '撒娇10秒' },
+  { kind: 'task', text: '含水10秒' },
+  { kind: 'task', text: '沙发咚对方10秒' },
+  { kind: 'task', text: '一起恶搞自拍' },
+  { kind: 'task', text: '给对方说悄悄话' },
+  { kind: 'task', text: '给对方按小腿1分钟' },
+  { kind: 'task', text: '对视5秒' },
+  { kind: 'task', text: '手牵手30秒' },
+  { kind: 'task', text: '拥抱30秒' },
+  { kind: 'task', text: '尝试接吻的感觉' },
+  { kind: 'task', text: '说说初次见面的感觉' },
+  { kind: 'task', text: '对方闭上眼睛给你涂口红' },
+  { kind: 'task', text: '一起给对方按摩' },
+  { kind: 'task', text: '背女生转3圈' },
+  { kind: 'task', text: '摸对方耳朵2秒' },
+  { kind: 'task', text: '摸摸头10秒' },
+  { kind: 'task', text: '给对方唱歌' },
+  { kind: 'task', text: '一起喝一杯水' },
+  { kind: 'task', text: '拍一段表白视频做纪念' },
+  { kind: 'task', text: '给对方梳头发' },
+  { kind: 'task', text: '给对方按摩捶背1分钟' },
+  { kind: 'task', text: '亲吻对方手背30秒' },
+  { kind: 'task', text: '拥抱1分钟' },
+  { kind: 'task', text: '亲吻一下对方的手' },
+  { kind: 'task', text: '被ta挠痒痒30秒' },
+  { kind: 'task', text: '从背后抱对方1分钟' },
+  { kind: 'task', text: '亲吻对方额头' },
+  { kind: 'task', text: '浪漫表白' },
+  { kind: 'forward', text: '向前一步', value: 1 },
+  { kind: 'forward', text: '继续向前一步', value: 1 },
+  { kind: 'forward', text: '前进三格', value: 3 },
+  { kind: 'back', text: '后退一格', value: 1 },
+  { kind: 'back', text: '后退二格', value: 2 },
+  { kind: 'back', text: '后退三格', value: 3 },
+  { kind: 'pause', text: '暂停一下' },
+  { kind: 'reroll', text: '重摇一次' },
+  { kind: 'goal', text: '红色棋子进入终点' },
+]
 
 const choiceLabel = (choice: string | null, question: Question): string => {
   if (!choice) return ''
@@ -370,6 +452,115 @@ const orderedPair = (a: string, b: string): [string, string] => (a < b ? [a, b] 
 
 const dayNumber = () => Math.floor(Date.now() / 86_400_000)
 
+function shuffleList<T>(list: T[]): T[] {
+  const arr = [...list]
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+  return arr
+}
+
+/** 生成共享棋盘：首尾固定起点/终点，中间格子从内容池随机抽取（池子不够大时循环取） */
+function buildBoardCells(size: number): CoupleBoardCell[] {
+  const pool = shuffleList(BOARD_CELL_POOL)
+  const cells: CoupleBoardCell[] = [{ kind: 'start', text: '起点' }]
+  for (let i = 1; i < size - 1; i += 1) {
+    cells.push({ ...pool[(i - 1) % pool.length] })
+  }
+  cells.push({ kind: 'end', text: '终点' })
+  return cells
+}
+
+/**
+ * 掷骰结算（纯函数）：返回下一份棋局快照；踩到大冒险格时返回抽到的题目，
+ * 由调用方负责落库记录。
+ */
+function applyBoardRoll(
+  state: CoupleBoardState,
+  player: 0 | 1,
+  dice: number,
+  names: [string, string]
+): { state: CoupleBoardState; darePrompt: string | null } {
+  const name = names[player]
+  const log: CoupleBoardLogItem[] = [...state.log]
+  const push = (text: string) => log.push({ at: new Date().toISOString(), text })
+  const positions: [number, number] = [...state.positions]
+  const paused: [number, number] = [...state.paused]
+  let winner: 0 | 1 | null = state.winner
+  let pending = state.pending
+  let turn: 0 | 1 = state.turn
+  let darePrompt: string | null = null
+
+  if (paused[player] > 0) {
+    paused[player] -= 1
+    push(`⏸${name}本回合被暂停，跳过行动`)
+    return {
+      state: { ...state, positions, paused, log: log.slice(-20), dice: null, turn: (1 - player) as 0 | 1, winner, pending },
+      darePrompt: null,
+    }
+  }
+
+  const pos = Math.min(state.size - 1, positions[player] + dice)
+  positions[player] = pos
+  push(`🎲${name}掷出 ${dice} 点，前进到第 ${pos + 1} 格`)
+
+  const cell = state.cells[pos]
+  if (cell && pos !== 0 && pos !== state.size - 1) {
+    switch (cell.kind) {
+      case 'task':
+        push(`🎯任务：${cell.text}`)
+        break
+      case 'truth': {
+        const prompt = TRUTH_PROMPTS[Math.floor(Math.random() * TRUTH_PROMPTS.length)]
+        pending = { type: 'truth', prompt, player }
+        push(`💬真心话：「${prompt}」等${name}作答`)
+        break
+      }
+      case 'dare': {
+        darePrompt = DARES[Math.floor(Math.random() * DARES.length)]
+        push(`🔥大冒险：${darePrompt}`)
+        break
+      }
+      case 'forward': {
+        const to = Math.min(state.size - 1, pos + (cell.value ?? 1))
+        positions[player] = to
+        push(`🚀${cell.text}，前进到第 ${to + 1} 格`)
+        break
+      }
+      case 'back': {
+        const to = Math.max(0, pos - (cell.value ?? 1))
+        positions[player] = to
+        push(`🌀${cell.text}，退到第 ${to + 1} 格`)
+        break
+      }
+      case 'pause':
+        paused[player] += 1
+        push(`⏸${cell.text}，下回合暂停一次`)
+        break
+      case 'reroll':
+        push(`🎲${cell.text}，继续由${name}掷骰`)
+        break
+      case 'goal':
+        positions[player] = state.size - 1
+        push(`🏁${cell.text}，直接冲线！`)
+        break
+    }
+  }
+
+  if (positions[player] >= state.size - 1) {
+    winner = player
+    push(`🎉${name}到达终点，获得胜利！`)
+  } else if (cell?.kind !== 'reroll') {
+    turn = (1 - player) as 0 | 1
+  }
+
+  return {
+    state: { ...state, positions, paused, log: log.slice(-20), dice, turn, winner, pending },
+    darePrompt,
+  }
+}
+
 function readCache<T>(cacheKey: string, fallback: T): T {
   try {
     return JSON.parse(localStorage.getItem(cacheKey) ?? '') as T
@@ -494,17 +685,21 @@ export default function CouplePage() {
       return null
     }
   })
-  const [truthPrompt, setTruthPrompt] = useState<string | null>(null)
-  const [diceValue, setDiceValue] = useState<number | null>(null)
-  const [boardPositions, setBoardPositions] = useState<[number, number]>([0, 0])
-  const [turn, setTurn] = useState(0)
-  const [boardStarted, setBoardStarted] = useState(false)
+  /* ------------------------------ 真心话大冒险 ------------------------------ */
+  const [truthDraw, setTruthDraw] = useState<{ type: 'truth' | 'dare'; prompt: string } | null>(null)
+  const [truthAnswer, setTruthAnswer] = useState('')
+  const [truthSubmitting, setTruthSubmitting] = useState(false)
+  const [truthHistory, setTruthHistory] = useState<CoupleTruthDareRow[]>([])
+
+  /* ------------------------------ 联网飞行棋 ------------------------------ */
+  const [boardGame, setBoardGame] = useState<CoupleBoardGameRow | null>(null)
+  const [boardLoaded, setBoardLoaded] = useState(false)
+  const [boardSaving, setBoardSaving] = useState(false)
+  const [boardSetup, setBoardSetup] = useState(false)
   const [boardSize, setBoardSize] = useState(30)
   const [boardStepMin, setBoardStepMin] = useState(1)
   const [boardStepMax, setBoardStepMax] = useState(6)
-  const [boardEvents, setBoardEvents] = useState<BoardEvent[]>([])
-  const [boardMessage, setBoardMessage] = useState('')
-  const [pausedTurns, setPausedTurns] = useState<[number, number]>([0, 0])
+  const [boardTruthAnswer, setBoardTruthAnswer] = useState('')
 
   const questionPool = questionKind === '自定义'
     ? customQuestions
@@ -587,6 +782,37 @@ export default function CouplePage() {
   }, [])
 
   /* ------------------------------ 远端加载 ------------------------------ */
+
+  const reloadTruthHistory = useCallback(async () => {
+    if (!memberId || !friendId) return
+    try {
+      setTruthHistory(await listCoupleTruthDare(memberId, friendId, 100))
+    } catch (error) {
+      console.warn('加载真心话记录失败', error)
+    }
+  }, [memberId, friendId])
+
+  /** 应用远端棋局：确认属于当前这一对情侣再展示 */
+  const applyBoardRow = useCallback(
+    (row: CoupleBoardGameRow | null) => {
+      if (!row || !memberId || !friendId) return
+      const [a, b] = orderedPair(memberId, friendId)
+      if (row.member_a !== a || row.member_b !== b) return
+      setBoardGame(row)
+    },
+    [memberId, friendId]
+  )
+
+  const reloadBoard = useCallback(async () => {
+    if (!memberId || !friendId) return
+    try {
+      applyBoardRow(await fetchCoupleBoardGame(memberId, friendId))
+    } catch (error) {
+      console.warn('加载飞行棋棋局失败', error)
+    } finally {
+      setBoardLoaded(true)
+    }
+  }, [memberId, friendId, applyBoardRow])
 
   const reloadWishes = useCallback(async () => {
     if (!memberId || !friendId) return
@@ -722,6 +948,10 @@ export default function CouplePage() {
       { table: 'couple_wishes', on: () => void reloadWishes() },
       { table: 'couple_events', event: 'INSERT', on: (p) => onEventRow(p.new as CoupleEventRow) },
       { table: 'couple_quiz', on: (p) => applyQuizRow(p.new as CoupleQuizRow) },
+      // 真心话大冒险：对方抽题 / 提交答案后，双方记录列表即时刷新
+      { table: 'couple_truth_dare', event: 'INSERT', on: () => void reloadTruthHistory() },
+      // 联网飞行棋：对方生成棋盘 / 掷骰后，棋局即时同步
+      { table: 'couple_board_games', on: (p) => applyBoardRow(p.new as CoupleBoardGameRow) },
       {
         table: 'couple_messages',
         event: 'INSERT',
@@ -741,6 +971,8 @@ export default function CouplePage() {
         void reloadQuiz()
         void reloadEvents()
         void reloadMeals()
+        void reloadTruthHistory()
+        void reloadBoard()
       },
     }
   )
@@ -753,7 +985,9 @@ export default function CouplePage() {
     void reloadQuiz()
     void reloadEvents()
     void reloadMeals()
-  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals])
+    void reloadTruthHistory()
+    void reloadBoard()
+  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard])
 
   useEffect(() => {
     try {
@@ -763,6 +997,21 @@ export default function CouplePage() {
       // 页面内导航仍可用，只是不跨刷新保留当前模块。
     }
   }, [activeModule])
+
+  // 铃铛通知跳转：/couple?module=truth 直接打开真心话大冒险模块（?quiz= 的揭晓弹窗优先）
+  useEffect(() => {
+    const module = searchParams.get('module')
+    if (!module) return
+    setSearchParams(
+      (params) => {
+        params.delete('module')
+        return params
+      },
+      { replace: true }
+    )
+    if (noticeQuizId) return
+    if (['love', 'wish', 'chat', 'quiz', 'truth', 'board'].includes(module)) setActiveModule(module)
+  }, [searchParams, noticeQuizId, setSearchParams])
 
   useEffect(() => {
     let active = true
@@ -978,6 +1227,191 @@ export default function CouplePage() {
     }
   }
 
+  /* ------------------------------ 真心话大冒险 ------------------------------ */
+
+  const drawTruth = () => {
+    const usedPrompts = new Set(truthHistory.map((row) => row.prompt))
+    const pool = TRUTH_PROMPTS.filter((p) => !usedPrompts.has(p))
+    const list = pool.length ? pool : TRUTH_PROMPTS
+    setTruthDraw({ type: 'truth', prompt: list[Math.floor(Math.random() * list.length)] })
+    setTruthAnswer('')
+  }
+
+  const drawDare = async () => {
+    const usedPrompts = new Set(truthHistory.map((row) => row.prompt))
+    const pool = DARES.filter((p) => !usedPrompts.has(p))
+    const list = pool.length ? pool : DARES
+    const prompt = list[Math.floor(Math.random() * list.length)]
+    setTruthDraw({ type: 'dare', prompt })
+    // 大冒险抽到即记录，双方在历史里都能看到
+    if (memberId && friendId) {
+      try {
+        await createCoupleTruthDare({
+          userA: memberId,
+          userB: friendId,
+          senderId: memberId,
+          senderName: memberName || '我',
+          type: 'dare',
+          prompt,
+          notify: false,
+        })
+        void reloadTruthHistory()
+      } catch (error) {
+        toast.show((error as Error).message, 'err')
+      }
+    }
+  }
+
+  const submitTruthAnswer = async () => {
+    if (!truthDraw || truthDraw.type !== 'truth') return
+    const answer = truthAnswer.trim()
+    if (!answer) return toast.show('先把答案写上再提交哦～', 'err')
+    if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+    setTruthSubmitting(true)
+    try {
+      await createCoupleTruthDare({
+        userA: memberId,
+        userB: friendId,
+        senderId: memberId,
+        senderName: memberName || '我',
+        type: 'truth',
+        prompt: truthDraw.prompt,
+        answer,
+      })
+      setTruthDraw(null)
+      setTruthAnswer('')
+      await reloadTruthHistory()
+      toast.show('答案已提交，对方马上就能看到 💬')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setTruthSubmitting(false)
+    }
+  }
+
+  /* ------------------------------ 联网飞行棋 ------------------------------ */
+
+  /** 我在棋局里的下标：member_a（红棋）为 0，member_b（蓝棋）为 1 */
+  const myBoardIndex: 0 | 1 = boardGame && memberId === boardGame.member_b ? 1 : 0
+  const boardState = boardGame?.state ?? null
+  /** 双方展示名：下标 0 = member_a（红棋），1 = member_b（蓝棋） */
+  const boardNames: [string, string] | null = boardGame && memberId
+    ? [
+        boardGame.member_a === memberId ? memberName || '我' : friendName,
+        boardGame.member_b === memberId ? memberName || '我' : friendName,
+      ]
+    : null
+
+  const startBoardGame = async () => {
+    if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+    const stepMax = Math.max(boardStepMin, boardStepMax)
+    const myIndex: 0 | 1 = memberId < friendId ? 0 : 1
+    const myName = memberName || '我'
+    const state: CoupleBoardState = {
+      size: boardSize,
+      stepMin: boardStepMin,
+      stepMax,
+      cells: buildBoardCells(boardSize),
+      positions: [0, 0],
+      turn: myIndex,
+      paused: [0, 0],
+      dice: null,
+      log: [{ at: new Date().toISOString(), text: `🎯棋盘已生成，由${myName}先掷骰` }],
+      winner: null,
+      pending: null,
+    }
+    setBoardSaving(true)
+    try {
+      await upsertCoupleBoardGame(memberId, friendId, state)
+      const [memberA, memberB] = orderedPair(memberId, friendId)
+      setBoardGame({ member_a: memberA, member_b: memberB, state, updated_at: new Date().toISOString() })
+      setBoardSetup(false)
+      toast.show('棋盘已生成，和 TA 轮流掷骰吧 🎯')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setBoardSaving(false)
+    }
+  }
+
+  const rollBoardDice = async () => {
+    if (!boardGame || !boardState || !memberId || !friendId) return
+    if (boardState.winner !== null || boardState.pending || boardState.turn !== myBoardIndex) return
+    setBoardSaving(true)
+    try {
+      // 先取最新棋局：回合已变化时放弃本次操作，降低双端同时掷骰的覆盖风险
+      const fresh = (await fetchCoupleBoardGame(memberId, friendId)) ?? boardGame
+      const latest = fresh.state
+      if (latest.winner !== null || latest.pending || latest.turn !== myBoardIndex) {
+        setBoardGame(fresh)
+        return
+      }
+      const dice = latest.stepMin + Math.floor(Math.random() * (latest.stepMax - latest.stepMin + 1))
+      const names = boardNames ?? ['红棋', '蓝棋']
+      const { state: next, darePrompt } = applyBoardRoll(latest, myBoardIndex, dice, names)
+      await upsertCoupleBoardGame(memberId, friendId, next)
+      setBoardGame({ ...fresh, state: next, updated_at: new Date().toISOString() })
+      if (darePrompt) {
+        // 踩到大冒险格：抽到的题目也进真心话大冒险记录
+        void createCoupleTruthDare({
+          userA: memberId,
+          userB: friendId,
+          senderId: memberId,
+          senderName: memberName || '我',
+          type: 'dare',
+          prompt: darePrompt,
+          notify: false,
+        })
+          .then(() => reloadTruthHistory())
+          .catch(() => {})
+      }
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setBoardSaving(false)
+    }
+  }
+
+  const submitBoardTruth = async () => {
+    if (!boardGame || !boardState?.pending || boardState.pending.player !== myBoardIndex) return
+    const answer = boardTruthAnswer.trim()
+    if (!answer) return toast.show('先把答案写上再提交哦～', 'err')
+    if (!memberId || !friendId) return
+    setBoardSaving(true)
+    try {
+      await createCoupleTruthDare({
+        userA: memberId,
+        userB: friendId,
+        senderId: memberId,
+        senderName: memberName || '我',
+        type: 'truth',
+        prompt: boardState.pending.prompt,
+        answer,
+      })
+      const fresh = (await fetchCoupleBoardGame(memberId, friendId)) ?? boardGame
+      const next: CoupleBoardState =
+        fresh.state.pending?.player === myBoardIndex
+          ? {
+              ...fresh.state,
+              pending: null,
+              log: [
+                ...fresh.state.log,
+                { at: new Date().toISOString(), text: `💬${memberName || '我'}完成了真心话作答` },
+              ].slice(-20),
+            }
+          : fresh.state
+      await upsertCoupleBoardGame(memberId, friendId, next)
+      setBoardGame({ ...fresh, state: next, updated_at: new Date().toISOString() })
+      setBoardTruthAnswer('')
+      void reloadTruthHistory()
+      toast.show('答案已提交，对方马上就能看到 💬')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setBoardSaving(false)
+    }
+  }
+
   const submitChoice = (val: string) => {
     const choice = val.trim()
     if (!quiz.question || quiz.revealed || quiz.myChoice || !choice) return
@@ -1020,7 +1454,7 @@ export default function CouplePage() {
       <div className="min-w-0 overflow-hidden rounded-3xl bg-gradient-to-br from-brand-500 via-rose-400 to-orange-300 p-4 text-white shadow-card sm:p-5">
         <div className="text-xs opacity-80">FRIENDSHIP PLAYGROUND</div>
         <h2 className="mt-1 break-words text-xl font-bold">和 {friendName} 的互动空间</h2>
-        <p className="mt-1 break-words text-xs opacity-90">把日常、心愿和默契，变成你们的共同回忆。</p>
+        {/* <p className="mt-1 break-words text-xs opacity-90">把日常、心愿和默契，变成你们的共同回忆。</p> */}
       </div>
 
       {!activeModule ? (
@@ -1031,7 +1465,7 @@ export default function CouplePage() {
             { id: 'chat', icon: '💬', title: '甜蜜留言', detail: `${messages.length} 条留言` },
             { id: 'quiz', icon: '💞', title: '同步抉择', detail: `${ALL_QUESTIONS.length + customQuestions.length} 道题` },
             { id: 'truth', icon: '🎲', title: '真心话大冒险', detail: '聊聊心里话，完成小挑战' },
-            { id: 'board', icon: '🎯', title: '情侣飞行棋', detail: '掷骰前进，完成互动任务' },
+            { id: 'board', icon: '🎯', title: '情侣飞行棋', detail: '联网轮流掷骰对战' },
           ].map((module) => (
             <button key={module.id} type="button" className="card flex min-h-28 flex-col items-start justify-between gap-3 text-left transition hover:border-brand-200" onClick={() => setActiveModule(module.id)}>
               <span className="text-2xl">{module.icon}</span>
@@ -1049,93 +1483,198 @@ export default function CouplePage() {
             <section className="card space-y-4">
               <div>
                 <h3 className="font-semibold">🎲真心话大冒险</h3>
-                <p className="text-xs text-slate-400">选择真心话或大冒险；任何一方都可以跳过。</p>
+                <p className="text-xs text-slate-400">真心话要写下答案，提交后对方立刻知晓；题目和答案都会留档。</p>
               </div>
-              {truthPrompt && <div className="rounded-2xl bg-rose-50 p-4 text-center text-sm leading-relaxed text-rose-700">{truthPrompt}</div>}
-              <div className="grid grid-cols-2 gap-2">
-                <button className="btn-soft" onClick={() => setTruthPrompt(TRUTH_PROMPTS[Math.floor(Math.random() * TRUTH_PROMPTS.length)])}>抽真心话</button>
-                <button className="btn-primary" onClick={() => setTruthPrompt(DARES[Math.floor(Math.random() * DARES.length)])}>抽大冒险</button>
+              {truthDraw ? (
+                <div className="space-y-3 rounded-2xl bg-rose-50 p-4">
+                  <span className={`chip ${truthDraw.type === 'truth' ? 'border-rose-200 bg-white text-rose-600' : 'border-orange-200 bg-white text-orange-600'}`}>
+                    {truthDraw.type === 'truth' ? '💬真心话' : '🔥大冒险'}
+                  </span>
+                  <p className="break-words text-sm font-semibold leading-relaxed text-rose-700">{truthDraw.prompt}</p>
+                  {truthDraw.type === 'truth' ? (
+                    <>
+                      <textarea
+                        className="input min-h-[72px] resize-y"
+                        placeholder="写下你的真心话答案…"
+                        maxLength={300}
+                        value={truthAnswer}
+                        onChange={(e) => setTruthAnswer(e.target.value)}
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <button className="btn-ghost" disabled={truthSubmitting} onClick={() => { setTruthDraw(null); setTruthAnswer('') }}>跳过这题</button>
+                        <button
+                          className="btn-primary disabled:cursor-not-allowed disabled:opacity-40"
+                          disabled={truthSubmitting || !truthAnswer.trim()}
+                          onClick={() => void submitTruthAnswer()}
+                        >
+                          {truthSubmitting ? '提交中…' : '提交答案'}
+                        </button>
+                      </div>
+                      <p className="text-center text-[11px] text-slate-400">提交后对方会收到通知，并在下面的记录里看到</p>
+                    </>
+                  ) : (
+                    <button className="btn-ghost w-full" onClick={() => setTruthDraw(null)}>完成啦 / 再来一个</button>
+                  )}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <button className="btn-soft" onClick={drawTruth}>抽真心话</button>
+                  <button className="btn-primary" onClick={() => void drawDare()}>抽大冒险</button>
+                </div>
+              )}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-slate-600">我们的记录</h4>
+                  <span className="chip border-slate-200 bg-slate-50 text-slate-500">{truthHistory.length} 条</span>
+                </div>
+                <div className="max-h-64 space-y-2 overflow-y-auto rounded-xl bg-slate-50 p-3">
+                  {truthHistory.length === 0 && <p className="py-4 text-center text-xs text-slate-400">还没有记录，抽一题试试吧～</p>}
+                  {truthHistory.map((row) => {
+                    const isMine = row.sender_id === memberId
+                    return (
+                      <div key={row.id} className="rounded-xl bg-white p-3 text-xs shadow-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-slate-600">{isMine ? '我' : row.sender_name || friendName}</span>
+                          <span className={`chip shrink-0 ${row.type === 'truth' ? 'border-rose-200 bg-rose-50 text-rose-600' : 'border-orange-200 bg-orange-50 text-orange-600'}`}>
+                            {row.type === 'truth' ? '真心话' : '大冒险'}
+                          </span>
+                        </div>
+                        <p className="mt-1 break-words font-medium text-slate-700">{row.prompt}</p>
+                        {row.type === 'truth' && (
+                          <p className="mt-1 break-words rounded-lg bg-rose-50/70 p-2 text-rose-700">{row.answer ?? '（还没作答）'}</p>
+                        )}
+                        <p className="mt-1 text-[10px] text-slate-400">{new Date(row.created_at).toLocaleString('zh-CN')}</p>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
-              {truthPrompt && <button className="btn-ghost w-full" onClick={() => setTruthPrompt(null)}>跳过 / 再来一题</button>}
             </section>
           )}
           {activeModule === 'board' && (
             <section className="card space-y-4">
-              {!boardStarted ? <>
-                <div>
-                  <h3 className="font-semibold">🎯情侣飞行棋</h3>
-                  <p className="text-xs text-slate-400">先设置棋盘与步数，再随机生成任务、奖励和惩罚格。</p>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="text-xs text-slate-500">棋盘格数<select className="input mt-1" value={boardSize} onChange={(event) => setBoardSize(Number(event.target.value))}><option value={20}>20 格</option><option value={30}>30 格</option><option value={40}>40 格</option><option value={50}>50 格</option></select></label>
-                  <label className="text-xs text-slate-500">每次最少步数<select className="input mt-1" value={boardStepMin} onChange={(event) => setBoardStepMin(Number(event.target.value))}>{[1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value} 步</option>)}</select></label>
-                  <label className="text-xs text-slate-500">每次最多步数<select className="input mt-1" value={boardStepMax} onChange={(event) => setBoardStepMax(Math.max(boardStepMin, Number(event.target.value)))}>{[2, 3, 4, 5, 6, 8, 10].map((value) => <option key={value} value={value}>{value} 步</option>)}</select></label>
-                </div>
-                <button className="btn-primary w-full" onClick={() => {
-                  const finish = boardSize - 1
-                  const kinds: BoardEventKind[] = ['task', 'forward', 'back', 'start', 'pause', 'swap']
-                  const positions = new Set<number>([0, finish])
-                  const events: BoardEvent[] = []
-                  while (events.length < Math.max(3, Math.floor(boardSize / 7))) {
-                    const position = Math.floor(Math.random() * (boardSize - 4)) + 2
-                    if (positions.has(position)) continue
-                    positions.add(position)
-                    const kind = kinds[Math.floor(Math.random() * kinds.length)]
-                    const value = kind === 'forward' ? 2 + Math.floor(Math.random() * 3) : kind === 'back' ? 1 + Math.floor(Math.random() * 3) : undefined
-                    events.push({ position, kind, label: BOARD_EVENT_META[kind].label, detail: kind === 'task' ? '完成任务后继续' : kind === 'forward' ? `前进 ${value} 格` : kind === 'back' ? `后退 ${value} 格` : BOARD_EVENT_META[kind].label, value, task: kind === 'task' ? BOARD_TASKS[Math.floor(Math.random() * BOARD_TASKS.length)] : undefined })
-                  }
-                  setBoardEvents(events)
-                  setBoardPositions([0, 0])
-                  setPausedTurns([0, 0])
-                  setTurn(0)
-                  setDiceValue(null)
-                  setBoardMessage('棋盘已生成，轮到我先掷骰。')
-                  setBoardStarted(true)
-                }}>生成棋盘并开始</button>
-              </> : <>
-                <div>
-                  <h3 className="font-semibold">🎯情侣飞行棋</h3>
-                  <p className="text-xs text-slate-400">轮流前进，先到终点获胜。当前：{turn % 2 === 0 ? '我' : friendName}</p>
-                </div>
-                <div className="grid grid-cols-5 gap-1.5">
-                  {Array.from({ length: boardSize }, (_, index) => {
-                    const positionA = Math.min(boardPositions[0], boardSize - 1)
-                    const positionB = Math.min(boardPositions[1], boardSize - 1)
-                    const event = boardEvents.find((item) => item.position === index)
-                    return <div key={index} className={`flex aspect-square flex-col items-center justify-center rounded-md text-[10px] text-slate-500 ring-1 ${event ? 'bg-amber-50 ring-amber-200' : 'bg-emerald-50 ring-emerald-100'}`}>
-                      <div>{positionA === index && <span aria-label="我" className="mr-0.5">🔴</span>}{positionB === index && <span aria-label={friendName}>🔵</span>}{positionA !== index && positionB !== index && (index === boardSize - 1 ? '终点' : index + 1)}</div>
-                      {event && <span title={event.detail}>{BOARD_EVENT_META[event.kind].icon}</span>}
+              <div>
+                <h3 className="font-semibold">🎯情侣飞行棋</h3>
+                <p className="text-xs text-slate-400">联网对战：你们各自在自己手机上轮流掷骰，先到终点者获胜。</p>
+              </div>
+              {!boardLoaded ? (
+                <p className="py-6 text-center text-sm text-slate-400">棋局加载中…</p>
+              ) : !boardGame || boardSetup || boardGame.state.winner !== null ? (
+                <>
+                  {boardGame && boardGame.state.winner !== null && (
+                    <div className="rounded-2xl bg-amber-50 p-4 text-center text-sm font-semibold text-amber-700">
+                      🎉 上一局 {boardNames?.[boardGame.state.winner] ?? ''} 获胜！
                     </div>
-                  })}
-                </div>
-                {boardEvents.length > 0 && <div className="flex flex-wrap gap-1 text-[11px] text-slate-500">{boardEvents.map((event) => <span key={event.position} className="chip border-amber-200 bg-amber-50 text-amber-700">{event.position + 1}格 {BOARD_EVENT_META[event.kind].icon}{event.detail}</span>)}</div>}
-                {boardMessage && <p className="rounded-xl bg-brand-50 p-3 text-center text-sm text-brand-700">{boardMessage}</p>}
-                {diceValue !== null && <p className="text-center text-sm text-brand-600">掷出了 {diceValue}，{(turn - 1) % 2 === 0 ? '我' : friendName}行动结束</p>}
-                <button className="btn-primary w-full" disabled={boardPositions[0] >= boardSize - 1 || boardPositions[1] >= boardSize - 1} onClick={() => {
-                  const player = turn % 2
-                  if (pausedTurns[player] > 0) {
-                    setPausedTurns((values) => values.map((value, index) => index === player ? value - 1 : value) as [number, number])
-                    setBoardMessage(`${player === 0 ? '我' : friendName}本回合被暂停，跳过行动。`)
-                    setTurn((current) => current + 1)
-                    return
-                  }
-                  const value = boardStepMin + Math.floor(Math.random() * (boardStepMax - boardStepMin + 1))
-                  const nextPosition = Math.min(boardSize - 1, boardPositions[player] + value)
-                  const event = boardEvents.find((item) => item.position === nextPosition)
-                  setDiceValue(value)
-                  setBoardPositions((positions) => positions.map((position, index) => index === player ? nextPosition : position) as [number, number])
-                  if (event) {
-                    if (event.kind === 'task') setBoardMessage(`${player === 0 ? '我' : friendName}抽到任务：${event.task}`)
-                    if (event.kind === 'forward') { setBoardPositions((positions) => positions.map((position, index) => index === player ? Math.min(boardSize - 1, position + (event.value ?? 2)) : position) as [number, number]); setBoardMessage(`奖励：再前进 ${event.value} 格！`) }
-                    if (event.kind === 'back') { setBoardPositions((positions) => positions.map((position, index) => index === player ? Math.max(0, position - (event.value ?? 1)) : position) as [number, number]); setBoardMessage(`踩到漩涡：后退 ${event.value} 格。`) }
-                    if (event.kind === 'start') { setBoardPositions((positions) => positions.map((position, index) => index === player ? 0 : position) as [number, number]); setBoardMessage('回到起点，下一次再出发！') }
-                    if (event.kind === 'pause') { setPausedTurns((values) => values.map((value, index) => index === player ? value + 1 : value) as [number, number]); setBoardMessage('暂停一次，先看看对方走到哪里。') }
-                    if (event.kind === 'swap') { setBoardPositions(([a, b]) => player === 0 ? [b, a] : [a, b]); setBoardMessage('交换位置，局势反转！') }
-                  } else setBoardMessage(`${player === 0 ? '我' : friendName}前进了 ${value} 格。`)
-                  setTurn((current) => current + 1)
-                }}>{boardPositions[0] >= boardSize - 1 || boardPositions[1] >= boardSize - 1 ? (boardPositions[0] >= boardSize - 1 ? '我' : friendName) + '获胜' : '掷骰子'}</button>
-                <button className="btn-ghost w-full" onClick={() => { setBoardStarted(false); setBoardPositions([0, 0]); setTurn(0); setDiceValue(null); setBoardEvents([]); setBoardMessage(''); setPausedTurns([0, 0]) }}>重新设置棋盘</button>
-              </>}
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="text-xs text-slate-500">棋盘格数<select className="input mt-1" value={boardSize} onChange={(event) => setBoardSize(Number(event.target.value))}><option value={20}>20 格</option><option value={30}>30 格</option><option value={40}>40 格</option><option value={50}>50 格</option></select></label>
+                    <label className="text-xs text-slate-500">每次最少步数<select className="input mt-1" value={boardStepMin} onChange={(event) => setBoardStepMin(Number(event.target.value))}>{[1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value} 步</option>)}</select></label>
+                    <label className="text-xs text-slate-500">每次最多步数<select className="input mt-1" value={boardStepMax} onChange={(event) => setBoardStepMax(Math.max(boardStepMin, Number(event.target.value)))}>{[2, 3, 4, 5, 6, 8, 10].map((value) => <option key={value} value={value}>{value} 步</option>)}</select></label>
+                  </div>
+                  <button className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-40" disabled={boardSaving} onClick={() => void startBoardGame()}>
+                    {boardSaving ? '生成中…' : boardGame ? '生成新棋盘并开始' : '生成棋盘并开始'}
+                  </button>
+                  {boardGame && boardGame.state.winner === null && (
+                    <button className="btn-ghost w-full" onClick={() => setBoardSetup(false)}>返回当前棋局</button>
+                  )}
+                  <p className="text-center text-[11px] leading-relaxed text-slate-400">棋盘和步数会同步给对方，双方轮流掷骰，格子任务从专属内容池随机抽取。</p>
+                </>
+              ) : boardState ? (
+                <>
+                  <div className="flex items-center justify-between gap-2 rounded-2xl bg-brand-50 px-3 py-2 text-xs text-brand-700">
+                    <span className="truncate">🔴 {boardNames?.[0]} · {boardState.positions[0] + 1} 格</span>
+                    <span className="shrink-0 font-semibold">
+                      {boardState.winner !== null
+                        ? `🎉${boardNames?.[boardState.winner] ?? ''}获胜！`
+                        : boardState.turn === myBoardIndex
+                          ? '轮到你掷骰'
+                          : `等待 ${friendName} 掷骰…`}
+                    </span>
+                    <span className="truncate">🔵 {boardNames?.[1]} · {boardState.positions[1] + 1} 格</span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {boardState.cells.map((cell, index) => {
+                      const positionA = Math.min(boardState.positions[0], boardState.size - 1)
+                      const positionB = Math.min(boardState.positions[1], boardState.size - 1)
+                      const special = cell.kind !== 'start' && cell.kind !== 'end'
+                      return (
+                        <div key={index} title={cell.text} className={`flex aspect-square flex-col items-center justify-center rounded-md text-[10px] text-slate-500 ring-1 ${special ? 'bg-amber-50 ring-amber-200' : 'bg-emerald-50 ring-emerald-100'}`}>
+                          <div className="break-words px-0.5 text-center leading-tight">
+                            {positionA === index && <span aria-label="红棋" className="mr-0.5">🔴</span>}
+                            {positionB === index && <span aria-label="蓝棋" className="mr-0.5">🔵</span>}
+                            {positionA !== index && positionB !== index && (index === boardState.size - 1 ? '终点' : index === 0 ? '起点' : index + 1)}
+                          </div>
+                          {special && <span>{BOARD_CELL_META[cell.kind as BoardCellKind].icon}</span>}
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <div className="flex flex-wrap gap-1 text-[11px] text-slate-500">
+                    {[...new Set(boardState.cells.map((cell) => cell.kind))]
+                      .filter((kind) => kind !== 'start' && kind !== 'end')
+                      .map((kind) => (
+                        <span key={kind} className="chip border-amber-200 bg-amber-50 text-amber-700">
+                          {BOARD_CELL_META[kind as BoardCellKind].icon}
+                          {BOARD_CELL_META[kind as BoardCellKind].label}
+                        </span>
+                      ))}
+                  </div>
+                  <div className="max-h-40 space-y-1 overflow-y-auto rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+                    {[...boardState.log].reverse().map((item, index) => (
+                      <p key={`${item.at}-${index}`} className="break-words">{item.text}</p>
+                    ))}
+                  </div>
+                  {boardState.dice !== null && <p className="text-center text-sm text-brand-600">上次掷出 {boardState.dice} 点</p>}
+                  {boardState.pending && (
+                    <div className="space-y-2 rounded-2xl bg-rose-50 p-3">
+                      <p className="break-words text-sm font-semibold leading-relaxed text-rose-700">
+                        💬 {boardState.pending.player === myBoardIndex ? '轮到你回答真心话' : `${friendName} 正在回答真心话`}：「{boardState.pending.prompt}」
+                      </p>
+                      {boardState.pending.player === myBoardIndex && (
+                        <>
+                          <textarea
+                            className="input min-h-[60px] resize-y"
+                            placeholder="写下你的答案…"
+                            maxLength={300}
+                            value={boardTruthAnswer}
+                            onChange={(e) => setBoardTruthAnswer(e.target.value)}
+                          />
+                          <button
+                            className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-40"
+                            disabled={boardSaving || !boardTruthAnswer.trim()}
+                            onClick={() => void submitBoardTruth()}
+                          >
+                            提交答案
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {boardState.winner === null && (
+                    <button
+                      className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={boardState.turn !== myBoardIndex || boardSaving || Boolean(boardState.pending)}
+                      onClick={() => void rollBoardDice()}
+                    >
+                      {boardState.turn === myBoardIndex
+                        ? boardSaving
+                          ? '掷骰中…'
+                          : boardState.paused[myBoardIndex] > 0
+                            ? '掷骰子（本回合暂停）'
+                            : '掷骰子'
+                        : `等待 ${friendName} 掷骰…`}
+                    </button>
+                  )}
+                  <button
+                    className="btn-ghost w-full"
+                    onClick={() => {
+                      if (window.confirm('重新生成棋盘会结束当前棋局，确定吗？')) setBoardSetup(true)
+                    }}
+                  >
+                    重新设置棋盘
+                  </button>
+                </>
+              ) : null}
             </section>
           )}
         </>

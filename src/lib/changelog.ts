@@ -25,6 +25,18 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.23',
+    date: '2026-10-10',
+    title: '真心话大冒险 & 联网飞行棋',
+    items: [
+      { kind: 'new', text: '真心话抽题后需填写答案并提交，对方立刻收到通知并可查看' },
+      { kind: 'new', text: '真心话和大冒险的题目与答案全部留档，双方共享查看' },
+      { kind: 'new', text: '情侣飞行棋升级为联网对战，双方各在自己手机上轮流掷骰，棋局实时同步' },
+      { kind: 'new', text: '飞行棋格子从专属任务池随机生成，含任务、前进后退、暂停、重摇、真心话、大冒险等格子' },
+      // { kind: 'new', text: '管理员后台新增「真心话大冒险记录」页面，可查看每对情侣的题目和答案' },
+    ],
+  },
+  {
     version: '1.9.22',
     date: '2026-10-10',
     title: '情侣互动玩法扩展',

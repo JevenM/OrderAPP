@@ -1076,6 +1076,179 @@ export async function listAllCoupleQuizHistory(limit = 1000): Promise<CoupleQuiz
   return (data ?? []) as CoupleQuizHistoryRow[]
 }
 
+/* ------------------------ 真心话大冒险（记录 + 双方共享） ------------------------ */
+
+export type CoupleTruthDareType = 'truth' | 'dare'
+
+export interface CoupleTruthDareRow {
+  id: string
+  member_a: string
+  member_b: string
+  sender_id: string
+  sender_name: string
+  type: CoupleTruthDareType
+  prompt: string
+  answer: string | null
+  answered_at: string | null
+  created_at: string
+}
+
+/** 真心话答案提交后通知对方（铃铛 + 弹提醒），对方即刻知晓 */
+async function notifyCoupleTruthAnswer(recipient: string, prompt: string): Promise<void> {
+  try {
+    await insertFeedNotices([recipient], {
+      sender_name: '',
+      type: 'truth',
+      post_id: null,
+      title: '真心话有新回答',
+      body: `「${clip(prompt, 20)}」的答案已提交，去互动空间看看吧`,
+    })
+  } catch (error) {
+    console.warn('写入真心话通知失败', error)
+  }
+}
+
+/**
+ * 记录一次真心话 / 大冒险。
+ * 真心话带 answer（必填由调用方保证），默认给对方落一条铃铛通知；
+ * 大冒险只记录题目，不发通知（棋盘里抽到的传 notify: false 免打扰）。
+ */
+export async function createCoupleTruthDare(input: {
+  userA: string
+  userB: string
+  senderId: string
+  senderName: string
+  type: CoupleTruthDareType
+  prompt: string
+  answer?: string
+  notify?: boolean
+}): Promise<CoupleTruthDareRow> {
+  const [memberA, memberB] = couplePair(input.userA, input.userB)
+  const answer = (input.answer ?? '').trim() || null
+  const { data, error } = await supabase
+    .from('couple_truth_dare')
+    .insert({
+      member_a: memberA,
+      member_b: memberB,
+      sender_id: input.senderId,
+      sender_name: input.senderName,
+      type: input.type,
+      prompt: input.prompt.trim(),
+      answer,
+      answered_at: answer ? new Date().toISOString() : null,
+    })
+    .select()
+    .single()
+  if (error || !data) fail(error, '保存真心话大冒险记录')
+  if (input.notify !== false && input.type === 'truth' && answer) {
+    const recipient = input.senderId === memberA ? memberB : memberA
+    await notifyCoupleTruthAnswer(recipient, input.prompt)
+  }
+  return data as CoupleTruthDareRow
+}
+
+export async function listCoupleTruthDare(userA: string, userB: string, limit = 100): Promise<CoupleTruthDareRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_truth_dare')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) fail(error, '加载真心话大冒险记录')
+  return (data ?? []) as CoupleTruthDareRow[]
+}
+
+/** 管理员查看所有情侣的真心话大冒险记录 */
+export async function listAllCoupleTruthDare(limit = 1000): Promise<CoupleTruthDareRow[]> {
+  const { data, error } = await supabase
+    .from('couple_truth_dare')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) fail(error, '加载全部真心话大冒险记录')
+  return (data ?? []) as CoupleTruthDareRow[]
+}
+
+/* ------------------------ 情侣联网飞行棋（双方轮流） ------------------------ */
+
+export type CoupleBoardCellKind =
+  | 'start'
+  | 'end'
+  | 'task'
+  | 'forward'
+  | 'back'
+  | 'pause'
+  | 'reroll'
+  | 'truth'
+  | 'dare'
+  | 'goal'
+
+export interface CoupleBoardCell {
+  kind: CoupleBoardCellKind
+  text: string
+  /** forward / back 的格数 */
+  value?: number
+}
+
+export interface CoupleBoardLogItem {
+  at: string
+  text: string
+}
+
+export interface CoupleBoardState {
+  size: number
+  stepMin: number
+  stepMax: number
+  cells: CoupleBoardCell[]
+  /** 双方位置：下标 0 = member_a（红棋），1 = member_b（蓝棋） */
+  positions: [number, number]
+  /** 当前该谁掷骰：0 = member_a，1 = member_b */
+  turn: 0 | 1
+  /** 各自被暂停的回合数 */
+  paused: [number, number]
+  dice: number | null
+  log: CoupleBoardLogItem[]
+  winner: 0 | 1 | null
+  /** 踩到真心话格时待作答的题目（答完才清除） */
+  pending: { type: 'truth'; prompt: string; player: 0 | 1 } | null
+}
+
+export interface CoupleBoardGameRow {
+  member_a: string
+  member_b: string
+  state: CoupleBoardState
+  updated_at: string
+}
+
+export async function fetchCoupleBoardGame(userA: string, userB: string): Promise<CoupleBoardGameRow | null> {
+  if (!userA || !userB || userA === userB) return null
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_board_games')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .maybeSingle()
+  if (error) fail(error, '加载飞行棋棋局')
+  return (data as CoupleBoardGameRow | null) ?? null
+}
+
+/** 生成 / 更新共享棋局：双方实时同步，后写覆盖先写（回合校验由调用方负责） */
+export async function upsertCoupleBoardGame(userA: string, userB: string, state: CoupleBoardState): Promise<void> {
+  if (!userA || !userB || userA === userB) throw new Error('请先添加好友再开始联网飞行棋')
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase
+    .from('couple_board_games')
+    .upsert(
+      { member_a: memberA, member_b: memberB, state, updated_at: new Date().toISOString() },
+      { onConflict: 'member_a,member_b' }
+    )
+  if (error) fail(error, '同步飞行棋棋局')
+}
+
 /* ------------------------------ 订单 ------------------------------ */
 
 export async function createOrder(input: {
@@ -1482,7 +1655,7 @@ export async function removeComment(id: string): Promise<void> {
 
 /* ------------------------ 饭圈消息通知（顶栏未读角标） ------------------------ */
 
-export type FeedNoticeType = 'post' | 'like' | 'comment' | 'reply' | 'quiz'
+export type FeedNoticeType = 'post' | 'like' | 'comment' | 'reply' | 'quiz' | 'truth'
 
 export interface FeedNotificationRow {
   id: string

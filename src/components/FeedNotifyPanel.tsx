@@ -4,7 +4,7 @@ import { listFeedNotifications, markFeedNotificationRead, type FeedNotificationR
 import { timeCn } from '../lib/date'
 import { useUnread } from '../store/unread'
 
-const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️', quiz: '💞' }
+const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️', quiz: '💞', truth: '🎲' }
 const PAGE_SIZE = 10
 
 type View = 'preview' | 'all'
@@ -44,7 +44,16 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
       }
     }
     onClose()
-    navigate(notice.type === 'quiz' ? `/couple${notice.post_id ? `?quiz=${encodeURIComponent(notice.post_id)}` : ''}` : '/feed')
+    // 按通知类型跳转到对应页面，并带上定位参数：
+    // quiz → 互动空间弹出抉择揭晓；truth → 互动空间直接打开真心话模块；
+    // post / like / comment / reply → 饭圈定位到对应动态并高亮
+    if (notice.type === 'quiz') {
+      navigate(`/couple${notice.post_id ? `?quiz=${encodeURIComponent(notice.post_id)}` : ''}`)
+    } else if (notice.type === 'truth') {
+      navigate('/couple?module=truth')
+    } else {
+      navigate(`/feed${notice.post_id ? `?post=${encodeURIComponent(notice.post_id)}` : ''}`)
+    }
   }
 
   const changePage = (nextPage: number) => {

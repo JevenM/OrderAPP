@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { addComment, createPost, listPosts, removeComment, removePost, toggleLike, uploadMealPhoto } from '../lib/db'
 import { sizeText } from '../lib/image'
 import Avatar from '../components/Avatar'
@@ -21,6 +22,7 @@ export default function FeedPage() {
   const { friendIds, displayName, avatarOf: friendAvatar, isFriend } = useFriends()
   const { viewerAdminName, adminAvatar } = useSettings()
   const [posts, setPosts] = useState<PostWithMeta[]>([])
+  const [loaded, setLoaded] = useState(false)
   const [draft, setDraft] = useState({ content: '', photo_url: '' })
   const [posting, setPosting] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -29,6 +31,11 @@ export default function FeedPage() {
 
   const [likingId, setLikingId] = useState<string | null>(null)
   const [sendingId, setSendingId] = useState<string | null>(null)
+
+  // 铃铛通知跳转：/feed?post=<id> 定位到对应动态并短暂高亮
+  const [searchParams, setSearchParams] = useSearchParams()
+  const noticePostId = searchParams.get('post')
+  const [highlightPostId, setHighlightPostId] = useState<string | null>(null)
 
   // 我发的动态 / 点赞 / 评论都记 member_id = null；她用她自己的 member id
   const meKey = isAdmin ? null : memberId
@@ -55,6 +62,8 @@ export default function FeedPage() {
       )
     } catch (e) {
       toast.show((e as Error).message, 'err')
+    } finally {
+      setLoaded(true)
     }
   }, [feedIsAdmin, memberId, friendKey, toast])
 
@@ -72,6 +81,28 @@ export default function FeedPage() {
     ],
     { onPoll: () => void load() }
   )
+
+  // 列表加载完后再定位：目标动态存在就滚动过去并高亮一会儿；不存在（已删除/不在当前视角）就清掉参数
+  useEffect(() => {
+    if (!noticePostId || !loaded) return
+    const found = posts.some((p) => p.id === noticePostId)
+    setSearchParams(
+      (params) => {
+        params.delete('post')
+        return params
+      },
+      { replace: true }
+    )
+    if (!found) return
+    setHighlightPostId(noticePostId)
+    document.getElementById(`feed-post-${noticePostId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [noticePostId, loaded, posts, setSearchParams])
+
+  useEffect(() => {
+    if (!highlightPostId) return
+    const timer = window.setTimeout(() => setHighlightPostId(null), 2500)
+    return () => window.clearTimeout(timer)
+  }, [highlightPostId])
 
   /**
    * 昵称显示：我发的 → 当前视图眼里我叫什么（可在「成员」页按人单独设置，没单独设置就用统一昵称）；
@@ -285,7 +316,13 @@ export default function FeedPage() {
         const isLiking = likingId === p.id
         const isSending = sendingId === p.id
         return (
-          <div key={p.id} className="card space-y-2 animate-pop-in">
+          <div
+            key={p.id}
+            id={`feed-post-${p.id}`}
+            className={`card space-y-2 animate-pop-in transition-shadow ${
+              highlightPostId === p.id ? 'ring-2 ring-brand-400' : ''
+            }`}
+          >
             <div className="flex items-center gap-2">
               <Avatar url={who.url} emoji={who.emoji} size={38} />
               <div className="min-w-0 flex-1">
