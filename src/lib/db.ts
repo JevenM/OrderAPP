@@ -1249,6 +1249,44 @@ export async function upsertCoupleBoardGame(userA: string, userB: string, state:
   if (error) fail(error, '同步飞行棋棋局')
 }
 
+export interface CoupleBoardGameHistoryRow {
+  id: string
+  member_a: string
+  member_b: string
+  state: CoupleBoardState
+  winner: 0 | 1
+  finished_at: string
+}
+
+/** 一局结束时把整份棋局快照（棋盘、过程日志、最终位置、胜负）存进历史 */
+export async function createCoupleBoardGameHistory(userA: string, userB: string, state: CoupleBoardState): Promise<void> {
+  if (!userA || !userB || userA === userB) throw new Error('棋局归属异常，无法保存对局历史')
+  if (state.winner === null) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase
+    .from('couple_board_game_history')
+    .insert({ member_a: memberA, member_b: memberB, state, winner: state.winner })
+  if (error) fail(error, '保存飞行棋对局历史')
+}
+
+export async function listCoupleBoardGameHistory(
+  userA: string,
+  userB: string,
+  limit = 20
+): Promise<CoupleBoardGameHistoryRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_board_game_history')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .order('finished_at', { ascending: false })
+    .limit(limit)
+  if (error) fail(error, '加载飞行棋对局历史')
+  return (data ?? []) as CoupleBoardGameHistoryRow[]
+}
+
 /* ------------------------------ 订单 ------------------------------ */
 
 export async function createOrder(input: {

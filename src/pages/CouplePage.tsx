@@ -4,11 +4,13 @@ import { useToast } from '../components/Toast'
 import {
   appendCoupleEvent,
   broadcastCoupleMessage,
+  createCoupleBoardGameHistory,
   createCoupleTruthDare,
   createCoupleWish,
   fetchCoupleBoardGame,
   fetchCoupleQuiz,
   fetchCoupleQuizHistory,
+  listCoupleBoardGameHistory,
   listCoupleQuizBank,
   listCoupleQuizPairQuestions,
   listCoupleEvents,
@@ -22,6 +24,7 @@ import {
   upsertCoupleBoardGame,
   type CoupleBoardCell,
   type CoupleBoardCellKind,
+  type CoupleBoardGameHistoryRow,
   type CoupleBoardGameRow,
   type CoupleBoardLogItem,
   type CoupleBoardState,
@@ -715,6 +718,9 @@ export default function CouplePage() {
   const [diceRolling, setDiceRolling] = useState(false)
   const [diceFace, setDiceFace] = useState(1)
   const [diceResult, setDiceResult] = useState<{ dice: number | null; player: 0 | 1; messages: string[]; reroll: boolean } | null>(null)
+  /* 对局历史：每局的过程日志与结果都可回看 */
+  const [boardHistory, setBoardHistory] = useState<CoupleBoardGameHistoryRow[]>([])
+  const [boardHistoryOpenId, setBoardHistoryOpenId] = useState<string | null>(null)
 
   const questionPool = questionKind === '自定义'
     ? customQuestions
@@ -828,6 +834,15 @@ export default function CouplePage() {
       setBoardLoaded(true)
     }
   }, [memberId, friendId, applyBoardRow])
+
+  const reloadBoardHistory = useCallback(async () => {
+    if (!memberId || !friendId) return
+    try {
+      setBoardHistory(await listCoupleBoardGameHistory(memberId, friendId, 20))
+    } catch (error) {
+      console.warn('加载飞行棋对局历史失败', error)
+    }
+  }, [memberId, friendId])
 
   const reloadWishes = useCallback(async () => {
     if (!memberId || !friendId) return
@@ -967,6 +982,8 @@ export default function CouplePage() {
       { table: 'couple_truth_dare', event: 'INSERT', on: () => void reloadTruthHistory() },
       // 联网飞行棋：对方生成棋盘 / 掷骰后，棋局即时同步
       { table: 'couple_board_games', on: (p) => applyBoardRow(p.new as CoupleBoardGameRow) },
+      // 飞行棋对局历史：一局结束落库后即时刷新
+      { table: 'couple_board_game_history', event: 'INSERT', on: () => void reloadBoardHistory() },
       {
         table: 'couple_messages',
         event: 'INSERT',
@@ -990,6 +1007,7 @@ export default function CouplePage() {
         void reloadMeals()
         void reloadTruthHistory()
         void reloadBoard()
+        void reloadBoardHistory()
       },
     }
   )
@@ -1004,7 +1022,8 @@ export default function CouplePage() {
     void reloadMeals()
     void reloadTruthHistory()
     void reloadBoard()
-  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard])
+    void reloadBoardHistory()
+  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory])
 
   useEffect(() => {
     try {
@@ -1388,6 +1407,12 @@ export default function CouplePage() {
           .then(() => reloadTruthHistory())
           .catch(() => {})
       }
+      // 一局分出胜负：把整局快照（棋盘、过程日志、结果）留存进对局历史
+      if (next.winner !== null && latest.winner === null) {
+        void createCoupleBoardGameHistory(memberId, friendId, next)
+          .then(() => reloadBoardHistory())
+          .catch(() => {})
+      }
       // 骰子动画播满时长再弹结果：展示最终点数和走几步 / 触发的格子
       window.setTimeout(
         () => {
@@ -1640,7 +1665,7 @@ export default function CouplePage() {
             <section className="card space-y-4">
               <div>
                 <h3 className="font-semibold">🎯情侣飞行棋</h3>
-                <p className="text-xs text-slate-400">联网对战：你们各自在自己手机上轮流掷骰，先到终点者获胜。</p>
+                <p className="text-xs text-slate-400">联网对战，先到终点者获胜。</p>
               </div>
               {!boardLoaded ? (
                 <p className="py-6 text-center text-sm text-slate-400">棋局加载中…</p>
@@ -1760,6 +1785,51 @@ export default function CouplePage() {
                   </button>
                 </>
               ) : null}
+
+              {/* 对局历史：每局的过程、输出信息和结果都可回看 */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-slate-600">📜对局历史</h4>
+                  <span className="chip border-slate-200 bg-slate-50 text-slate-500">{boardHistory.length} 局</span>
+                </div>
+                {boardHistory.length === 0 && (
+                  <p className="rounded-xl bg-slate-50 py-3 text-center text-xs text-slate-400">还没有打完的棋局，先来一局吧～</p>
+                )}
+                {boardHistory.map((row) => {
+                  const winnerId = row.winner === 0 ? row.member_a : row.member_b
+                  const winnerName = winnerId === memberId ? memberName || '我' : friendName
+                  const loserName = winnerId === memberId ? friendName : memberName || '我'
+                  const open = boardHistoryOpenId === row.id
+                  return (
+                    <div key={row.id} className="rounded-xl bg-slate-50 p-3 text-xs">
+                      <button
+                        className="flex w-full items-center justify-between gap-2 text-left"
+                        onClick={() => setBoardHistoryOpenId(open ? null : row.id)}
+                      >
+                        <span className="min-w-0 flex-1 truncate font-semibold text-slate-700">
+                          🏁 {winnerName} 胜 {loserName}
+                        </span>
+                        <span className="shrink-0 whitespace-nowrap text-[10px] text-slate-400">
+                          {new Date(row.finished_at).toLocaleString('zh-CN')}
+                        </span>
+                        <span className="shrink-0 text-slate-400">{open ? '收起' : '展开 ▼'}</span>
+                      </button>
+                      {open && (
+                        <div className="mt-2 space-y-2">
+                          <p className="text-[11px] text-slate-400">
+                            棋盘 {row.state.size} 格 · 步数 {row.state.stepMin}-{row.state.stepMax} · 终局位置 红 {row.state.positions[0] + 1} 格 / 蓝 {row.state.positions[1] + 1} 格
+                          </p>
+                          <div className="max-h-44 space-y-1 overflow-y-auto rounded-lg bg-white p-2 text-[11px] leading-relaxed text-slate-600">
+                            {row.state.log.map((item, index) => (
+                              <p key={index} className="break-words">{item.text}</p>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             </section>
           )}
         </>

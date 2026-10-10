@@ -62,7 +62,7 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
   }
 
   return (
-    <div className="absolute right-0 top-full z-40 mt-1.5 flex max-h-[75vh] w-[min(22rem,calc(100vw-1rem))] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+    <div className="absolute right-3 top-full z-40 mt-1.5 flex max-h-[75vh] w-[min(22rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
       <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
         <div className="flex gap-3 text-xs font-semibold">
           <button className={view === 'preview' ? 'text-brand-600' : 'text-slate-400'} onClick={() => { setView('preview'); setPage(0); void loadPage(0) }}>最近消息</button>

@@ -243,7 +243,6 @@ function Layout() {
                   </span>
                 )}
               </button>
-              {menu === 'feed' && <FeedNotifyPanel identity={feedIdentity} onClose={() => setMenu(null)} />}
             </div>
             {isAdmin && (
               <div className="relative">
@@ -299,6 +298,9 @@ function Layout() {
               )}
             </div>
           </div>
+
+          {/* 铃铛面板挂在整宽头部容器上，避免窄屏时被左侧按钮挤出屏幕 */}
+          {menu === 'feed' && <FeedNotifyPanel identity={feedIdentity} onClose={() => setMenu(null)} />}
 
           {menu && <div className="fixed inset-0 z-30" onClick={() => setMenu(null)} />}
         </div>
