@@ -75,7 +75,7 @@ export interface FriendProfile {
   note: string
   /** 显示名：有备注用备注，否则用昵称 */
   shownName: string
-  /** 关系行 id（改备注 / 删好友要用）；adminMao 视图下为空串 */
+  /** 关系行 id（改备注 / 删好友要用）；管理员 视图下为空串 */
   friendshipId: string
   since: string
 }

@@ -6,7 +6,7 @@ import { useSession } from './session'
 import { useSettings } from './settings'
 
 export type FriendsValue = {
-  /** 好友列表（adminMao 视图下 = 所有账户，因为默认和所有人都是好友） */
+  /** 好友列表（管理员 视图下 = 所有账户，因为默认和所有人都是好友） */
   friends: FriendProfile[]
   /** 好友 id 列表，喂给饭圈做可见性过滤 */
   friendIds: string[]
@@ -16,7 +16,7 @@ export type FriendsValue = {
   outgoing: FriendRequestItem[]
   loading: boolean
   reload: (silent?: boolean) => void
-  /** 是不是好友（adminMao 不算在列表里，由调用方单独放行） */
+  /** 是不是好友（管理员 不算在列表里，由调用方单独放行） */
   isFriend: (memberId: string | null) => boolean
   /** 好友显示名：有备注用备注，没备注用对方昵称；不是好友返回空串（调用方兜底） */
   displayName: (memberId: string | null) => string
@@ -28,16 +28,16 @@ const FriendsContext = createContext<FriendsValue | null>(null)
 
 /**
  * 好友数据：
- * - adminMao（管理视图）：默认和所有账户都是好友，直接把成员表当成好友列表；
- * - 她（含 adminMao 切到某个她的视角）：只加载她自己的好友和申请。
+ * - 管理视图：默认和所有账户都是好友，直接把成员表当成好友列表；
+ * - 她（含 管理员 切到某个她的视角）：只加载她自己的好友和申请。
  */
 export function FriendsProvider({ children }: { children: ReactNode }) {
   const { entered, isAdmin, role, memberId } = useSession()
   const { adminName, viewerAdminName } = useSettings()
-  /** adminMao 自己的视角（不是切换到某个她） */
+  /** 管理员 自己的视角（不是切换到某个她） */
   const adminView = isAdmin && role === 'me'
   const adminDisplayName = memberId ? viewerAdminName : adminName
-  /** 这份好友列表属于谁：null = adminMao */
+  /** 这份好友列表属于谁：null = 管理员 */
   const ownerId = adminView ? null : memberId
 
   const [friends, setFriends] = useState<FriendProfile[]>([])
@@ -61,7 +61,7 @@ export function FriendsProvider({ children }: { children: ReactNode }) {
         outgoing: FriendRequestItem[]
       }> =
         ownerId === null
-          ? // adminMao：所有账户都是好友
+          ? // 管理员：所有账户都是好友
             listMembers().then((ms) => ({
               friends: ms.map((m) => ({
                 memberId: m.id,

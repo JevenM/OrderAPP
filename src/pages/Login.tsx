@@ -45,7 +45,7 @@ export default function Login() {
       <div className="text-center">
         <div className="animate-float text-5xl">🍱</div>
         <h1 className="mt-3 text-xl font-semibold text-brand-600">{APP_TITLE}</h1>
-        <p className="mt-1 text-sm text-slate-500">点菜下单 · 一日三餐记录</p>
+        {/* <p className="mt-1 text-sm text-slate-500">点菜下单 · 一日三餐记录</p> */}
       </div>
 
       <div className="card space-y-4">

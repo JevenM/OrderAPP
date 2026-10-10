@@ -25,6 +25,16 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.22',
+    date: '2026-10-10',
+    title: '情侣互动玩法扩展',
+    items: [
+      // { kind: 'new', text: '同步抉择新增管理处题库页面，支持题目新增、编辑、删除、启用停用，并可为每对情侣勾选随机题目' },
+      { kind: 'new', text: '情侣飞行棋开始前可设置棋盘格数和每次步数范围' },
+      { kind: 'new', text: '飞行棋随机加入任务、前进、回退、回到起点、暂停和交换位置等事件格' },
+    ],
+  },
+  {
     version: '1.9.21',
     date: '2026-10-10',
     title: '同在检测与随机点菜',

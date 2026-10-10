@@ -7,8 +7,11 @@ import {
   createCoupleWish,
   fetchCoupleQuiz,
   fetchCoupleQuizHistory,
+  listCoupleQuizBank,
+  listCoupleQuizPairQuestions,
   listCoupleEvents,
   listCoupleMessages,
+  listCoupleQuizHistory,
   listCoupleWishes,
   listMealsRange,
   resetCoupleQuiz,
@@ -18,6 +21,7 @@ import {
   type CoupleQuizRow,
 } from '../lib/db'
 import { todayStr } from '../lib/date'
+import { EXTRA_COUPLE_QUESTIONS } from '../lib/coupleQuestions'
 import { useRealtime } from '../lib/realtime'
 import { SLOT_LABEL, type Meal, type MealSlot } from '../lib/types'
 import { useFriends } from '../store/friends'
@@ -26,8 +30,8 @@ import { useSession } from '../store/session'
 type Wish = { id: string; text: string; owner: string }
 type DrawnWish = Wish & { drawer: string }
 type ChatItem = { id: string; sender_id: string; receiver_id: string; content: string; created_at: string }
-type QuestionKind = '轻松版' | '走心版' | '自定义'
-type Question = { id: string; title: string; a: string; b: string; kind: QuestionKind }
+export type QuestionKind = '轻松版' | '走心版' | '自定义'
+export type Question = { id: string; title: string; a: string; b: string; kind: QuestionKind }
 type QuizView = {
   question: Question | null
   myChoice: string | null
@@ -36,6 +40,24 @@ type QuizView = {
 }
 
 type ChoiceMode = 'preset' | 'custom'
+type BoardEventKind = 'task' | 'forward' | 'back' | 'start' | 'pause' | 'swap'
+type BoardEvent = { position: number; kind: BoardEventKind; label: string; detail: string; value?: number; task?: string }
+
+const BOARD_TASKS = [
+  '说一句你最欣赏对方的话',
+  '两个人一起做一个击掌或拥抱动作',
+  '分享今天最开心的一件小事',
+  '给对方一个下回合的加油口号',
+  '一起回忆一个第一次见面的细节',
+]
+const BOARD_EVENT_META: Record<BoardEventKind, { icon: string; label: string }> = {
+  task: { icon: '🎯', label: '任务' },
+  forward: { icon: '🚀', label: '前进' },
+  back: { icon: '🌀', label: '回退' },
+  start: { icon: '🏠', label: '回到起点' },
+  pause: { icon: '⏸', label: '暂停' },
+  swap: { icon: '🔁', label: '交换位置' },
+}
 
 const choiceLabel = (choice: string | null, question: Question): string => {
   if (!choice) return ''
@@ -290,6 +312,53 @@ const BUILT_IN_QUESTIONS: Question[] = [
   { id: 'heart-60', title: '我们最棒的一天', a: '在一起的第一个日子', b: '一起熬过难关的日子', kind: '走心版' },
 ]
 
+export const ALL_QUESTIONS = [...BUILT_IN_QUESTIONS, ...EXTRA_COUPLE_QUESTIONS]
+let managedQuestionsCache: Question[] | null = null
+const TRUTH_PROMPTS = [
+  '最近一次觉得被我理解的时刻是什么？',
+  '我们一起做过的哪件小事让你最开心？',
+  '你希望我多了解你的哪一个习惯或想法？',
+  '遇到压力时，什么样的陪伴最能帮到你？',
+  '你觉得我们最近在哪件事上配合得很好？',
+  '有什么简单的小约会是你想和我尝试的？',
+  '我做过哪件小事让你觉得很贴心？',
+  '未来一年你最期待我们一起完成什么？',
+  '意见不同时，怎样沟通会让你更安心？',
+  '你想和我一起养成什么日常习惯？',
+  '最近有什么感谢我的事还没说出口？',
+  '你希望我们怎样庆祝彼此的小成就？',
+  '和我在一起时，你最自在的时刻通常是什么？',
+  '你最近想学会或重新拾起什么兴趣？',
+  '我们可以怎样让忙碌的日子也留有相处时间？',
+  '你心目中舒服的周末是什么样子？',
+  '有什么话题你希望我们找时间认真聊聊？',
+  '你希望我在你难过时先做的第一件事是什么？',
+  '如果安排一次半天约会，你最想怎么度过？',
+  '你觉得我们共同创造的哪段回忆最珍贵？',
+]
+const DARES = [
+  '用三个具体细节夸夸对方，不能只说“很好”。',
+  '给对方倒一杯水或准备一份小零食。',
+  '模仿对方一个可爱的日常习惯，让对方猜是什么。',
+  '一起选一首歌，认真听完并说说喜欢的部分。',
+  '给对方发一条真诚的感谢消息。',
+  '邀请对方散步十分钟，由对方选择路线。',
+  '用一分钟讲出你们共同经历里最有趣的一幕。',
+  '给对方一个拥抱，或尊重对方选择击掌。',
+  '一起拍一张自然的合照，双方都同意再保存。',
+  '为对方做一件现在就能完成的小事。',
+  '轮流说出对方一个让你欣赏的优点。',
+  '为下次约会各提一个点子，并选一个加入计划。',
+  '用一句话描述今天最想和对方分享的心情。',
+  '一起做三次深呼吸，然后互相问问现在感觉如何。',
+  '把手机放下两分钟，专心听对方讲一件小事。',
+  '给对方写一句鼓励的话，可以当面念出来。',
+  '一起挑一张旧照片，各自讲讲当时记得的细节。',
+  '为彼此准备一个不花钱的惊喜点子。',
+  '轮流选一个表情，用动作演出来让对方猜。',
+  '问对方现在最需要什么，再一起完成一个小步骤。',
+]
+
 const REQUIRED_SLOTS: MealSlot[] = ['breakfast', 'lunch', 'dinner']
 
 const key = (suffix: string, a: string | null, b: string | null) => {
@@ -397,6 +466,10 @@ export default function CouplePage() {
 
   /* ------------------------------ 同步抉择 ------------------------------ */
   const [questionKind, setQuestionKind] = useState<QuestionKind>('轻松版')
+  const [managedQuestions, setManagedQuestions] = useState<Question[] | null>(managedQuestionsCache)
+  const [pairQuestionIds, setPairQuestionIds] = useState<string[] | null>(null)
+  const [pairQuestionsLoaded, setPairQuestionsLoaded] = useState(false)
+  const [usedQuestionIds, setUsedQuestionIds] = useState<Set<string>>(new Set())
   const [quiz, setQuiz] = useState<QuizView>({ question: null, myChoice: null, peerChoice: null, revealed: false })
   const [choiceMode, setChoiceMode] = useState<ChoiceMode>('preset')
   const [customAnswer, setCustomAnswer] = useState('')
@@ -414,8 +487,28 @@ export default function CouplePage() {
   const [peerMeals, setPeerMeals] = useState<Meal[]>([])
 
   const chatBottomRef = useRef<HTMLDivElement | null>(null)
+  const [activeModule, setActiveModule] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem('couple-active-module')
+    } catch {
+      return null
+    }
+  })
+  const [truthPrompt, setTruthPrompt] = useState<string | null>(null)
+  const [diceValue, setDiceValue] = useState<number | null>(null)
+  const [boardPositions, setBoardPositions] = useState<[number, number]>([0, 0])
+  const [turn, setTurn] = useState(0)
+  const [boardStarted, setBoardStarted] = useState(false)
+  const [boardSize, setBoardSize] = useState(30)
+  const [boardStepMin, setBoardStepMin] = useState(1)
+  const [boardStepMax, setBoardStepMax] = useState(6)
+  const [boardEvents, setBoardEvents] = useState<BoardEvent[]>([])
+  const [boardMessage, setBoardMessage] = useState('')
+  const [pausedTurns, setPausedTurns] = useState<[number, number]>([0, 0])
 
-  const questionPool = questionKind === '自定义' ? customQuestions : BUILT_IN_QUESTIONS.filter((q) => q.kind === questionKind)
+  const questionPool = questionKind === '自定义'
+    ? customQuestions
+    : (managedQuestions ?? ALL_QUESTIONS).filter((question) => question.kind === questionKind && (pairQuestionIds === null || pairQuestionIds.includes(question.id)))
   const loveMessage = LOVE_MESSAGES[dayNumber() % LOVE_MESSAGES.length]
   const mealDone = (list: Meal[]) => REQUIRED_SLOTS.filter((s) => list.some((m) => m.slot === s)).length
   const loveUnlocked = Boolean(friendId) && mealDone(myMeals) === 3 && mealDone(peerMeals) === 3
@@ -546,6 +639,13 @@ export default function CouplePage() {
         // 对方出的自定义题也进本地题库，之后谁都能换到这道题
         setCustomQuestions((prev) => (prev.some((x) => x.id === q.id) ? prev : [...prev, q]))
       }
+      if (managedQuestions && q.kind !== '自定义' && !managedQuestions.some((question) => question.id === q.id)) {
+        setManagedQuestions((previous) => {
+          const next = [...(previous ?? []), q]
+          managedQuestionsCache = next
+          return next
+        })
+      }
       setQuestionKind(q.kind)
       const mine = row.member_a === memberId ? row.choice_a : row.choice_b
       const theirs = row.member_a === memberId ? row.choice_b : row.choice_a
@@ -656,6 +756,72 @@ export default function CouplePage() {
   }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals])
 
   useEffect(() => {
+    try {
+      if (activeModule) sessionStorage.setItem('couple-active-module', activeModule)
+      else sessionStorage.removeItem('couple-active-module')
+    } catch {
+      // 页面内导航仍可用，只是不跨刷新保留当前模块。
+    }
+  }, [activeModule])
+
+  useEffect(() => {
+    let active = true
+    void listCoupleQuizBank(ALL_QUESTIONS)
+      .then((rows) => {
+        if (!active) return
+        const enabledQuestions = rows.filter((row) => row.enabled).map((row) => ({
+          id: row.id,
+          title: row.title,
+          a: row.a,
+          b: row.b,
+          kind: row.kind,
+        }))
+        managedQuestionsCache = enabledQuestions
+        setManagedQuestions(enabledQuestions)
+      })
+      .catch(() => {
+        if (active) setManagedQuestions(null)
+      })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    if (!memberId || !friendId) {
+      setUsedQuestionIds(new Set())
+      setPairQuestionIds(null)
+      setPairQuestionsLoaded(true)
+      return
+    }
+    let active = true
+    void listCoupleQuizPairQuestions(memberId, friendId)
+      .then((rows) => {
+        if (!active) return
+        setPairQuestionIds(rows.length ? rows[0].question_ids : null)
+        setPairQuestionsLoaded(true)
+      })
+      .catch(() => {
+        if (!active) return
+        setPairQuestionIds(null)
+        setPairQuestionsLoaded(true)
+      })
+    return () => { active = false }
+  }, [memberId, friendId])
+
+  useEffect(() => {
+    if (!memberId || !friendId) {
+      setUsedQuestionIds(new Set())
+      return
+    }
+    let active = true
+    void listCoupleQuizHistory(memberId, friendId, 5000)
+      .then((history) => {
+        if (active) setUsedQuestionIds(new Set(history.map((row) => row.question_id)))
+      })
+      .catch((error) => console.warn('加载已做题目失败', error))
+    return () => { active = false }
+  }, [memberId, friendId])
+
+  useEffect(() => {
     if (!noticeQuizId || !memberId || !friendId) {
       setNoticeQuiz(null)
       return
@@ -708,22 +874,60 @@ export default function CouplePage() {
 
   /* ------------------------------ 互动操作 ------------------------------ */
 
-  const pickQuestion = (kind: QuestionKind = questionKind) => {
+  const pickQuestion = async (kind: QuestionKind = questionKind) => {
     // 一方已作答、另一方还没答完时，题目被锁定，不允许换题/切换分类
     if (quiz.question && !quiz.revealed) return
-    const pool = kind === '自定义' ? customQuestions : BUILT_IN_QUESTIONS.filter((q) => q.kind === kind)
-    if (!pool.length) {
-      return toast.show(kind === '自定义' ? '还没有自定义题目，先添加一道吧～' : '该分类暂无题目', 'err')
+    if (kind !== '自定义' && (!managedQuestions || !pairQuestionsLoaded)) {
+      return toast.show('题库或情侣题目配置仍在加载，请稍后重试', 'err')
     }
-    const nextQ = pool[Math.floor(Math.random() * pool.length)]
+    const pool = kind === '自定义'
+      ? customQuestions
+      : (managedQuestions ?? []).filter((question) => question.kind === kind && (pairQuestionIds === null || pairQuestionIds.includes(question.id)))
+    let usedIds = usedQuestionIds
+    if (memberId && friendId) {
+      try {
+        const history = await listCoupleQuizHistory(memberId, friendId, 5000)
+        usedIds = new Set(history.map((row) => row.question_id))
+        const activeQuiz = await fetchCoupleQuiz(memberId, friendId)
+        if (activeQuiz?.question?.id) usedIds.add(activeQuiz.question.id)
+        if (quiz.question) usedIds.add(quiz.question.id)
+        setUsedQuestionIds(usedIds)
+      } catch {
+        toast.show('无法读取已做题目记录，请稍后重试', 'err')
+        return
+      }
+    }
+    const normalizedUsedTitles = new Set(
+      [...ALL_QUESTIONS, ...customQuestions]
+        .filter((question) => usedIds.has(question.id))
+        .map((question) => question.title.trim().toLocaleLowerCase())
+    )
+    const unused = pool.filter((question) =>
+      !usedIds.has(question.id) && !normalizedUsedTitles.has(question.title.trim().toLocaleLowerCase())
+    )
+    if (!unused.length) {
+      return toast.show(pool.length ? '这个分类的题目都做过啦' : kind === '自定义' ? '还没有自定义题目，先添加一道吧～' : '该分类暂无题目', 'err')
+    }
+    const nextQ = unused[Math.floor(Math.random() * unused.length)]
     revealedRef.current = false
     setQuestionKind(kind)
     setQuiz({ question: nextQ, myChoice: null, peerChoice: null, revealed: false })
+    setUsedQuestionIds((previous) => new Set(previous).add(nextQ.id))
     setChoiceMode('preset')
     setCustomAnswer('')
     if (memberId && friendId) {
-      // 出题同时创建历史快照，对方实时收到同一道题
-      void resetCoupleQuiz(memberId, friendId, nextQ).catch((error: Error) => toast.show(error.message, 'err'))
+      // 保存题目历史成功后再显示，防止写入失败导致重复出题。
+      try {
+        await resetCoupleQuiz(memberId, friendId, nextQ)
+      } catch (error) {
+        setQuiz({ question: null, myChoice: null, peerChoice: null, revealed: false })
+        setUsedQuestionIds((previous) => {
+          const next = new Set(previous)
+          next.delete(nextQ.id)
+          return next
+        })
+        toast.show((error as Error).message, 'err')
+      }
     }
   }
 
@@ -816,9 +1020,128 @@ export default function CouplePage() {
       <div className="min-w-0 overflow-hidden rounded-3xl bg-gradient-to-br from-brand-500 via-rose-400 to-orange-300 p-4 text-white shadow-card sm:p-5">
         <div className="text-xs opacity-80">FRIENDSHIP PLAYGROUND</div>
         <h2 className="mt-1 break-words text-xl font-bold">和 {friendName} 的互动空间</h2>
-        <p className="mt-1 break-words text-xs opacity-90">把一日三餐、心愿和小默契，变成每天都想打开的惊喜。</p>
+        <p className="mt-1 break-words text-xs opacity-90">把日常、心愿和默契，变成你们的共同回忆。</p>
       </div>
 
+      {!activeModule ? (
+        <div className="grid grid-cols-2 gap-3">
+          {[
+            { id: 'love', icon: '💌', title: '今日情话', detail: loveUnlocked ? '今日已解锁' : '完成三餐打卡解锁' },
+            { id: 'wish', icon: '🎁', title: '秘密心愿', detail: `${wishesList.length} 个心愿` },
+            { id: 'chat', icon: '💬', title: '甜蜜留言', detail: `${messages.length} 条留言` },
+            { id: 'quiz', icon: '💞', title: '同步抉择', detail: `${ALL_QUESTIONS.length + customQuestions.length} 道题` },
+            { id: 'truth', icon: '🎲', title: '真心话大冒险', detail: '聊聊心里话，完成小挑战' },
+            { id: 'board', icon: '🎯', title: '情侣飞行棋', detail: '掷骰前进，完成互动任务' },
+          ].map((module) => (
+            <button key={module.id} type="button" className="card flex min-h-28 flex-col items-start justify-between gap-3 text-left transition hover:border-brand-200" onClick={() => setActiveModule(module.id)}>
+              <span className="text-2xl">{module.icon}</span>
+              <span>
+                <span className="block text-sm font-semibold text-slate-700">{module.title}</span>
+                <span className="mt-1 block text-[11px] text-slate-400">{module.detail}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <>
+          <button type="button" className="btn-ghost w-full" onClick={() => setActiveModule(null)}>← 返回互动入口</button>
+          {activeModule === 'truth' && (
+            <section className="card space-y-4">
+              <div>
+                <h3 className="font-semibold">🎲真心话大冒险</h3>
+                <p className="text-xs text-slate-400">选择真心话或大冒险；任何一方都可以跳过。</p>
+              </div>
+              {truthPrompt && <div className="rounded-2xl bg-rose-50 p-4 text-center text-sm leading-relaxed text-rose-700">{truthPrompt}</div>}
+              <div className="grid grid-cols-2 gap-2">
+                <button className="btn-soft" onClick={() => setTruthPrompt(TRUTH_PROMPTS[Math.floor(Math.random() * TRUTH_PROMPTS.length)])}>抽真心话</button>
+                <button className="btn-primary" onClick={() => setTruthPrompt(DARES[Math.floor(Math.random() * DARES.length)])}>抽大冒险</button>
+              </div>
+              {truthPrompt && <button className="btn-ghost w-full" onClick={() => setTruthPrompt(null)}>跳过 / 再来一题</button>}
+            </section>
+          )}
+          {activeModule === 'board' && (
+            <section className="card space-y-4">
+              {!boardStarted ? <>
+                <div>
+                  <h3 className="font-semibold">🎯情侣飞行棋</h3>
+                  <p className="text-xs text-slate-400">先设置棋盘与步数，再随机生成任务、奖励和惩罚格。</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="text-xs text-slate-500">棋盘格数<select className="input mt-1" value={boardSize} onChange={(event) => setBoardSize(Number(event.target.value))}><option value={20}>20 格</option><option value={30}>30 格</option><option value={40}>40 格</option><option value={50}>50 格</option></select></label>
+                  <label className="text-xs text-slate-500">每次最少步数<select className="input mt-1" value={boardStepMin} onChange={(event) => setBoardStepMin(Number(event.target.value))}>{[1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value} 步</option>)}</select></label>
+                  <label className="text-xs text-slate-500">每次最多步数<select className="input mt-1" value={boardStepMax} onChange={(event) => setBoardStepMax(Math.max(boardStepMin, Number(event.target.value)))}>{[2, 3, 4, 5, 6, 8, 10].map((value) => <option key={value} value={value}>{value} 步</option>)}</select></label>
+                </div>
+                <button className="btn-primary w-full" onClick={() => {
+                  const finish = boardSize - 1
+                  const kinds: BoardEventKind[] = ['task', 'forward', 'back', 'start', 'pause', 'swap']
+                  const positions = new Set<number>([0, finish])
+                  const events: BoardEvent[] = []
+                  while (events.length < Math.max(3, Math.floor(boardSize / 7))) {
+                    const position = Math.floor(Math.random() * (boardSize - 4)) + 2
+                    if (positions.has(position)) continue
+                    positions.add(position)
+                    const kind = kinds[Math.floor(Math.random() * kinds.length)]
+                    const value = kind === 'forward' ? 2 + Math.floor(Math.random() * 3) : kind === 'back' ? 1 + Math.floor(Math.random() * 3) : undefined
+                    events.push({ position, kind, label: BOARD_EVENT_META[kind].label, detail: kind === 'task' ? '完成任务后继续' : kind === 'forward' ? `前进 ${value} 格` : kind === 'back' ? `后退 ${value} 格` : BOARD_EVENT_META[kind].label, value, task: kind === 'task' ? BOARD_TASKS[Math.floor(Math.random() * BOARD_TASKS.length)] : undefined })
+                  }
+                  setBoardEvents(events)
+                  setBoardPositions([0, 0])
+                  setPausedTurns([0, 0])
+                  setTurn(0)
+                  setDiceValue(null)
+                  setBoardMessage('棋盘已生成，轮到我先掷骰。')
+                  setBoardStarted(true)
+                }}>生成棋盘并开始</button>
+              </> : <>
+                <div>
+                  <h3 className="font-semibold">🎯情侣飞行棋</h3>
+                  <p className="text-xs text-slate-400">轮流前进，先到终点获胜。当前：{turn % 2 === 0 ? '我' : friendName}</p>
+                </div>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {Array.from({ length: boardSize }, (_, index) => {
+                    const positionA = Math.min(boardPositions[0], boardSize - 1)
+                    const positionB = Math.min(boardPositions[1], boardSize - 1)
+                    const event = boardEvents.find((item) => item.position === index)
+                    return <div key={index} className={`flex aspect-square flex-col items-center justify-center rounded-md text-[10px] text-slate-500 ring-1 ${event ? 'bg-amber-50 ring-amber-200' : 'bg-emerald-50 ring-emerald-100'}`}>
+                      <div>{positionA === index && <span aria-label="我" className="mr-0.5">🔴</span>}{positionB === index && <span aria-label={friendName}>🔵</span>}{positionA !== index && positionB !== index && (index === boardSize - 1 ? '终点' : index + 1)}</div>
+                      {event && <span title={event.detail}>{BOARD_EVENT_META[event.kind].icon}</span>}
+                    </div>
+                  })}
+                </div>
+                {boardEvents.length > 0 && <div className="flex flex-wrap gap-1 text-[11px] text-slate-500">{boardEvents.map((event) => <span key={event.position} className="chip border-amber-200 bg-amber-50 text-amber-700">{event.position + 1}格 {BOARD_EVENT_META[event.kind].icon}{event.detail}</span>)}</div>}
+                {boardMessage && <p className="rounded-xl bg-brand-50 p-3 text-center text-sm text-brand-700">{boardMessage}</p>}
+                {diceValue !== null && <p className="text-center text-sm text-brand-600">掷出了 {diceValue}，{(turn - 1) % 2 === 0 ? '我' : friendName}行动结束</p>}
+                <button className="btn-primary w-full" disabled={boardPositions[0] >= boardSize - 1 || boardPositions[1] >= boardSize - 1} onClick={() => {
+                  const player = turn % 2
+                  if (pausedTurns[player] > 0) {
+                    setPausedTurns((values) => values.map((value, index) => index === player ? value - 1 : value) as [number, number])
+                    setBoardMessage(`${player === 0 ? '我' : friendName}本回合被暂停，跳过行动。`)
+                    setTurn((current) => current + 1)
+                    return
+                  }
+                  const value = boardStepMin + Math.floor(Math.random() * (boardStepMax - boardStepMin + 1))
+                  const nextPosition = Math.min(boardSize - 1, boardPositions[player] + value)
+                  const event = boardEvents.find((item) => item.position === nextPosition)
+                  setDiceValue(value)
+                  setBoardPositions((positions) => positions.map((position, index) => index === player ? nextPosition : position) as [number, number])
+                  if (event) {
+                    if (event.kind === 'task') setBoardMessage(`${player === 0 ? '我' : friendName}抽到任务：${event.task}`)
+                    if (event.kind === 'forward') { setBoardPositions((positions) => positions.map((position, index) => index === player ? Math.min(boardSize - 1, position + (event.value ?? 2)) : position) as [number, number]); setBoardMessage(`奖励：再前进 ${event.value} 格！`) }
+                    if (event.kind === 'back') { setBoardPositions((positions) => positions.map((position, index) => index === player ? Math.max(0, position - (event.value ?? 1)) : position) as [number, number]); setBoardMessage(`踩到漩涡：后退 ${event.value} 格。`) }
+                    if (event.kind === 'start') { setBoardPositions((positions) => positions.map((position, index) => index === player ? 0 : position) as [number, number]); setBoardMessage('回到起点，下一次再出发！') }
+                    if (event.kind === 'pause') { setPausedTurns((values) => values.map((value, index) => index === player ? value + 1 : value) as [number, number]); setBoardMessage('暂停一次，先看看对方走到哪里。') }
+                    if (event.kind === 'swap') { setBoardPositions(([a, b]) => player === 0 ? [b, a] : [a, b]); setBoardMessage('交换位置，局势反转！') }
+                  } else setBoardMessage(`${player === 0 ? '我' : friendName}前进了 ${value} 格。`)
+                  setTurn((current) => current + 1)
+                }}>{boardPositions[0] >= boardSize - 1 || boardPositions[1] >= boardSize - 1 ? (boardPositions[0] >= boardSize - 1 ? '我' : friendName) + '获胜' : '掷骰子'}</button>
+                <button className="btn-ghost w-full" onClick={() => { setBoardStarted(false); setBoardPositions([0, 0]); setTurn(0); setDiceValue(null); setBoardEvents([]); setBoardMessage(''); setPausedTurns([0, 0]) }}>重新设置棋盘</button>
+              </>}
+            </section>
+          )}
+        </>
+      )}
+
+      {activeModule === 'love' ? <>
       {/* 今日专属情话：双方三餐打卡完毕才解锁，两边看到同一句 */}
       <section className="card space-y-3">
         <div className="flex min-w-0 items-start justify-between gap-2">
@@ -855,6 +1178,9 @@ export default function CouplePage() {
         )}
       </section>
 
+      </> : null}
+
+      {activeModule === 'wish' ? <>
       {/* 秘密心愿池：好友双方共享，抽签结果双方同步 */}
       <section className="card space-y-3">
         <div className="flex min-w-0 items-start justify-between gap-2">
@@ -889,6 +1215,9 @@ export default function CouplePage() {
         </button>
       </section>
 
+      </> : null}
+
+      {activeModule === 'chat' ? <>
       {/* 甜蜜留言板：入库持久化，双方实时可见 */}
       <section className="card space-y-3">
         <div className="flex min-w-0 items-start justify-between gap-2">
@@ -949,6 +1278,9 @@ export default function CouplePage() {
         </div>
       </section>
 
+      </> : null}
+
+      {activeModule === 'quiz' ? <>
       {/* 同步抉择：共享会话保证双方同题，双方作答后动画揭晓 */}
       <section className="card space-y-3">
         <div>
@@ -1099,13 +1431,15 @@ export default function CouplePage() {
           </div>
         )}
       </section>
+      </> : null}
 
-      <p className="px-1 text-center text-[11px] leading-relaxed text-slate-400">
-        小提示：实时同步，记得一起上线玩。
-      </p>
+      {activeModule === 'quiz' && (
+        <p className="px-1 text-center text-[11px] leading-relaxed text-slate-400">
+          同步抉择题库共 {ALL_QUESTIONS.length} 道，每道题只会向你们出一次。
+        </p>
+      )}
 
-      {/* 同步抉择揭晓动画：双方提交后短暂展示氛围特效 */}
-      {quizReveal && (
+      {activeModule === 'quiz' && quizReveal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-hidden p-6">
           <div className={`absolute inset-0 ${quiz.myChoice === quiz.peerChoice ? 'bg-gradient-to-br from-rose-400 via-pink-500 to-fuchsia-500' : 'bg-gradient-to-br from-emerald-400 via-teal-500 to-cyan-500'} opacity-95`} />
           {confettiBits.map((b, i) => (
@@ -1124,7 +1458,7 @@ export default function CouplePage() {
         </div>
       )}
 
-      {noticeQuizId && (noticeQuizLoading || noticeQuiz) && (
+      {activeModule === 'quiz' && noticeQuizId && (noticeQuizLoading || noticeQuiz) && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/50 p-4" onClick={closeNoticeQuiz}>
           <section className="animate-pop-in max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
             {noticeQuizLoading ? (
@@ -1164,7 +1498,7 @@ export default function CouplePage() {
       )}
 
       {/* 情话揭晓动画：双方三餐打卡齐的那一刻同时绽放 */}
-      {loveReveal && (
+      {activeModule === 'love' && loveReveal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-hidden p-6">
           <div className="absolute inset-0 bg-gradient-to-br from-rose-500 via-pink-500 to-orange-400 opacity-95" />
           {confettiBits.map((b, i) => (

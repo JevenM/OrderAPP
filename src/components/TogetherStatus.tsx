@@ -102,8 +102,8 @@ export default function TogetherStatus() {
 
   const status = useMemo(() => {
     if (together) return '在一起'
-    if (distance !== null) return '距离较远'
-    if (sharing) return '等对方开启'
+    if (distance !== null) return '远'
+    if (sharing) return '等Ta开启'
     return '开启同在检测'
   }, [together, distance, sharing])
 

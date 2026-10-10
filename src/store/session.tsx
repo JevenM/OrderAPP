@@ -21,7 +21,7 @@ type SessionValue = {
   memberId: string | null
   memberName: string
   memberAvatar: string
-  /** 登录用的邀请码（adminMao 就是管理口令）：给别人加好友时用 */
+  /** 登录用的邀请码（管理员 就是管理口令）：给别人加好友时用 */
   code: string
   enter: (code: string) => Promise<boolean>
   setViewMember: (m: { id: string; name: string; avatarUrl?: string | null } | null) => void

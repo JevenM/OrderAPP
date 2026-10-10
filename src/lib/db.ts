@@ -327,8 +327,8 @@ export async function removeMember(id: string): Promise<void> {
 /* ------------------------------ 好友 ------------------------------ */
 
 /**
- * 好友可见性总规则（adminMao 是唯一例外）：
- * - adminMao 默认和所有账户都是好友：能看到所有人的动态 / 点赞 / 评论，也不用发申请；
+ * 好友可见性总规则（管理员 是唯一例外）：
+ * - 管理员 默认和所有账户都是好友：能看到所有人的动态 / 点赞 / 评论，也不用发申请；
  * - 其他账户之间完全隔离：不是好友就什么都看不到，也不能点赞评论；
  * - 加好友靠邀请码：搜到对方 → 发申请 → 对方接受后才算好友。
  * 一对人只存一行（谁发的申请记在 requester_id），备注各存各的，互不可见。
@@ -756,6 +756,86 @@ export type CoupleQuizQuestion = {
   kind: '轻松版' | '走心版' | '自定义'
 }
 
+export async function listCoupleQuizBank(seedQuestions: CoupleQuizQuestion[] = []): Promise<CoupleQuizBankRow[]> {
+  const { data: state, error: stateError } = await supabase.from('couple_quiz_bank_state').select('seeded_at').eq('id', true).maybeSingle()
+  if (stateError) fail(stateError, '读取抉择题库初始化状态')
+  if (!state && seedQuestions.length) {
+    const { data: existing, error: countError } = await supabase.from('couple_quiz_questions').select('id').limit(1)
+    if (countError) fail(countError, '检查抉择题库')
+    if (!existing?.length) await importCoupleQuizBank(seedQuestions)
+    const { error: seedError } = await supabase.from('couple_quiz_bank_state').upsert({ id: true }, { onConflict: 'id', ignoreDuplicates: true })
+    if (seedError) fail(seedError, '初始化抉择题库')
+  }
+  const { data, error } = await supabase.from('couple_quiz_questions').select('*').order('sort_order').order('created_at')
+  if (error) fail(error, '加载抉择题库')
+  return (data ?? []).map((row) => ({
+    ...row,
+    a: row.option_a,
+    b: row.option_b,
+  })) as CoupleQuizBankRow[]
+}
+
+export async function importCoupleQuizBank(questions: CoupleQuizQuestion[]): Promise<void> {
+  const rows = questions.map((question, index) => ({
+    id: question.id,
+    title: question.title.trim(),
+    option_a: question.a.trim(),
+    option_b: question.b.trim(),
+    kind: question.kind,
+    sort_order: index,
+  }))
+  for (let index = 0; index < rows.length; index += 100) {
+    const { error } = await supabase.from('couple_quiz_questions').upsert(rows.slice(index, index + 100), { onConflict: 'id', ignoreDuplicates: true })
+    if (error) fail(error, '导入现有抉择题库')
+  }
+}
+
+export async function saveCoupleQuizBankQuestion(question: Pick<CoupleQuizQuestion, 'title' | 'a' | 'b' | 'kind'> & { id?: string; sort_order?: number }): Promise<void> {
+  const payload = {
+    title: question.title.trim(),
+    option_a: question.a.trim(),
+    option_b: question.b.trim(),
+    kind: question.kind,
+    ...(question.sort_order !== undefined ? { sort_order: question.sort_order } : {}),
+    updated_at: new Date().toISOString(),
+  }
+  const query = question.id
+    ? supabase.from('couple_quiz_questions').update(payload).eq('id', question.id)
+    : supabase.from('couple_quiz_questions').insert(payload)
+  const { error } = await query
+  if (error) fail(error, question.id ? '更新抉择题目' : '新增抉择题目')
+}
+
+export async function setCoupleQuizBankQuestionEnabled(id: string, enabled: boolean): Promise<void> {
+  const { error } = await supabase.from('couple_quiz_questions').update({ enabled, updated_at: new Date().toISOString() }).eq('id', id)
+  if (error) fail(error, '更新题目状态')
+}
+
+export async function deleteCoupleQuizBankQuestion(id: string): Promise<void> {
+  const { error } = await supabase.from('couple_quiz_questions').delete().eq('id', id)
+  if (error) fail(error, '删除抉择题目')
+}
+
+export async function listCoupleQuizPairQuestions(userA: string, userB: string): Promise<CoupleQuizPairQuestionRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase.from('couple_quiz_pair_questions').select('*').eq('member_a', memberA).eq('member_b', memberB).maybeSingle()
+  if (error) fail(error, '加载情侣题目配置')
+  return data ? [data as CoupleQuizPairQuestionRow] : []
+}
+
+export async function saveCoupleQuizPairQuestions(userA: string, userB: string, questionIds: string[]): Promise<void> {
+  if (!userA || !userB || userA === userB) throw new Error('请选择有效的情侣成员')
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_quiz_pair_questions').upsert({
+    member_a: memberA,
+    member_b: memberB,
+    question_ids: [...new Set(questionIds)],
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'member_a,member_b' })
+  if (error) fail(error, '保存情侣题目配置')
+}
+
 /** 每对好友一行的同步抉择会话：换题覆盖、双方提交齐了自动 revealed */
 export interface CoupleQuizRow {
   member_a: string
@@ -765,6 +845,22 @@ export interface CoupleQuizRow {
   choice_b: string | null
   status: 'answering' | 'revealed'
   history_id: string | null
+  updated_at: string
+}
+
+export interface CoupleQuizBankRow extends CoupleQuizQuestion {
+  option_a: string
+  option_b: string
+  enabled: boolean
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CoupleQuizPairQuestionRow {
+  member_a: string
+  member_b: string
+  question_ids: string[]
   updated_at: string
 }
 
@@ -1189,14 +1285,14 @@ export async function uploadMealPhoto(file: File): Promise<UploadedPhoto> {
 
 /**
  * 可见性规则（核心：账户之间互相隔离，只有好友才互通）：
- * - 动态：我（adminMao）看到所有人的；某个她只看「我发的」+「她自己发的」+「她好友发的」，
+ * - 动态：我（管理员）看到所有人的；某个她只看「我发的」+「她自己发的」+「她好友发的」，
  *   非好友的动态一条都看不到
  *   （想让她连自己的都看不到，把 includeSelf 传 false）
  * - 点赞 / 评论：**只有我能看到所有人的**；她只能看到「我点的赞 / 我发的评论」+「她自己的」+
  *   「她好友的」，非好友的点赞和评论对她完全不可见
  * - 针对性回复：评论的 reply_to 填了成员 id 时，**只有那个人能看到**（我也能看到），
  *   没被回复到的人连这条评论都收不到
- * - adminMao 默认和所有人都是好友，所以走 isAdmin 分支时不做任何过滤
+ * - 管理员 默认和所有人都是好友，所以走 isAdmin 分支时不做任何过滤
  */
 export async function listPosts(viewer: {
   isAdmin: boolean
@@ -1236,7 +1332,7 @@ export async function listPosts(viewer: {
   if (likes.error) fail(likes.error, '加载点赞')
   if (comments.error) fail(comments.error, '加载评论')
 
-  /** 这个人是我 / 我（adminMao）/ 我的好友吗？不是就一律不可见 */
+  /** 这个人是我 / 我（管理员）/ 我的好友吗？不是就一律不可见 */
   const isVisibleActor = (memberId: string | null) =>
     memberId === null || (!!viewer.memberId && memberId === viewer.memberId) || friendSet.has(memberId)
 

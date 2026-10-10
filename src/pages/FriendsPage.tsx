@@ -19,7 +19,7 @@ export default function FriendsPage() {
   const { isAdmin, role, memberId } = useSession()
   const { adminName, viewerAdminName } = useSettings()
   const { friends, incoming, outgoing, loading, reload } = useFriends()
-  /** adminMao 自己的视角：默认和所有账户都是好友，不需要申请 */
+  /** 管理员 自己的视角：默认和所有账户都是好友，不需要申请 */
   const adminView = isAdmin && role === 'me'
 
   const [q, setQ] = useState('')
@@ -322,7 +322,7 @@ export default function FriendsPage() {
       {/* <p className="px-1 text-[11px] leading-relaxed text-slate-400">
         账户之间默认完全隔离：不是好友，动态、点赞、评论一条都看不到，也不能互动。
         <br />
-        adminMao 默认和所有账户都是好友，所以能看到所有人的动态。
+        管理员 默认和所有账户都是好友，所以能看到所有人的动态。
       </p> */}
     </div>
   )
