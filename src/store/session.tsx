@@ -75,7 +75,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return true
     }
 
-    // 她的专属邀请码
+    // 她的专属邀请码（唯一登录方式，不接受昵称，避免误登/串号）
     let member = await findMemberByCode(c)
 
     // 兼容主邀请码：映射到第一个成员；成员表为空时自动建一个

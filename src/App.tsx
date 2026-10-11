@@ -77,7 +77,7 @@ function Shell() {
               <Route path="/order" element={<OrderPage />} />
               <Route path="/meals" element={<MealLogPage />} />
               <Route path="/feed" element={<FeedPage />} />
-              {!isAdmin && ENABLE_FRIENDS && <Route path="/couple" element={<CouplePage />} />}
+              {ENABLE_FRIENDS && <Route path="/couple" element={<CouplePage />} />}
               {isAdmin && <Route path="/admin/friendships" element={<AdminFriendships />} />}
               {isAdmin && <Route path="/admin/couple-history" element={<AdminCoupleHistory />} />}
               {isAdmin && <Route path="/admin/couple-wishes" element={<AdminCoupleWishes />} />}
@@ -151,7 +151,7 @@ function Layout() {
           { to: '/order', label: '点菜', emoji: '🧾' },
           { to: '/meals', label: '三餐', emoji: '🍚' },
           { to: '/feed', label: '饭圈', emoji: '📸' },
-          ...(!isAdmin && ENABLE_FRIENDS ? [{ to: '/couple', label: '互动', emoji: '💞' }] : []),
+          ...(ENABLE_FRIENDS ? [{ to: '/couple', label: '互动', emoji: '💞' }] : []),
         ]
       : [
           { to: '/admin/orders', label: '订单', emoji: '🧾', badge: unread.orders },

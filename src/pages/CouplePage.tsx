@@ -5,7 +5,9 @@ import {
   appendCoupleEvent,
   broadcastCoupleMessage,
   createCoupleBoardGameHistory,
+  createCoupleMinesHistory,
   createCoupleTruthDare,
+  notifyMinesTurn,
   createCoupleWish,
   deleteCoupleBoardGame,
   deleteCoupleMines,
@@ -14,6 +16,7 @@ import {
   fetchCoupleQuiz,
   fetchCoupleQuizHistory,
   listCoupleBoardGameHistory,
+  listCoupleMinesHistory,
   listCoupleQuizBank,
   listCoupleQuizPairQuestions,
   listCoupleEvents,
@@ -35,6 +38,7 @@ import {
   type CoupleBoardState,
   type CoupleEventRow,
   type CoupleMinesHit,
+  type CoupleMinesHistoryRow,
   type CoupleMinesRow,
   type CoupleMinesState,
   type CoupleQuizHistoryRow,
@@ -875,9 +879,10 @@ export default function CouplePage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const noticeQuizId = searchParams.get('quiz')
-  const { memberId, memberName } = useSession()
+  const { memberId, memberName, isAdmin } = useSession()
   const { friends } = useFriends()
-  const selectedFriend = friends.find((f) => f.memberId !== '__admin__')
+  // 选「另一个」成员作对方：排除自己，避免管理员切到某成员视角时 friendId 取到自己（自己配自己 → 数据为空）
+  const selectedFriend = friends.find((f) => f.memberId !== '__admin__' && f.memberId !== memberId)
   const friendId = selectedFriend?.memberId ?? null
   const friendName = selectedFriend?.shownName ?? '好友'
   const myId = memberId || '__me__'
@@ -984,6 +989,9 @@ export default function CouplePage() {
   /* 对局历史：每局的过程日志与结果都可回看 */
   const [boardHistory, setBoardHistory] = useState<CoupleBoardGameHistoryRow[]>([])
   const [boardHistoryOpenId, setBoardHistoryOpenId] = useState<string | null>(null)
+  /* 扫雷对局历史：每局通关的棋盘、踩雷任务与奖励都可回看 */
+  const [minesHistory, setMinesHistory] = useState<CoupleMinesHistoryRow[]>([])
+  const [minesHistoryOpenId, setMinesHistoryOpenId] = useState<string | null>(null)
 
   /* ------------------------------ 联网扫雷 ------------------------------ */
   const [minesGame, setMinesGame] = useState<CoupleMinesRow | null>(null)
@@ -1121,6 +1129,15 @@ export default function CouplePage() {
       setBoardHistory(await listCoupleBoardGameHistory(memberId, friendId, 20))
     } catch (error) {
       console.warn('加载飞行棋对局历史失败', error)
+    }
+  }, [memberId, friendId])
+
+  const reloadMinesHistory = useCallback(async () => {
+    if (!memberId || !friendId) return
+    try {
+      setMinesHistory(await listCoupleMinesHistory(memberId, friendId, 20))
+    } catch (error) {
+      console.warn('加载情侣扫雷对局历史失败', error)
     }
   }, [memberId, friendId])
 
@@ -1302,6 +1319,19 @@ export default function CouplePage() {
     else if (m === 'love') throttled('meals', reloadMeals)
   }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadMines, reloadMeals])
 
+  /* 切到某个模块时立即拉一次（不走 10 秒缓存），让数据尽快展示，不用等下一轮轮询 */
+  useEffect(() => {
+    if (!ready) return
+    const m = activeModule
+    if (m === 'wish') void reloadWishes()
+    else if (m === 'chat') void reloadMessages()
+    else if (m === 'quiz') void reloadQuiz()
+    else if (m === 'truth') void reloadTruthHistory()
+    else if (m === 'board') void reloadBoard()
+    else if (m === 'mines') void reloadMines()
+    else if (m === 'love') void reloadMeals()
+  }, [activeModule, ready, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadMines, reloadMeals])
+
   useRealtime(
     channelKey,
     [
@@ -1319,6 +1349,8 @@ export default function CouplePage() {
       { table: 'couple_mines', event: 'UPDATE', on: (p) => applyMinesRow(p.new as CoupleMinesRow) },
       // 飞行棋对局历史：一局结束落库后即时刷新
       { table: 'couple_board_game_history', event: 'INSERT', on: () => void reloadBoardHistory() },
+      // 扫雷对局历史：一局通关落库后即时刷新
+      { table: 'couple_mines_history', event: 'INSERT', on: () => void reloadMinesHistory() },
       // 兜底：铃铛通知表的实时通道已被验证可靠（能收到消息提示），
       // 收到真心话 / 同步抉择通知时主动刷新对应列表，
       // 避免业务表的实时事件偶发丢失导致「有提示但列表不更新」
@@ -1363,7 +1395,8 @@ export default function CouplePage() {
     void reloadBoard()
     void reloadBoardHistory()
     void reloadMines()
-  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines])
+    void reloadMinesHistory()
+  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory])
 
   useEffect(() => {
     try {
@@ -2014,7 +2047,13 @@ export default function CouplePage() {
       await upsertCoupleMines(memberId, friendId, next)
       setMinesGame({ ...fresh, state: next, updated_at: new Date().toISOString() })
       if (hitTask) setMinesTask(hitTask)
-      if (next.cleared && !latest.cleared) setMinesReward(next.reward)
+      if (next.cleared && !latest.cleared) {
+        setMinesReward(next.reward)
+        // 一局通关：把整局快照（棋盘、踩雷任务、奖励）留存进对局历史
+        void createCoupleMinesHistory(memberId, friendId, next)
+          .then(() => reloadMinesHistory())
+          .catch(() => {})
+      }
     } catch (error) {
       toast.show((error as Error).message, 'err')
     } finally {
@@ -2040,6 +2079,8 @@ export default function CouplePage() {
 
   // 对方点完格子轮到我 / 对方通关时弹提醒与奖励
   const prevMinesRef = useRef<CoupleMinesState | null>(null)
+  // 离开页面时才补发铃铛提醒，用时间戳节流，避免一次离开期间刷一堆通知
+  const lastTurnBellRef = useRef(0)
   useEffect(() => {
     const prev = prevMinesRef.current
     prevMinesRef.current = minesState
@@ -2053,14 +2094,26 @@ export default function CouplePage() {
       minesState.turn === myMinesIndex &&
       prev.turn !== myMinesIndex
     ) {
-      toast.show(`💣 ${friendName} 点完啦，轮到你拆雷了！`)
+      const onMinesPage = activeModule === 'mines' && document.visibilityState === 'visible'
+      if (onMinesPage) {
+        // 正在扫雷页：轻量 toast 即可，不刷铃铛
+        toast.show(`💣 ${friendName} 点完啦，轮到你拆雷了！`)
+      } else {
+        // 离开页面（隐藏或在别的模块）：补一条常驻铃铛提醒，节流到每 20 秒最多一条
+        const now = Date.now()
+        if (now - lastTurnBellRef.current > 20_000) {
+          lastTurnBellRef.current = now
+          const recipient = isAdmin ? 'me' : memberId ?? ''
+          if (recipient) void notifyMinesTurn(recipient, friendName)
+        }
+      }
     }
     const latestHit = minesState.hits[minesState.hits.length - 1]
     const prevHit = prev.hits[prev.hits.length - 1]
     if (latestHit && prevHit?.at !== latestHit.at && latestHit.player !== myMinesIndex) {
       toast.show(`💣 ${friendName} 踩到地雷！TA 的任务：${latestHit.task}`)
     }
-  }, [minesState, minesGame, myMinesIndex, friendName, toast])
+  }, [minesState, minesGame, myMinesIndex, friendName, toast, activeModule, isAdmin, memberId])
 
   const submitChoice = (val: string) => {
     const choice = val.trim()
@@ -2106,6 +2159,12 @@ export default function CouplePage() {
         <h2 className="mt-1 break-words text-xl font-bold">和 {friendName} 的互动空间</h2>
         {/* <p className="mt-1 break-words text-xs opacity-90">把日常、心愿和默契，变成你们的共同回忆。</p> */}
       </div>
+
+      {isAdmin && !memberId && (
+        <div className="animate-fade rounded-2xl bg-amber-50 p-3 text-xs leading-relaxed text-amber-700">
+          👆 你是管理视角，还没有选定要查看的成员，所以这里暂时没有数据。点右上角「👥 切换」选一个成员，即可像 TA 一样查看这份互动空间。
+        </div>
+      )}
 
       {!activeModule ? (
         <div className="grid grid-cols-2 gap-3">
@@ -2513,6 +2572,54 @@ export default function CouplePage() {
                   <button className="btn-ghost w-full text-rose-600" disabled={minesSaving} onClick={() => void endMinesGame()}>
                     结束本局（销毁数据重新设置）
                   </button>
+                  {/* 对局历史：每局通关的棋盘、踩雷互动和结果都可回看 */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-semibold text-slate-600">📜对局历史</h4>
+                      <span className="chip border-slate-200 bg-slate-50 text-slate-500">{minesHistory.length} 局</span>
+                    </div>
+                    {minesHistory.length === 0 && (
+                      <p className="rounded-xl bg-slate-50 py-3 text-center text-xs text-slate-400">还没有通关的扫雷，先来一局吧～</p>
+                    )}
+                    {minesHistory.map((row) => {
+                      const open = minesHistoryOpenId === row.id
+                      const hitCount = row.state.hits?.length ?? 0
+                      return (
+                        <div key={row.id} className="rounded-xl bg-slate-50 p-3 text-xs">
+                          <button
+                            className="flex w-full items-center justify-between gap-2 text-left"
+                            onClick={() => setMinesHistoryOpenId(open ? null : row.id)}
+                          >
+                            <span className="min-w-0 flex-1 truncate font-semibold text-slate-700">
+                              🎉 通关 · {row.state.rows}×{row.state.cols} · 💣{hitCount}
+                            </span>
+                            <span className="shrink-0 whitespace-nowrap text-[10px] text-slate-400">
+                              {new Date(row.finished_at).toLocaleString('zh-CN')}
+                            </span>
+                            <span className="shrink-0 text-slate-400">{open ? '收起' : '展开 ▼'}</span>
+                          </button>
+                          {open && (
+                            <div className="mt-2 space-y-2">
+                              {row.state.reward && (
+                                <p className="text-[11px] text-emerald-600">🎁 解锁奖励：{row.state.reward}</p>
+                              )}
+                              {hitCount > 0 ? (
+                                <div className="max-h-44 space-y-1 overflow-y-auto rounded-lg bg-white p-2 text-[11px] leading-relaxed text-slate-600">
+                                  {row.state.hits.map((h, i) => (
+                                    <p key={i} className="break-words">
+                                      💣 {h.player === myMinesIndex ? '你' : friendName} 踩雷：{h.task}
+                                    </p>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-slate-400">全程零踩雷，默契满分 💯</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
                 </>
               ) : null}
             </section>

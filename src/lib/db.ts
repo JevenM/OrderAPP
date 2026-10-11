@@ -1138,6 +1138,22 @@ export async function notifyTogetherRequest(recipient: string, senderName: strin
 }
 
 /**
+ * 扫雷轮到对方时的铃铛提醒。
+ * 只在「对方离开页面（页面隐藏 / 没停在扫雷模块）」时由接收方补发一条常驻通知，
+ * 对方回到页面会看到铃铛未读；正在扫雷模块上时只弹轻量 toast，不刷铃铛，避免刷屏。
+ */
+export async function notifyMinesTurn(recipient: string, senderName: string): Promise<void> {
+  if (!recipient) return
+  await insertFeedNotices([recipient], {
+    sender_name: senderName,
+    type: 'together',
+    post_id: null,
+    title: '💣 轮到你拆雷了',
+    body: `${senderName} 刚点完一格，快去拆雷吧～`,
+  })
+}
+
+/**
  * 记录一次真心话 / 大冒险。
  * 真心话带 answer（必填由调用方保证），默认给对方落一条铃铛通知；
  * 大冒险只记录题目，不发通知（棋盘里抽到的传 notify: false 免打扰）。
@@ -1410,6 +1426,54 @@ export async function deleteCoupleMines(userA: string, userB: string): Promise<v
   const [memberA, memberB] = couplePair(userA, userB)
   const { error } = await supabase.from('couple_mines').delete().eq('member_a', memberA).eq('member_b', memberB)
   if (error) fail(error, '结束情侣扫雷棋局')
+}
+
+export interface CoupleMinesHistoryRow {
+  id: string
+  member_a: string
+  member_b: string
+  state: CoupleMinesState
+  cleared: boolean
+  finished_at: string
+}
+
+/** 表还没建好（迁移未执行）时静默跳过，不当成硬错误刷屏 */
+function isMissingTable(error: unknown): boolean {
+  return /Could not find the table|relation .* does not exist/i.test(
+    (error instanceof Error ? error.message : String(error ?? '')) || ''
+  )
+}
+
+/** 一局通关时把整份棋局快照（棋盘、踩雷任务、奖励、结果）存进历史 */
+export async function createCoupleMinesHistory(userA: string, userB: string, state: CoupleMinesState): Promise<void> {
+  if (!userA || !userB || userA === userB) return
+  if (!state.cleared) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase
+    .from('couple_mines_history')
+    .insert({ member_a: memberA, member_b: memberB, state, cleared: state.cleared })
+  if (error && !isMissingTable(error)) fail(error, '保存情侣扫雷对局历史')
+}
+
+export async function listCoupleMinesHistory(
+  userA: string,
+  userB: string,
+  limit = 20
+): Promise<CoupleMinesHistoryRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_mines_history')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .order('finished_at', { ascending: false })
+    .limit(limit)
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载情侣扫雷对局历史')
+  }
+  return (data ?? []) as CoupleMinesHistoryRow[]
 }
 
 /* ------------------------------ 订单 ------------------------------ */

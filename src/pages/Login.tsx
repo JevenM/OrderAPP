@@ -28,23 +28,23 @@ export default function Login() {
     setErr('')
     setProbe('')
     try {
-      // 登录是 REST 请求，跟实时通道是否可用无关；为抗住偶发网络抖动最多试 3 次
+      // 登录是 REST 请求，跟实时通道是否可用无关；手机弱网偶发抖动最多试 4 次
       let ok = false
       let lastErr: unknown
-      for (let i = 0; i < 3; i += 1) {
+      for (let i = 0; i < 4; i += 1) {
         try {
           ok = await enter(code)
           break
         } catch (e) {
           lastErr = e
           const msg = (e as Error).message || ''
-          // 邀请码错误 / Supabase 配置缺失这类确定性问题就别再重试了
+          // 邀请码错误、Supabase 配置缺失这类确定性问题就别再重试了
           if (/邀请码|连不上 Supabase 配置/.test(msg)) throw e
-          if (i < 2) await new Promise((r) => window.setTimeout(r, 800 + i * 1000))
+          if (i < 3) await new Promise((r) => window.setTimeout(r, 800 + i * 1000))
         }
       }
       if (!ok && !lastErr) {
-        setErr('邀请码不对哦，再问问他～')
+        setErr('邀请码不对哦，请向管理员要正确的邀请码～')
       } else if (!ok && lastErr) {
         setErr((lastErr as Error).message || '网络不太好，已自动重试 3 次还是失败')
       }
