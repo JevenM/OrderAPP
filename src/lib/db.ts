@@ -1,4 +1,5 @@
 import { ADMIN_CODE, ADMIN_NAME, configured, supabase } from './supabase'
+import { getProbeState } from './realtime'
 import { compressImage } from './image'
 import { toDayStr } from './date'
 import type {
@@ -643,6 +644,8 @@ export function subscribeCoupleEvents(
   onEvent: (event: CoupleEventPayload) => void
 ): () => void {
   if (!userA || !userB || userA === userB) return () => {}
+  // 实时通道被网络拦截时直接跳过（聊天/愿望的兜底由 REST 轮询负责，不空耗 socket）
+  if (getProbeState() === 'broken') return () => {}
   const channelName = coupleChannelName(userA, userB)
   const channel = supabase.channel(channelName)
   channel
@@ -662,6 +665,8 @@ export async function broadcastCoupleEvent(
   event: CoupleEventPayload
 ): Promise<void> {
   if (!userA || !userB || userA === userB) return
+  // 通道不通时跳过广播（数据本身已落库，对方靠轮询兜底），并避免创建悬空 channel
+  if (getProbeState() === 'broken') return
   const channelName = coupleChannelName(userA, userB)
   const channel = supabase.channel(channelName)
   await channel.subscribe()
@@ -670,6 +675,7 @@ export async function broadcastCoupleEvent(
     event: 'couple_event',
     payload: event,
   })
+  void supabase.removeChannel(channel)
 }
 
 export function subscribeCoupleMessages(
@@ -678,6 +684,7 @@ export function subscribeCoupleMessages(
   onMessage: (msg: { id: string; sender_id: string; receiver_id: string; content: string; created_at: string }) => void
 ): () => void {
   if (!userA || !userB || userA === userB) return () => {}
+  if (getProbeState() === 'broken') return () => {}
   const channelName = coupleChannelName(userA, userB)
   const channel = supabase.channel(channelName)
   channel
@@ -727,10 +734,13 @@ export async function broadcastCoupleMessage(
     content: clean,
     created_at: new Date().toISOString(),
   }
-  const channelName = coupleChannelName(senderId, receiverId)
-  const channel = supabase.channel(channelName)
-  await channel.subscribe()
-  await channel.send({ type: 'broadcast', event: 'new_message', payload: fallback })
+  if (getProbeState() !== 'broken') {
+    const channelName = coupleChannelName(senderId, receiverId)
+    const channel = supabase.channel(channelName)
+    await channel.subscribe()
+    await channel.send({ type: 'broadcast', event: 'new_message', payload: fallback })
+    void supabase.removeChannel(channel)
+  }
   return fallback
 }
 

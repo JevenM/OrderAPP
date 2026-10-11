@@ -25,6 +25,17 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.26',
+    date: '2026-10-11',
+    title: '网络与性能优化',
+    items: [
+      { kind: 'improve', text: '实时通道改用原始 WebSocket 探测，消除 wss 被拦截时的重连风暴（控制台不再刷屏、不再空耗流量）' },
+      { kind: 'improve', text: '探测未通过前所有实时订阅一律走轮询、不打开 socket；网络恢复后自动切回实时推送' },
+      { kind: 'improve', text: '兜底轮询从「每 5 秒拉全部 9 个接口」降到「只拉当前模块 + 10 秒内存缓存」，请求频次大幅下降' },
+      { kind: 'fix', text: '修复聊天广播每次发送后 channel 不释放导致 socket/channel 泄漏的问题' },
+    ],
+  },
+  {
     version: '1.9.25',
     date: '2026-10-11',
     title: '飞行棋暂停与情侣扫雷',

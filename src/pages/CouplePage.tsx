@@ -1278,6 +1278,30 @@ export default function CouplePage() {
     [memberId, closedDrawIds]
   )
 
+  /* 列表读取带 10 秒内存缓存：频繁轮询不再重复打网络（实时连通时由事件即时刷新，不走这里） */
+  const FETCH_TTL = 10_000
+  const fetchStamp: Record<string, number> = {}
+  const throttled = (key: string, fn: () => void | Promise<void>) => {
+    const t = fetchStamp[key]
+    if (t && Date.now() - t < FETCH_TTL) return
+    fetchStamp[key] = Date.now()
+    void fn()
+  }
+
+  /* 轮询兜底：只刷新「当前正在看的模块」，其余模块等切过去再拉，省流量 */
+  const activeModuleRef = useRef(activeModule)
+  activeModuleRef.current = activeModule
+  const pollActiveModule = useCallback(() => {
+    const m = activeModuleRef.current
+    if (m === 'wish') throttled('wishes', reloadWishes)
+    else if (m === 'chat') throttled('messages', reloadMessages)
+    else if (m === 'quiz') throttled('quiz', reloadQuiz)
+    else if (m === 'truth') throttled('truth', reloadTruthHistory)
+    else if (m === 'board') throttled('board', reloadBoard)
+    else if (m === 'mines') throttled('mines', reloadMines)
+    else if (m === 'love') throttled('meals', reloadMeals)
+  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadMines, reloadMeals])
+
   useRealtime(
     channelKey,
     [
@@ -1321,23 +1345,13 @@ export default function CouplePage() {
     ],
     {
       enabled: ready,
-      // 实时推送连不上时的兜底轮询：这里涉及双人互动，比默认 10 秒更勤一些
-      pollMs: 5000,
-      onPoll: () => {
-        void reloadWishes()
-        void reloadMessages()
-        void reloadQuiz()
-        void reloadEvents()
-        void reloadMeals()
-        void reloadTruthHistory()
-        void reloadBoard()
-        void reloadBoardHistory()
-        void reloadMines()
-      },
+      // 实时推送连不上时的兜底轮询：只刷当前正在看的模块（省流量）；飞行棋整局暂停时降频到 30 秒，只为感知对方「继续游戏」
+      pollMs: activeModule === 'board' && boardGame?.state.gamePaused ? 30_000 : 5_000,
+      onPoll: () => pollActiveModule(),
     }
   )
 
-  // 首次进入：拉取双方共享的全部互动数据
+  // 首次进入：拉取双方共享的全部互动数据（导航进来即全量刷新，保证各模块即时有数据）
   useEffect(() => {
     if (!ready) return
     void reloadWishes()
@@ -1350,31 +1364,6 @@ export default function CouplePage() {
     void reloadBoardHistory()
     void reloadMines()
   }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines])
-
-  /**
-   * 保底轮询：业务表的实时事件偶发丢失（表未加进实时发布、网络抖动）时，
-   * 每隔 5 秒主动拉一次当前模块的数据，列表最多延迟几秒，不用手动刷新浏览器。
-   * 飞行棋整局暂停时降到 30 秒一次，只为感知对方「继续游戏」，省流量。
-   */
-  const boardPausedPolling = activeModule === 'board' && boardGame?.state.gamePaused
-  useEffect(() => {
-    if (!ready) return
-    const reloads: Record<string, () => void> = {
-      love: () => void reloadMeals(),
-      wish: () => void reloadWishes(),
-      chat: () => void reloadMessages(),
-      quiz: () => void reloadQuiz(),
-      truth: () => void reloadTruthHistory(),
-      board: () => void reloadBoard(),
-      mines: () => void reloadMines(),
-    }
-    const reload = activeModule ? reloads[activeModule] : undefined
-    if (!reload) return
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') reload()
-    }, boardPausedPolling ? 30_000 : 5_000)
-    return () => window.clearInterval(timer)
-  }, [ready, activeModule, boardPausedPolling, reloadMeals, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadMines])
 
   useEffect(() => {
     try {

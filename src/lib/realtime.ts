@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js'
-import { supabase } from './supabase'
+import { supabase, realtimeUrl, anonKey } from './supabase'
 
 export type ChangeEvent = '*' | 'INSERT' | 'UPDATE' | 'DELETE'
 export type ChangePayload = RealtimePostgresChangesPayload<{ [key: string]: any }>
@@ -19,67 +19,94 @@ interface Options {
   onPoll?: () => void
 }
 
-/** 连续失败1次即认定实时通道不可用（拦截式网络下立刻降级，避免一直重试刷屏拖垮页面） */
-const MAX_ATTEMPTS = 1
-/** 判定不可用后，由模块级定时器定期重新探测，不再每个页面各自重试 */
+/** 被拦截后多久复测一次（让网络恢复后能自动切回实时通道） */
 const RETRY_MS = 300_000
-/** 探测超时：4 秒还没拿到 SUBSCRIBED 就视为不可用 */
-const PROBE_TIMEOUT_MS = 4_000
+/** 探测超时：3.5 秒内没连上就视为不可用 */
+const PROBE_TIMEOUT_MS = 3_500
 
-let broken = false
+/**
+ * 实时通道探测状态：
+ * - 'pending'：应用刚启动，正在用原始 WebSocket 测一次（不牵动 supabase-js 的 socket 重连）
+ * - 'ok'：wss 可达，useRealtime 才允许打开 supabase-js 的 channel
+ * - 'broken'：被网络拦截 / 项目暂停，useRealtime 一律走轮询、绝不打开 socket
+ */
+type ProbeState = 'pending' | 'ok' | 'broken'
+let probeState: ProbeState = 'pending'
 let brokenAt = 0
-let probedAt = 0
-let probeTimer: number | undefined
+const listeners = new Set<() => void>()
+
+function setProbeState(s: ProbeState) {
+  probeState = s
+  if (s === 'broken') brokenAt = Date.now()
+  listeners.forEach((l) => l())
+}
+
+export function getProbeState(): ProbeState {
+  return probeState
+}
+
+function onProbeState(cb: () => void): () => void {
+  listeners.add(cb)
+  return () => {
+    listeners.delete(cb)
+  }
+}
 
 /** 实时通道当前是否处于「已知不可用」状态 */
 export function isRealtimeBroken(): boolean {
-  return broken && Date.now() - brokenAt < RETRY_MS
+  return probeState === 'broken' && Date.now() - brokenAt < RETRY_MS
 }
 
 /**
- * 启动时探测一次实时通道：网络拦截/项目暂停导致 wss 长连接不通时，
- * 全局标记为不可用，所有 useRealtime 直接走轮询，零噪音。
- * 探测成功后网络若中途切换（关闭代理等），仍由 useRealtime 失败回调兜底标记。
+ * 用【原始 WebSocket】测一次 wss：成功/失败都只产生至多 1 次浏览器报错，
+ * 且完全不牵动 supabase-js 内部的 socket 重连逻辑——这是根治「控制台被刷屏 + 一直重连耗资源」的关键。
  */
-export async function probeRealtime(): Promise<boolean> {
-  if (typeof window === 'undefined') return false
-  // 1 分钟内不复测，避免频繁触发 socket
-  if (probedAt && Date.now() - probedAt < 60_000) return !broken
-  probedAt = Date.now()
+async function probeRealtimeRaw(): Promise<boolean> {
+  if (typeof window === 'undefined' || !realtimeUrl) return false
   return await new Promise<boolean>((resolve) => {
-    const ch = supabase.channel('__probe_realtime__')
-    let done = false
+    let settled = false
     const finish = (ok: boolean) => {
-      if (done) return
-      done = true
+      if (settled) return
+      settled = true
       window.clearTimeout(timer)
-      void supabase.removeChannel(ch)
-      broken = !ok
-      brokenAt = ok ? 0 : Date.now()
+      try {
+        ws.close()
+      } catch {
+        // 忽略关闭异常
+      }
       resolve(ok)
     }
+    const ws = new WebSocket(`${realtimeUrl}?apikey=${encodeURIComponent(anonKey)}&vsn=2.0.0`)
     const timer = window.setTimeout(() => finish(false), PROBE_TIMEOUT_MS)
-    ch.subscribe((status) => {
-      const s = String(status)
-      if (s === 'SUBSCRIBED') finish(true)
-      else if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT' || s === 'CLOSED') finish(false)
-    })
+    ws.onopen = () => finish(true)
+    ws.onerror = () => finish(false)
   })
 }
 
-// 模块级定时器：定期重新探测，让网络恢复（关掉代理等）后能自动重新启用实时推送
-if (typeof window !== 'undefined' && !probeTimer) {
-  probeTimer = window.setInterval(() => {
-    if (broken) void probeRealtime()
+async function runProbe() {
+  const ok = await probeRealtimeRaw()
+  setProbeState(ok ? 'ok' : 'broken')
+}
+
+// 应用启动即探测（模块加载时，早于 React 子组件 effect，确保首个 useRealtime 也走轮询分支，绝不提前打开 socket）
+if (typeof window !== 'undefined' && probeState === 'pending') {
+  void runProbe()
+}
+// 被拦截时定期复测：网络恢复（关掉代理等）后自动切回实时通道
+if (typeof window !== 'undefined') {
+  window.setInterval(() => {
+    if (probeState === 'broken') void runProbe()
   }, RETRY_MS)
 }
 
 /**
  * 订阅表变更；若 WebSocket 连不上（网络限制 / 项目没开 realtime），
  * 自动降级为轮询，避免一直重试刷屏。
+ * 关键：探测未通过（pending / broken）时一律只轮询，绝不打开 supabase-js 的 socket。
  */
 export function useRealtime(channelName: string, watches: Watch[], options: Options = {}): void {
   const { enabled = true, pollMs = 10_000, onPoll } = options
+  const state = useSyncExternalStore(onProbeState, getProbeState)
 
   const watchesRef = useRef(watches)
   watchesRef.current = watches
@@ -89,7 +116,6 @@ export function useRealtime(channelName: string, watches: Watch[], options: Opti
   useEffect(() => {
     if (!enabled) return
 
-    let attempts = 0
     let channel: RealtimeChannel | null = null
     let pollTimer: number | undefined
 
@@ -112,22 +138,17 @@ export function useRealtime(channelName: string, watches: Watch[], options: Opti
       ch.subscribe((status) => {
         const s = String(status)
         if (s === 'SUBSCRIBED') {
-          attempts = 0
-          broken = false
-          brokenAt = 0
+          setProbeState('ok')
           stopPolling()
           return
         }
         if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT' || s === 'CLOSED') {
-          attempts += 1
-          if (attempts >= MAX_ATTEMPTS) {
-            broken = true
-            brokenAt = Date.now()
-            const c = channel
-            channel = null
-            if (c) void supabase.removeChannel(c)
-            startPolling()
-          }
+          // 中途掉线：标记不可用并降级为轮询，由模块级定时器定期复测
+          setProbeState('broken')
+          const c = channel
+          channel = null
+          if (c) void supabase.removeChannel(c)
+          startPolling()
         }
       })
     }
@@ -139,8 +160,9 @@ export function useRealtime(channelName: string, watches: Watch[], options: Opti
       }, pollMs)
     }
 
-    if (isRealtimeBroken()) startPolling()
-    else subscribe()
+    // 探测未通过（pending 或 broken）一律先轮询：绝不主动打开 supabase-js 的 socket
+    if (state === 'ok') subscribe()
+    else startPolling()
 
     // 页面从后台切换回前台时，主动触发一次轮询/刷新，避免从桌面切回来时数据还是旧的
     const onVisibilityChange = () => {
@@ -159,5 +181,5 @@ export function useRealtime(channelName: string, watches: Watch[], options: Opti
       channel = null
       if (c) void supabase.removeChannel(c)
     }
-  }, [channelName, enabled, pollMs])
+  }, [channelName, enabled, pollMs, state])
 }
