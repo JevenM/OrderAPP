@@ -25,6 +25,20 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.24',
+    date: '2026-10-11',
+    title: '稳定性与管理功能升级',
+    items: [
+      { kind: 'fix', text: '修复使用一段时间后可能登录异常的问题：会话存储加异常保护，聊天缓存限制在最近 100 条' },
+      { kind: 'improve', text: '登录遇网络抖动自动重试一次，被限流时给出明确提示' },
+      { kind: 'improve', text: '顶部导航栏固定在屏幕顶部，滚动时始终可见' },
+      // { kind: 'new', text: '管理员真心话记录支持多选、批量删除和导出 CSV' },
+      { kind: 'new', text: '飞行棋棋子换成 ❤️ / 💙 心形，开局各掷一次骰子定先手（大点数先走）' },
+      { kind: 'new', text: '飞行棋格子按类型均衡抽取、同局尽量不重复，新增惩罚 / 福利 / 解锁格玩法' },
+      { kind: 'new', text: '飞行棋支持自定义格子内容池，自己添加' },
+    ],
+  },
+  {
     version: '1.9.23',
     date: '2026-10-10',
     title: '真心话大冒险 & 联网飞行棋',

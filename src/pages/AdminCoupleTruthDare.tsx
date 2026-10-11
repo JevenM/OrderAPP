@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { listAllCoupleTruthDare, listAllFriendships, type CoupleTruthDareRow } from '../lib/db'
+import { deleteCoupleTruthDare, listAllCoupleTruthDare, listAllFriendships, type CoupleTruthDareRow } from '../lib/db'
 import { useToast } from '../components/Toast'
 import { useMembers } from '../store/members'
 
-/** 管理员查看每对情侣玩过的真心话大冒险题目与答案 */
+/** 管理员查看 / 管理每对情侣玩过的真心话大冒险题目与答案：多选、批量删除、导出 */
 export default function AdminCoupleTruthDare() {
   const toast = useToast()
   const { members, loading: membersLoading } = useMembers()
@@ -12,6 +12,10 @@ export default function AdminCoupleTruthDare() {
   const [pair, setPair] = useState('all')
   const [type, setType] = useState<'all' | 'truth' | 'dare'>('all')
   const [loading, setLoading] = useState(true)
+  const [deleting, setDeleting] = useState(false)
+  /** 多选模式 + 选中的记录 id */
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
 
   const memberById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members])
   const pairs = useMemo(() => {
@@ -32,6 +36,7 @@ export default function AdminCoupleTruthDare() {
       ),
     [rows, pair, type]
   )
+  const selectedFiltered = useMemo(() => filtered.filter((row) => selected.has(row.id)), [filtered, selected])
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -60,13 +65,80 @@ export default function AdminCoupleTruthDare() {
     void reload()
   }, [reload])
 
+  const toggleSelect = (id: string) => {
+    setSelected((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    setSelected((current) => (current.size === filtered.length ? new Set() : new Set(filtered.map((r) => r.id))))
+  }
+
+  const exitSelect = () => {
+    setSelectMode(false)
+    setSelected(new Set())
+  }
+
+  const removeSelected = async () => {
+    const ids = [...selected]
+    if (!ids.length || !window.confirm(`确定删除选中的 ${ids.length} 条记录吗？删除后无法恢复。`)) return
+    setDeleting(true)
+    try {
+      await deleteCoupleTruthDare(ids)
+      toast.show(`已删除 ${ids.length} 条记录`)
+      exitSelect()
+      await reload()
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  /** 导出当前筛选（或选中）的记录为 CSV，Excel 可直接打开 */
+  const exportCsv = () => {
+    const list = selectedFiltered.length ? selectedFiltered : filtered
+    if (!list.length) return toast.show('没有可导出的记录', 'err')
+    const esc = (v: string | null | undefined) => `"${(v ?? '').replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`
+    const pairOf = (row: CoupleTruthDareRow) =>
+      `${memberById.get(row.member_a)?.name ?? '未知成员'} ↔ ${memberById.get(row.member_b)?.name ?? '未知成员'}`
+    const header = ['情侣对', '抽题人', '类型', '题目', '答案', '时间']
+    const lines = list.map((row) =>
+      [
+        pairOf(row),
+        memberById.get(row.sender_id)?.name ?? row.sender_name ?? '未知成员',
+        row.type === 'truth' ? '真心话' : '大冒险',
+        row.prompt,
+        row.answer ?? '',
+        new Date(row.created_at).toLocaleString('zh-CN'),
+      ]
+        .map(esc)
+        .join(',')
+    )
+    // \ufeff BOM 保证 Excel 打开中文不乱码
+    const blob = new Blob([`\ufeff${[header.map(esc).join(','), ...lines].join('\r\n')}`], {
+      type: 'text/csv;charset=utf-8',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `真心话大冒险记录-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.show(`已导出 ${list.length} 条记录`)
+  }
+
   return (
     <div className="space-y-4">
       <section className="card space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div>
             <h2 className="font-semibold">🎲 真心话大冒险记录</h2>
-            <p className="mt-1 text-xs text-slate-400">查看每对情侣玩过的真心话 / 大冒险题目和答案。</p>
+            <p className="mt-1 text-xs text-slate-400">查看、删除、导出每对情侣玩过的真心话 / 大冒险题目和答案。</p>
           </div>
           <span className="chip shrink-0 border-brand-200 bg-brand-50 text-brand-600">管理员</span>
         </div>
@@ -85,9 +157,35 @@ export default function AdminCoupleTruthDare() {
             <option value="dare">大冒险</option>
           </select>
         </div>
-        <button className="btn-ghost w-full" onClick={() => void reload()} disabled={loading}>
-          刷新记录
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button className="btn-ghost flex-1" onClick={() => void reload()} disabled={loading}>
+            刷新记录
+          </button>
+          <button className="btn-soft flex-1" onClick={exportCsv} disabled={!filtered.length}>
+            📥 导出{selectedFiltered.length ? `选中 ${selectedFiltered.length} 条` : `全部 ${filtered.length} 条`}
+          </button>
+          {selectMode ? (
+            <>
+              <button className="btn-ghost flex-1" onClick={toggleSelectAll} disabled={!filtered.length}>
+                {selected.size === filtered.length && filtered.length ? '取消全选' : '全选本页'}
+              </button>
+              <button
+                className="btn-ghost flex-1 text-rose-600"
+                onClick={() => void removeSelected()}
+                disabled={!selected.size || deleting}
+              >
+                {deleting ? '删除中…' : `🗑 删除选中(${selected.size})`}
+              </button>
+              <button className="btn-ghost flex-1" onClick={exitSelect}>
+                退出管理
+              </button>
+            </>
+          ) : (
+            <button className="btn-ghost flex-1" onClick={() => setSelectMode(true)} disabled={!filtered.length}>
+              ✅ 管理（多选删除）
+            </button>
+          )}
+        </div>
       </section>
 
       <section className="card space-y-3">
@@ -102,30 +200,38 @@ export default function AdminCoupleTruthDare() {
             const a = memberById.get(row.member_a)?.name ?? '未知成员'
             const b = memberById.get(row.member_b)?.name ?? '未知成员'
             const sender = memberById.get(row.sender_id)?.name ?? row.sender_name ?? '未知成员'
+            const checked = selected.has(row.id)
             return (
-              <article key={row.id} className="space-y-2 rounded-2xl bg-slate-50 p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="break-words text-sm font-semibold text-slate-700">
-                      {a} <span className="text-brand-400">↔</span> {b}
-                    </div>
-                    <div className="mt-1 break-words text-xs text-slate-500">{sender} 抽到的题目</div>
-                  </div>
-                  <span
-                    className={`chip shrink-0 ${
-                      row.type === 'truth' ? 'border-rose-200 bg-rose-50 text-rose-600' : 'border-orange-200 bg-orange-50 text-orange-600'
-                    }`}
-                  >
-                    {row.type === 'truth' ? '真心话' : '大冒险'}
-                  </span>
-                </div>
-                <div className="break-words rounded-xl bg-white p-2 text-xs text-slate-700">{row.prompt}</div>
-                {row.type === 'truth' && (
-                  <div className="break-words rounded-xl bg-rose-50 p-2 text-xs text-rose-700">
-                    答案：{row.answer ?? '（还没作答）'}
-                  </div>
+              <article key={row.id} className={`flex items-start gap-2 rounded-2xl bg-slate-50 p-3 ${checked ? 'ring-2 ring-brand-300' : ''}`}>
+                {selectMode && (
+                  <label className="flex shrink-0 cursor-pointer items-center pt-1">
+                    <input type="checkbox" className="h-4 w-4 accent-brand-500" checked={checked} onChange={() => toggleSelect(row.id)} />
+                  </label>
                 )}
-                <div className="text-[11px] text-slate-400">{new Date(row.created_at).toLocaleString('zh-CN')}</div>
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="break-words text-sm font-semibold text-slate-700">
+                        {a} <span className="text-brand-400">↔</span> {b}
+                      </div>
+                      <div className="mt-1 break-words text-xs text-slate-500">{sender} 抽到的题目</div>
+                    </div>
+                    <span
+                      className={`chip shrink-0 ${
+                        row.type === 'truth' ? 'border-rose-200 bg-rose-50 text-rose-600' : 'border-orange-200 bg-orange-50 text-orange-600'
+                      }`}
+                    >
+                      {row.type === 'truth' ? '真心话' : '大冒险'}
+                    </span>
+                  </div>
+                  <div className="break-words rounded-xl bg-white p-2 text-xs text-slate-700">{row.prompt}</div>
+                  {row.type === 'truth' && (
+                    <div className="break-words rounded-xl bg-rose-50 p-2 text-xs text-rose-700">
+                      答案：{row.answer ?? '（还没作答）'}
+                    </div>
+                  )}
+                  <div className="text-[11px] text-slate-400">{new Date(row.created_at).toLocaleString('zh-CN')}</div>
+                </div>
               </article>
             )
           })}

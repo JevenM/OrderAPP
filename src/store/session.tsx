@@ -45,8 +45,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   })
 
   useEffect(() => {
-    if (state) localStorage.setItem(KEY, JSON.stringify(state))
-    else localStorage.removeItem(KEY)
+    // 存储可能因配额满 / Safari 隐私模式 / 系统禁用而抛错：
+    // 会话存不进去不能影响登录和使用，失败时顺手清掉体积大的缓存兜底
+    try {
+      if (state) localStorage.setItem(KEY, JSON.stringify(state))
+      else localStorage.removeItem(KEY)
+    } catch {
+      try {
+        for (let i = 0; i < localStorage.length; ) {
+          const k = localStorage.key(i)
+          if (k && (k.startsWith('chat:') || k.startsWith('wishes:') || k.startsWith('draw-'))) localStorage.removeItem(k)
+          else i += 1
+        }
+      } catch {
+        // 清理也失败就只能放弃持久化，本次会话仍可正常使用
+      }
+    }
   }, [state])
 
   // 真实身份：用管理口令进入的始终是「我」；切换查看某个她只改 role，不改身份

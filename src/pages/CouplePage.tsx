@@ -66,6 +66,9 @@ const BOARD_CELL_META: Record<BoardCellKind, { icon: string; label: string }> = 
   truth: { icon: '💬', label: '真心话' },
   dare: { icon: '🔥', label: '大冒险' },
   goal: { icon: '🏁', label: '冲线' },
+  penalty: { icon: '⛓️', label: '惩罚' },
+  bonus: { icon: '🎁', label: '福利' },
+  release: { icon: '🔓', label: '解锁' },
 }
 
 /** 骰子 1-6 点的面（Unicode 骰子字模，超过 6 点用 🎲 兜底） */
@@ -81,24 +84,24 @@ const BOARD_CELL_POOL: CoupleBoardCell[] = [
   { kind: 'task', text: '脸上贴纸条' },
   { kind: 'task', text: '听对方心跳' },
   { kind: 'task', text: '弹对方脑门3下' },
-  { kind: 'task', text: '说一句一定的话' },
+  { kind: 'task', text: '说一句感人的话' },
   { kind: 'task', text: '说出对方3个优点' },
   { kind: 'task', text: '请对方一杯奶茶' },
   { kind: 'task', text: '亲亲对方脑阔' },
   { kind: 'task', text: '帮对方剪指甲' },
   { kind: 'dare', text: '做一个大冒险' },
-  { kind: 'task', text: '噪声2分钟' },
+  { kind: 'task', text: '发出yin叫10秒' },
   { kind: 'truth', text: '回答一个真心话' },
-  { kind: 'task', text: '吐舌头2分钟' },
+  { kind: 'task', text: '吐舌头10秒' },
   { kind: 'task', text: '小猪叫3声' },
   { kind: 'task', text: '闭眼撅嘴10秒' },
   { kind: 'task', text: '捏捏对方脸' },
   { kind: 'task', text: '亲亲对方脸蛋' },
-  { kind: 'task', text: '十指相扣30秒' },
+  { kind: 'task', text: '十指相扣10秒' },
   { kind: 'task', text: '喂对方喝水' },
   { kind: 'task', text: '舔对方锁骨' },
   { kind: 'task', text: '让对方摸指定位置' },
-  { kind: 'task', text: '在对方脸上写字' },
+  { kind: 'task', text: '在对方背上写字' },
   { kind: 'task', text: 'kiss3下' },
   { kind: 'task', text: '每句话末尾加喵~' },
   { kind: 'task', text: '用嘴接连线' },
@@ -115,12 +118,12 @@ const BOARD_CELL_POOL: CoupleBoardCell[] = [
   { kind: 'task', text: '给对方说悄悄话' },
   { kind: 'task', text: '给对方按小腿1分钟' },
   { kind: 'task', text: '对视5秒' },
-  { kind: 'task', text: '手牵手30秒' },
-  { kind: 'task', text: '拥抱30秒' },
+  { kind: 'task', text: '手牵手10秒' },
+  { kind: 'task', text: '拥抱10秒' },
   { kind: 'task', text: '尝试接吻的感觉' },
   { kind: 'task', text: '说说初次见面的感觉' },
   { kind: 'task', text: '对方闭上眼睛给你涂口红' },
-  { kind: 'task', text: '一起给对方按摩' },
+  { kind: 'task', text: '一起给对方按摩肩膀' },
   { kind: 'task', text: '背女生转3圈' },
   { kind: 'task', text: '摸对方耳朵2秒' },
   { kind: 'task', text: '摸摸头10秒' },
@@ -129,13 +132,58 @@ const BOARD_CELL_POOL: CoupleBoardCell[] = [
   { kind: 'task', text: '拍一段表白视频做纪念' },
   { kind: 'task', text: '给对方梳头发' },
   { kind: 'task', text: '给对方按摩捶背1分钟' },
-  { kind: 'task', text: '亲吻对方手背30秒' },
+  { kind: 'task', text: '亲吻对方手背10秒' },
   { kind: 'task', text: '拥抱1分钟' },
   { kind: 'task', text: '亲吻一下对方的手' },
-  { kind: 'task', text: '被ta挠痒痒30秒' },
+  { kind: 'task', text: '被ta挠痒痒10秒' },
   { kind: 'task', text: '从背后抱对方1分钟' },
-  { kind: 'task', text: '亲吻对方额头' },
+  { kind: 'task', text: '亲吻对方大腿' },
   { kind: 'task', text: '浪漫表白' },
+  { kind: 'task', text: '给对方一个深情的拥抱' },
+  { kind: 'task', text: '脱掉对方一件衣服' },
+  { kind: 'task', text: '脱掉对方的所有衣服' },
+  { kind: 'task', text: '挠痒痒到对方求饶为止（至少10秒）' },
+  { kind: 'task', text: '和对方深情接吻30秒' },
+  { kind: 'task', text: '亲吻对方大腿内侧10秒' },
+  { kind: 'task', text: 'Tuo光衣服后退2格' },
+  { kind: 'task', text: '依次亲吻对方的额头、鼻子、嘴唇、脖子' },
+  { kind: 'task', text: '和对方湿吻10秒' },
+  { kind: 'task', text: '被对方伸手进裤子随意摸10秒' },
+  { kind: 'task', text: '伸手进对方裤子随意摸10秒' },
+  { kind: 'task', text: '舔对方的耳朵' },
+  { kind: 'task', text: '舔对方的脖子' },
+  { kind: 'task', text: '舔对方的手指' },
+  { kind: 'task', text: '自拍一段接吻照片' },
+  { kind: 'task', text: '把酒水或酸奶倒在自己胸上对方舔干净' },
+  { kind: 'task', text: '女方被男方公主抱在房内绕一圈' },
+  { kind: 'task', text: '喝交杯酒并拍照' },
+  { kind: 'task', text: '和对方做Do爱' },
+  { kind: 'task', text: 'Tuo光衣服后跳二格' },
+  { kind: 'task', text: 'Tuo光衣服后跳三格' },
+  { kind: 'task', text: 'Tuo光衣服后跳四格' },
+  { kind: 'task', text: '用嘴吸对方手指10秒' },
+  { kind: 'task', text: '用嘴吸对方耳朵10秒' },
+  { kind: 'task', text: 'Tuo掉对方一件衣服' },
+  { kind: 'task', text: 'Tuo掉对方一件内衣' },
+  { kind: 'task', text: 'Tuo掉对方的所有内衣裤' },
+  { kind: 'task', text: '把酒水倒在自己身上对方舔干净' },
+  { kind: 'task', text: 'Tuo掉对方两件衣服' },
+  { kind: 'task', text: '亲吻对方额头' },
+  { kind: 'task', text: '亲吻对方嘴唇' },
+  { kind: 'task', text: '吸吮对方Ru头10秒' },
+  { kind: 'task', text: '压住对方亲嘴10秒' },
+  { kind: 'task', text: '对方舔你上半身的各个部位超过30秒' },
+  { kind: 'task', text: '挑逗对方敏感部位15秒' },
+  { kind: 'task', text: '自己趴着对方舔你后背10秒' },
+  { kind: 'task', text: '贴贴10秒' },
+  { kind: 'task', text: '揉对方Nai子一下' },
+  { kind: 'task', text: '想尽办法弄对方Bo起或者流水' },
+  { kind: 'task', text: '舔对方的脖子到胸口10秒' },
+  { kind: 'task', text: 'Tuo光衣服后退5格' },
+  { kind: 'task', text: '跪舔对方30秒' },
+  { kind: 'task', text: '舔或轻咬对方耳垂5下' },
+  { kind: 'task', text: '依次亲吻对方的额头、鼻子、嘴唇、脖子' },
+  { kind: 'task', text: '被对方伸到内衣内抓胸10秒' },
   { kind: 'forward', text: '向前一步', value: 1 },
   { kind: 'forward', text: '继续向前一步', value: 1 },
   { kind: 'forward', text: '前进三格', value: 3 },
@@ -143,8 +191,20 @@ const BOARD_CELL_POOL: CoupleBoardCell[] = [
   { kind: 'back', text: '后退二格', value: 2 },
   { kind: 'back', text: '后退三格', value: 3 },
   { kind: 'pause', text: '暂停一下' },
+  { kind: 'task', text: '舔对方耳朵10秒' },
+  { kind: 'pause', text: '暂停一下原地不动换对方摇' },
   { kind: 'reroll', text: '重摇一次' },
   { kind: 'goal', text: '红色棋子进入终点' },
+  { kind: 'goal', text: '蓝色棋子进入终点' },
+  { kind: 'penalty', text: '【惩罚】给对方按摩小腿直到解除' },
+  { kind: 'penalty', text: '【惩罚】被对方随意摸直到惩罚结束' },
+  { kind: 'penalty', text: '【惩罚】下次惩罚失效' },
+  { kind: 'penalty', text: '【惩罚】伺候对方20秒' },
+  { kind: 'bonus', text: '【福利】解除惩罚并摸对方胸部或打屁股一下' },
+  { kind: 'bonus', text: '【福利】给对方按摩1分钟' },
+  { kind: 'bonus', text: '【福利】躺下享受被对方全身按摩1分钟' },
+  { kind: 'bonus', text: '【福利】对方口你下面10秒' },
+  { kind: 'release', text: '解除惩罚并前进2格', value: 2 },
 ]
 
 const choiceLabel = (choice: string | null, question: Question): string => {
@@ -467,15 +527,67 @@ function shuffleList<T>(list: T[]): T[] {
   return arr
 }
 
-/** 生成共享棋盘：首尾固定起点/终点，中间格子从内容池随机抽取（池子不够大时循环取） */
-function buildBoardCells(size: number): CoupleBoardCell[] {
-  const pool = shuffleList(BOARD_CELL_POOL)
-  const cells: CoupleBoardCell[] = [{ kind: 'start', text: '起点' }]
-  for (let i = 1; i < size - 1; i += 1) {
-    cells.push({ ...pool[(i - 1) % pool.length] })
+/**
+ * 生成共享棋盘：首尾固定起点/终点，中间格子按类型分组后轮流抽取——
+ * 每种类型都保证出现、分布均衡，且同一棋盘内内容尽量不重复（某类取尽才允许由其他类补位）。
+ * extraPool 是情侣自定义的私密内容（每行一条），会合并进任务池一起参与抽取。
+ */
+function buildBoardCells(size: number, extraTexts: string[] = []): CoupleBoardCell[] {
+  const middle = Math.max(0, size - 2)
+  const pool: CoupleBoardCell[] = [
+    ...extraTexts.map((text) => ({ kind: 'task' as const, text })),
+    ...BOARD_CELL_POOL,
+  ]
+  const groups = new Map<CoupleBoardCellKind, CoupleBoardCell[]>()
+  for (const cell of shuffleList(pool)) {
+    const list = groups.get(cell.kind) ?? []
+    list.push(cell)
+    groups.set(cell.kind, list)
   }
-  cells.push({ kind: 'end', text: '终点' })
-  return cells
+  const picked: CoupleBoardCell[] = []
+  // 第一轮：每种类型先各出一个，保证玩法齐全
+  if (middle >= groups.size) {
+    for (const list of groups.values()) picked.push(list.shift()!)
+  }
+  // 后续轮：每轮按随机顺序从各类型再取一个，直到填满或全部取尽
+  while (picked.length < middle) {
+    const before = picked.length
+    for (const kind of shuffleList([...groups.keys()])) {
+      if (picked.length >= middle) break
+      const cell = groups.get(kind)?.shift()
+      if (cell) picked.push(cell)
+    }
+    if (picked.length === before) break
+  }
+  return [{ kind: 'start', text: '起点' }, ...shuffleList(picked), { kind: 'end', text: '终点' }]
+}
+
+/** 解析自定义内容池：按行拆分、去空去重，最多 100 条 */
+function parseCustomCells(text: string): string[] {
+  const seen = new Set<string>()
+  const lines: string[] = []
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line || seen.has(line) || lines.length >= 100) continue
+    seen.add(line)
+    lines.push(line)
+  }
+  return lines
+}
+
+/** 开局先手判定：双方各掷一次骰子，点数大的先走（平局重掷） */
+function rollForFirst(names: [string, string]): { turn: 0 | 1; logs: string[] } {
+  const logs: string[] = []
+  let a = 0
+  let b = 0
+  while (a === b) {
+    a = 1 + Math.floor(Math.random() * 6)
+    b = 1 + Math.floor(Math.random() * 6)
+    logs.push(`🎲先手判定：${names[0]} 掷出 ${a} 点，${names[1]} 掷出 ${b} 点${a === b ? '，平局重掷' : ''}`)
+  }
+  const turn: 0 | 1 = a > b ? 0 : 1
+  logs.push(`✌️${names[turn]}点数更大，由 TA 先走`)
+  return { turn, logs }
 }
 
 /**
@@ -497,6 +609,7 @@ function applyBoardRoll(
   }
   const positions: [number, number] = [...state.positions]
   const paused: [number, number] = [...state.paused]
+  const penalty: [boolean, boolean] = [...(state.penalty ?? [false, false])]
   let winner: 0 | 1 | null = state.winner
   let pending = state.pending
   let turn: 0 | 1 = state.turn
@@ -506,7 +619,7 @@ function applyBoardRoll(
     paused[player] -= 1
     push(`⏸${name}本回合被暂停，跳过行动`)
     return {
-      state: { ...state, positions, paused, log: log.slice(-20), dice: null, turn: (1 - player) as 0 | 1, winner, pending },
+      state: { ...state, positions, paused, penalty, log: log.slice(-20), dice: null, turn: (1 - player) as 0 | 1, winner, pending },
       darePrompt: null,
       messages,
       reroll: false,
@@ -557,6 +670,24 @@ function applyBoardRoll(
         positions[player] = state.size - 1
         push(`🏁${cell.text}，直接冲线！`)
         break
+      case 'penalty':
+        penalty[player] = true
+        push(`⛓️惩罚：${cell.text}（踩到🔓解锁格才能解除）`)
+        break
+      case 'bonus':
+        push(`🎁福利：${cell.text}`)
+        break
+      case 'release': {
+        const to = Math.min(state.size - 1, pos + (cell.value ?? 2))
+        positions[player] = to
+        if (penalty[player]) {
+          penalty[player] = false
+          push(`🔓${cell.text}，惩罚已解除，前进到第 ${to + 1} 格`)
+        } else {
+          push(`🔓${cell.text}（当前没有惩罚），前进到第 ${to + 1} 格`)
+        }
+        break
+      }
     }
   }
 
@@ -568,7 +699,7 @@ function applyBoardRoll(
   }
 
   return {
-    state: { ...state, positions, paused, log: log.slice(-20), dice, turn, winner, pending },
+    state: { ...state, positions, paused, penalty, log: log.slice(-20), dice, turn, winner, pending },
     darePrompt,
     messages,
     reroll: cell?.kind === 'reroll' && positions[player] < state.size - 1,
@@ -714,6 +845,8 @@ export default function CouplePage() {
   const [boardStepMin, setBoardStepMin] = useState(1)
   const [boardStepMax, setBoardStepMax] = useState(6)
   const [boardTruthAnswer, setBoardTruthAnswer] = useState('')
+  /* 自定义格子内容池（每行一条，私密内容由你们自己添加，按互动对象本地保存） */
+  const [boardCustomText, setBoardCustomText] = useState('')
   /* 骰子滚动动画 + 掷骰结果弹窗（走几步 / 暂停 / 重摇） */
   const [diceRolling, setDiceRolling] = useState(false)
   const [diceFace, setDiceFace] = useState(1)
@@ -774,7 +907,9 @@ export default function CouplePage() {
       if (!changed) return prev
       next.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
       try {
-        localStorage.setItem(cacheKey, JSON.stringify(next))
+        // 只缓存最近 100 条，避免聊天记录无限增长把 localStorage 撑满，
+        // 进而挤掉登录会话等关键数据（表现为用一段时间后登录异常）
+        localStorage.setItem(cacheKey, JSON.stringify(next.slice(-100)))
       } catch {
         // 存储失败不影响展示
       }
@@ -1188,6 +1323,21 @@ export default function CouplePage() {
     }
   }, [customQuestions, myId, friendId])
 
+  // 飞行棋自定义格子内容池：进入时读取、修改即保存（按互动对象隔离）
+  useEffect(() => {
+    if (!myId || !friendId) return
+    setBoardCustomText(readCache<string[]>(key('board-custom', myId, friendId), []).join('\n'))
+  }, [myId, friendId])
+
+  useEffect(() => {
+    if (!myId || !friendId) return
+    try {
+      localStorage.setItem(key('board-custom', myId, friendId), JSON.stringify(parseCustomCells(boardCustomText)))
+    } catch {
+      // 存储失败不影响使用
+    }
+  }, [boardCustomText, myId, friendId])
+
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
@@ -1376,18 +1526,25 @@ export default function CouplePage() {
   const startBoardGame = async () => {
     if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
     const stepMax = Math.max(boardStepMin, boardStepMax)
-    const myIndex: 0 | 1 = memberId < friendId ? 0 : 1
     const myName = memberName || '我'
+    // 下标与 member_a / member_b 对齐：member_a（红棋）= 较小的 id
+    const names: [string, string] = memberId < friendId ? [myName, friendName] : [friendName, myName]
+    const first = rollForFirst(names)
+    const at = new Date().toISOString()
     const state: CoupleBoardState = {
       size: boardSize,
       stepMin: boardStepMin,
       stepMax,
-      cells: buildBoardCells(boardSize),
+      cells: buildBoardCells(boardSize, parseCustomCells(boardCustomText)),
       positions: [0, 0],
-      turn: myIndex,
+      turn: first.turn,
       paused: [0, 0],
+      penalty: [false, false],
       dice: null,
-      log: [{ at: new Date().toISOString(), text: `🎯棋盘已生成，由${myName}先掷骰` }],
+      log: [
+        { at, text: '🎯棋盘已生成，先各掷一次骰子定先手（大点数先走）' },
+        ...first.logs.map((text) => ({ at, text })),
+      ],
       winner: null,
       pending: null,
     }
@@ -1397,7 +1554,7 @@ export default function CouplePage() {
       const [memberA, memberB] = orderedPair(memberId, friendId)
       setBoardGame({ member_a: memberA, member_b: memberB, state, updated_at: new Date().toISOString() })
       setBoardSetup(false)
-      toast.show('棋盘已生成，和 TA 轮流掷骰吧 🎯')
+      toast.show('棋盘已生成，先手已定，开掷吧 🎯')
     } catch (error) {
       toast.show((error as Error).message, 'err')
     } finally {
@@ -1716,18 +1873,33 @@ export default function CouplePage() {
                     <label className="text-xs text-slate-500">每次最少步数<select className="input mt-1" value={boardStepMin} onChange={(event) => setBoardStepMin(Number(event.target.value))}>{[1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value} 步</option>)}</select></label>
                     <label className="text-xs text-slate-500">每次最多步数<select className="input mt-1" value={boardStepMax} onChange={(event) => setBoardStepMax(Math.max(boardStepMin, Number(event.target.value)))}>{[2, 3, 4, 5, 6, 8, 10].map((value) => <option key={value} value={value}>{value} 步</option>)}</select></label>
                   </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-slate-500">✨自定义格子内容（每行一条，私密内容由你们自己定）</label>
+                    <textarea
+                      className="input min-h-[72px] resize-y text-xs"
+                      placeholder={'例如：\n给对方一个撒娇的拥抱\n一起看一集喜欢的剧\n（留空则只用默认内容池）'}
+                      maxLength={2000}
+                      value={boardCustomText}
+                      onChange={(e) => setBoardCustomText(e.target.value)}
+                    />
+                    <p className="text-[10px] leading-relaxed text-slate-400">
+                      自定义内容只保存在你的设备上，随生成棋盘一起生效并同步给对方；去重后最多 100 条。
+                    </p>
+                  </div>
                   <button className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-40" disabled={boardSaving} onClick={() => void startBoardGame()}>
                     {boardSaving ? '生成中…' : boardGame ? '生成新棋盘并开始' : '生成棋盘并开始'}
                   </button>
                   {boardGame && boardGame.state.winner === null && (
                     <button className="btn-ghost w-full" onClick={() => setBoardSetup(false)}>返回当前棋局</button>
                   )}
-                  <p className="text-center text-[11px] leading-relaxed text-slate-400">棋盘和步数会同步给对方，双方轮流掷骰，格子任务从专属内容池随机抽取。</p>
+                  <p className="text-center text-[11px] leading-relaxed text-slate-400">
+                    开局双方各掷一次骰子定先手（大点数先走）；棋盘和步数会同步给对方，格子内容均衡抽取、尽量不重复；格子任务做给对方，🎁福利自己享受，踩到⛓️惩罚格会被锁定，直到踩到🔓解锁格才解除。
+                  </p>
                 </>
               ) : boardState ? (
                 <>
                   <div className="flex items-center justify-between gap-2 rounded-2xl bg-brand-50 px-3 py-2 text-xs text-brand-700">
-                    <span className="truncate">🔴 {boardNames?.[0]} · {boardState.positions[0] + 1} 格</span>
+                    <span className="min-w-0 flex-1 truncate">❤️ {boardNames?.[0]} · {boardState.positions[0] + 1} 格{boardState.penalty?.[0] ? ' ⛓️' : ''}</span>
                     <span className="shrink-0 font-semibold">
                       {boardState.winner !== null
                         ? `🎉${boardNames?.[boardState.winner] ?? ''}获胜！`
@@ -1735,7 +1907,7 @@ export default function CouplePage() {
                           ? '轮到你掷骰'
                           : `等待 ${friendName} 掷骰…`}
                     </span>
-                    <span className="truncate">🔵 {boardNames?.[1]} · {boardState.positions[1] + 1} 格</span>
+                    <span className="min-w-0 flex-1 truncate text-right">💙 {boardNames?.[1]} · {boardState.positions[1] + 1} 格{boardState.penalty?.[1] ? ' ⛓️' : ''}</span>
                   </div>
                   <div className="grid grid-cols-5 gap-1.5">
                     {boardState.cells.map((cell, index) => {
@@ -1745,8 +1917,8 @@ export default function CouplePage() {
                       return (
                         <div key={index} title={cell.text} className={`flex aspect-square flex-col items-center justify-center rounded-md text-[10px] text-slate-500 ring-1 ${special ? 'bg-amber-50 ring-amber-200' : 'bg-emerald-50 ring-emerald-100'}`}>
                           <div className="break-words px-0.5 text-center leading-tight">
-                            {positionA === index && <span aria-label="红棋" className="mr-0.5">🔴</span>}
-                            {positionB === index && <span aria-label="蓝棋" className="mr-0.5">🔵</span>}
+                            {positionA === index && <span aria-label="红棋" className="mr-0.5">❤️</span>}
+                            {positionB === index && <span aria-label="蓝棋" className="mr-0.5">💙</span>}
                             {positionA !== index && positionB !== index && (index === boardState.size - 1 ? '终点' : index === 0 ? '起点' : index + 1)}
                           </div>
                           {special && <span>{BOARD_CELL_META[cell.kind as BoardCellKind].icon}</span>}
@@ -1852,7 +2024,7 @@ export default function CouplePage() {
                       {open && (
                         <div className="mt-2 space-y-2">
                           <p className="text-[11px] text-slate-400">
-                            棋盘 {row.state.size} 格 · 步数 {row.state.stepMin}-{row.state.stepMax} · 终局位置 红 {row.state.positions[0] + 1} 格 / 蓝 {row.state.positions[1] + 1} 格
+                            棋盘 {row.state.size} 格 · 步数 {row.state.stepMin}-{row.state.stepMax} · 终局位置 ❤️ {row.state.positions[0] + 1} 格 / 💙 {row.state.positions[1] + 1} 格
                           </p>
                           <div className="max-h-44 space-y-1 overflow-y-auto rounded-lg bg-white p-2 text-[11px] leading-relaxed text-slate-600">
                             {row.state.log.map((item, index) => (

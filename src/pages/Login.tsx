@@ -28,13 +28,25 @@ export default function Login() {
     setErr('')
     setProbe('')
     try {
-      const ok = await enter(code)
+      let ok: boolean
+      try {
+        ok = await enter(code)
+      } catch (first) {
+        // 网络抖动 / 限流导致的偶发失败：隔 1.5 秒自动再试一次，大多数情况第二次就过了
+        const msg = (first as Error).message || ''
+        if (!/邀请码|连不上 Supabase 配置/.test(msg)) {
+          await new Promise((r) => window.setTimeout(r, 1500))
+          ok = await enter(code)
+        } else {
+          throw first
+        }
+      }
       if (!ok) setErr('邀请码不对哦，再问问他～')
     } catch (e) {
       const msg = (e as Error).message || '网络不太好，稍后再试～'
       setErr(msg)
       // 网络类错误顺手跑一次自检，给出更具体的排查方向
-      if (/连不上|Failed to fetch|超时|网络|没有读到/.test(msg)) void runProbe()
+      if (/连不上|Failed to fetch|超时|网络|没有读到|频繁/.test(msg)) void runProbe()
     } finally {
       setBusy(false)
     }

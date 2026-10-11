@@ -212,8 +212,9 @@ function Layout() {
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-md flex-col bg-brand-50/40 pb-20">
-      <header className="sticky top-0 z-30 border-b border-brand-100 bg-white/95 backdrop-blur">
+    <div className="mx-auto flex min-h-screen max-w-md flex-col bg-brand-50/40 pb-20 pt-[56px]">
+      {/* 固定在设备顶部：不随页面滚动，始终可见（高度 54px 内容 + 1px 分隔线 = 55px，容器留 56px 顶部内边距） */}
+      <header className="fixed inset-x-0 top-0 z-30 mx-auto max-w-md border-b border-brand-100 bg-white/95 backdrop-blur">
         <div className="relative flex items-center gap-2 px-3 py-2">
           <button
             className="shrink-0 rounded-full transition active:scale-95"

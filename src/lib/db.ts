@@ -63,6 +63,13 @@ function netHint(tag: string, e: unknown): Error {
   }
   if (!navigator.onLine) return new Error(`${tag}失败：设备当前离线，连上网再试一次`)
 
+  if (/429|too many requests|rate limit|exceeded.*limit|limit.*exceeded/i.test(raw)) {
+    return new Error(
+      `${tag}失败：请求过于频繁被限流（${raw}）。可能开了多个页面在后台轮询，关闭多余标签页、等一分钟再试；` +
+        `若持续出现，去 Supabase 控制台看看项目是否被暂停。`
+    )
+  }
+
   if (/failed to fetch|networkerror|load failed|network request failed|ERR_/i.test(raw)) {
     return new Error(
       `${tag}失败：连不上 Supabase（${raw}）。常见原因：① Supabase 项目被暂停/删除，去控制台 Restore；` +
@@ -1184,6 +1191,13 @@ export async function listAllCoupleTruthDare(limit = 1000): Promise<CoupleTruthD
   return (data ?? []) as CoupleTruthDareRow[]
 }
 
+/** 管理员批量删除真心话大冒险记录 */
+export async function deleteCoupleTruthDare(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { error } = await supabase.from('couple_truth_dare').delete().in('id', ids)
+  if (error) fail(error, '删除真心话大冒险记录')
+}
+
 /* ------------------------ 情侣联网飞行棋（双方轮流） ------------------------ */
 
 export type CoupleBoardCellKind =
@@ -1197,6 +1211,9 @@ export type CoupleBoardCellKind =
   | 'truth'
   | 'dare'
   | 'goal'
+  | 'penalty'
+  | 'bonus'
+  | 'release'
 
 export interface CoupleBoardCell {
   kind: CoupleBoardCellKind
@@ -1221,6 +1238,8 @@ export interface CoupleBoardState {
   turn: 0 | 1
   /** 各自被暂停的回合数 */
   paused: [number, number]
+  /** 双方是否处于惩罚状态（踩到惩罚格后，直到踩到解锁格才解除）；旧棋局可能没有该字段 */
+  penalty?: [boolean, boolean]
   dice: number | null
   log: CoupleBoardLogItem[]
   winner: 0 | 1 | null
