@@ -12,7 +12,10 @@ create table if not exists public.couple_mines (
   member_b   uuid not null references public.members (id) on delete cascade,
   state      jsonb not null,
   updated_at timestamptz not null default now(),
-  constraint couple_mines_pair_unique unique (member_a, member_b),
+  -- 必须是主键（不能只建唯一约束）：表加入 supabase_realtime 后 upsert 的冲突更新
+  -- 属于 UPDATE，逻辑复制要求表有 replica identity（默认取主键），否则会报
+  -- "cannot update table ... because it does not have a replica identity"
+  primary key (member_a, member_b),
   constraint couple_mines_ordered check (member_a < member_b)
 );
 
