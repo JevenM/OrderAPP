@@ -13,7 +13,17 @@ export const configured = Boolean(url && anonKey)
 export const supabase: SupabaseClient = createClient(
   url || 'http://localhost:54321',
   anonKey || 'public-anon-key',
-  { auth: { persistSession: false } }
+  {
+    auth: { persistSession: false },
+    realtime: {
+      // 部分网络（公司防火墙 / 代理 / 运营商）会拦截 wss 长连接：
+      // 默认重连节奏非常激进（10ms 起步无限刷），失败时会刷屏控制台、空耗流量。
+      // 改成指数退避（1s → 2s → 4s → … 封顶 30s），连不上时安静地慢重试；
+      // 业务侧 useRealtime 检测到连不上会自动降级为轮询，功能不受影响。
+      reconnectAfterMs: (tries: number) => Math.min(1000 * 2 ** Math.min(tries - 1, 5), 30_000),
+      params: { eventsPerSecond: 5 },
+    },
+  }
 )
 
 export type ProbeResult = {

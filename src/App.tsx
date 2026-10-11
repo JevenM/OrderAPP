@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { HashRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ToastProvider, useToast } from './components/Toast'
 import Avatar from './components/Avatar'
@@ -8,6 +8,7 @@ import { updateMember } from './lib/db'
 import ChangelogModal from './components/ChangelogModal'
 import { configured } from './lib/supabase'
 import { requestNotifyPermission } from './lib/notify'
+import { probeRealtime } from './lib/realtime'
 import { SessionProvider, useSession } from './store/session'
 import { SettingsProvider, useSettings } from './store/settings'
 import { UnreadProvider, useUnread } from './store/unread'
@@ -38,6 +39,12 @@ export const ENABLE_FRIENDS = true
 const HOME: Record<Role, string> = { her: '/order', me: '/admin/orders' }
 
 export default function App() {
+  // 应用启动即探测一次实时通道：网络拦截 wss 时全局标记不可用，
+  // 后续所有 useRealtime 直接走轮询，避免每个页面各自触发 socket 重连风暴
+  // （频繁重连会在控制台刷屏、空耗流量，并随时间累积让页面越来越卡）。
+  useEffect(() => {
+    void probeRealtime()
+  }, [])
   return (
     <HashRouter>
       <SessionProvider>

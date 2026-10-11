@@ -7,7 +7,10 @@ import {
   createCoupleBoardGameHistory,
   createCoupleTruthDare,
   createCoupleWish,
+  deleteCoupleBoardGame,
+  deleteCoupleMines,
   fetchCoupleBoardGame,
+  fetchCoupleMines,
   fetchCoupleQuiz,
   fetchCoupleQuizHistory,
   listCoupleBoardGameHistory,
@@ -19,9 +22,11 @@ import {
   listCoupleTruthDare,
   listCoupleWishes,
   listMealsRange,
+  MINES_CELL,
   resetCoupleQuiz,
   saveCoupleQuizChoice,
   upsertCoupleBoardGame,
+  upsertCoupleMines,
   type CoupleBoardCell,
   type CoupleBoardCellKind,
   type CoupleBoardGameHistoryRow,
@@ -29,6 +34,9 @@ import {
   type CoupleBoardLogItem,
   type CoupleBoardState,
   type CoupleEventRow,
+  type CoupleMinesHit,
+  type CoupleMinesRow,
+  type CoupleMinesState,
   type CoupleQuizHistoryRow,
   type CoupleQuizRow,
   type CoupleTruthDareRow,
@@ -576,7 +584,7 @@ function parseCustomCells(text: string): string[] {
 }
 
 /** 开局先手判定：双方各掷一次骰子，点数大的先走（平局重掷） */
-function rollForFirst(names: [string, string]): { turn: 0 | 1; logs: string[] } {
+function rollForFirst(names: [string, string], verb = '先走'): { turn: 0 | 1; logs: string[] } {
   const logs: string[] = []
   let a = 0
   let b = 0
@@ -586,8 +594,130 @@ function rollForFirst(names: [string, string]): { turn: 0 | 1; logs: string[] } 
     logs.push(`🎲先手判定：${names[0]} 掷出 ${a} 点，${names[1]} 掷出 ${b} 点${a === b ? '，平局重掷' : ''}`)
   }
   const turn: 0 | 1 = a > b ? 0 : 1
-  logs.push(`✌️${names[turn]}点数更大，由 TA 先走`)
+  logs.push(`✌️${names[turn]}点数更大，由 TA ${verb}`)
   return { turn, logs }
+}
+
+/* ------------------------------ 情侣扫雷（模块级工具） ------------------------------ */
+
+/** 扫雷尺寸档位：多种大小可选，雷数随之递增 */
+const MINES_PRESETS = [
+  { key: 's', label: '6×6 · 6雷', rows: 6, cols: 6, mines: 6 },
+  { key: 'm', label: '8×8 · 10雷', rows: 8, cols: 8, mines: 10 },
+  { key: 'l', label: '10×10 · 15雷', rows: 10, cols: 10, mines: 15 },
+  { key: 'xl', label: '12×12 · 24雷', rows: 12, cols: 12, mines: 24 },
+]
+
+/** 通关奖励池：随机解锁一条 */
+const MINES_REWARDS = [
+  '奖励兑换券：向对方兑换一个小心愿',
+  '今晚的按摩 10 分钟券',
+  '一次由你全权安排的小约会',
+  '对方真心夸你 30 秒不许重样',
+  '一杯对方亲手做的饮品',
+  '一个不限时长的拥抱',
+  '下次点餐由对方全包',
+]
+
+/** 数字格的颜色（经典扫雷配色） */
+const MINES_NUMBER_COLORS = ['', 'text-blue-600', 'text-emerald-600', 'text-rose-600', 'text-indigo-700', 'text-amber-700', 'text-teal-600', 'text-slate-700', 'text-slate-500']
+
+/** 首次点开时才生成雷区：避开首格及其周围一圈，保证第一步一定安全 */
+function generateMines(rows: number, cols: number, count: number, safeIndex: number): number[] {
+  const forbidden = new Set<number>()
+  const sr = Math.floor(safeIndex / cols)
+  const sc = safeIndex % cols
+  for (let dr = -1; dr <= 1; dr += 1) {
+    for (let dc = -1; dc <= 1; dc += 1) {
+      const r = sr + dr
+      const c = sc + dc
+      if (r >= 0 && r < rows && c >= 0 && c < cols) forbidden.add(r * cols + c)
+    }
+  }
+  const pool: number[] = []
+  for (let i = 0; i < rows * cols; i += 1) {
+    if (!forbidden.has(i)) pool.push(i)
+  }
+  return shuffleList(pool).slice(0, Math.min(count, pool.length))
+}
+
+/** 某格周围一圈的地雷数 */
+function minesAroundOf(state: CoupleMinesState, index: number): number {
+  const { rows, cols, mines } = state
+  const r = Math.floor(index / cols)
+  const c = index % cols
+  let count = 0
+  for (let dr = -1; dr <= 1; dr += 1) {
+    for (let dc = -1; dc <= 1; dc += 1) {
+      if (dr === 0 && dc === 0) continue
+      const nr = r + dr
+      const nc = c + dc
+      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && mines.includes(nr * cols + nc)) count += 1
+    }
+  }
+  return count
+}
+
+/**
+ * 点开一格的结算（纯函数）：经典扫雷的 0 格自动扩散属于同一次行动；
+ * 踩雷不结束游戏，而是触发一条互动任务并记入日志；所有安全格点开即通关。
+ */
+function applyMinesOpen(
+  state: CoupleMinesState,
+  player: 0 | 1,
+  index: number,
+  names: [string, string]
+): { state: CoupleMinesState; hitTask: string | null } {
+  const mines = state.mines.length ? state.mines : generateMines(state.rows, state.cols, state.mineTotal, index)
+  const cells = [...state.cells]
+  const log: CoupleBoardLogItem[] = [...state.log]
+  const hits: CoupleMinesHit[] = [...state.hits]
+  const opened: number[] = []
+  const withMines: CoupleMinesState = { ...state, mines }
+
+  // 洪水扩散：安全格周围无雷时自动展开相邻格（标记格不会被自动展开）
+  const open = (i: number) => {
+    if (cells[i] !== MINES_CELL.closed) return
+    cells[i] = MINES_CELL.opened
+    opened.push(i)
+    if (mines.includes(i)) return
+    if (minesAroundOf(withMines, i) === 0) {
+      const r = Math.floor(i / state.cols)
+      const c = i % state.cols
+      for (let dr = -1; dr <= 1; dr += 1) {
+        for (let dc = -1; dc <= 1; dc += 1) {
+          const nr = r + dr
+          const nc = c + dc
+          if ((dr !== 0 || dc !== 0) && nr >= 0 && nr < state.rows && nc >= 0 && nc < state.cols) open(nr * state.cols + nc)
+        }
+      }
+    }
+  }
+  open(index)
+
+  const at = new Date().toISOString()
+  let hitTask: string | null = null
+  if (mines.includes(index)) {
+    const tasks = BOARD_CELL_POOL.filter((cell) => cell.kind === 'task')
+    hitTask = tasks[Math.floor(Math.random() * tasks.length)].text
+    hits.push({ player, index, task: hitTask, at })
+    log.push({ at, text: `💣${names[player]}踩到地雷！触发任务：${hitTask}` })
+  } else {
+    log.push({ at, text: `${names[player]}点开了 ${opened.length} 格（剩 ${cells.filter((c, i) => c === MINES_CELL.closed && !mines.includes(i)).length} 个安全格）` })
+  }
+
+  // 通关判定：所有非地雷格子全部点开
+  const cleared = cells.every((c, i) => c === MINES_CELL.opened || mines.includes(i))
+  let reward = state.reward
+  if (cleared && !state.cleared) {
+    reward = MINES_REWARDS[Math.floor(Math.random() * MINES_REWARDS.length)]
+    log.push({ at, text: `🎉全部安全格已点开，通关成功！解锁奖励：${reward}` })
+  }
+
+  return {
+    state: { ...withMines, cells, log: log.slice(-30), hits, reward, cleared, turn: (1 - player) as 0 | 1 },
+    hitTask,
+  }
 }
 
 /**
@@ -855,6 +985,17 @@ export default function CouplePage() {
   const [boardHistory, setBoardHistory] = useState<CoupleBoardGameHistoryRow[]>([])
   const [boardHistoryOpenId, setBoardHistoryOpenId] = useState<string | null>(null)
 
+  /* ------------------------------ 联网扫雷 ------------------------------ */
+  const [minesGame, setMinesGame] = useState<CoupleMinesRow | null>(null)
+  const [minesLoaded, setMinesLoaded] = useState(false)
+  const [minesSaving, setMinesSaving] = useState(false)
+  const [minesPresetKey, setMinesPresetKey] = useState('m')
+  /* 当前点击模式：open 打开格子 / flag 标记疑似地雷（标记不消耗回合） */
+  const [minesMode, setMinesMode] = useState<'open' | 'flag'>('open')
+  /* 踩雷任务弹层 / 通关奖励弹层 */
+  const [minesTask, setMinesTask] = useState<string | null>(null)
+  const [minesReward, setMinesReward] = useState<string | null>(null)
+
   const questionPool = questionKind === '自定义'
     ? customQuestions
     : (managedQuestions ?? ALL_QUESTIONS).filter((question) => question.kind === questionKind && (pairQuestionIds === null || pairQuestionIds.includes(question.id)))
@@ -948,10 +1089,14 @@ export default function CouplePage() {
     }
   }, [memberId, friendId])
 
-  /** 应用远端棋局：确认属于当前这一对情侣再展示 */
+  /** 应用远端棋局：null 表示本局已被对方销毁；确认属于当前这一对情侣再展示 */
   const applyBoardRow = useCallback(
     (row: CoupleBoardGameRow | null) => {
-      if (!row || !memberId || !friendId) return
+      if (!row) {
+        setBoardGame(null)
+        return
+      }
+      if (!memberId || !friendId) return
       const [a, b] = orderedPair(memberId, friendId)
       if (row.member_a !== a || row.member_b !== b) return
       setBoardGame(row)
@@ -978,6 +1123,32 @@ export default function CouplePage() {
       console.warn('加载飞行棋对局历史失败', error)
     }
   }, [memberId, friendId])
+
+  /** 应用远端扫雷棋局：null 表示本局已被对方销毁 */
+  const applyMinesRow = useCallback(
+    (row: CoupleMinesRow | null) => {
+      if (!row) {
+        setMinesGame(null)
+        return
+      }
+      if (!memberId || !friendId) return
+      const [a, b] = orderedPair(memberId, friendId)
+      if (row.member_a !== a || row.member_b !== b) return
+      setMinesGame(row)
+    },
+    [memberId, friendId]
+  )
+
+  const reloadMines = useCallback(async () => {
+    if (!memberId || !friendId) return
+    try {
+      applyMinesRow(await fetchCoupleMines(memberId, friendId))
+    } catch (error) {
+      console.warn('加载情侣扫雷棋局失败', error)
+    } finally {
+      setMinesLoaded(true)
+    }
+  }, [memberId, friendId, applyMinesRow])
 
   const reloadWishes = useCallback(async () => {
     if (!memberId || !friendId) return
@@ -1115,8 +1286,13 @@ export default function CouplePage() {
       { table: 'couple_quiz', on: (p) => applyQuizRow(p.new as CoupleQuizRow) },
       // 真心话大冒险：对方抽题 / 提交答案后，双方记录列表即时刷新
       { table: 'couple_truth_dare', event: 'INSERT', on: () => void reloadTruthHistory() },
-      // 联网飞行棋：对方生成棋盘 / 掷骰后，棋局即时同步
-      { table: 'couple_board_games', on: (p) => applyBoardRow(p.new as CoupleBoardGameRow) },
+      // 联网飞行棋：对方掷骰 / 暂停 / 继续后，棋局即时同步
+      // （只订阅 INSERT / UPDATE；DELETE 事件不带行数据、无法区分是谁的棋局，交由轮询兜底同步）
+      { table: 'couple_board_games', event: 'INSERT', on: (p) => applyBoardRow(p.new as CoupleBoardGameRow) },
+      { table: 'couple_board_games', event: 'UPDATE', on: (p) => applyBoardRow(p.new as CoupleBoardGameRow) },
+      // 情侣扫雷：对方点开 / 标记 / 通关时即时同步（DELETE 交由轮询兜底）
+      { table: 'couple_mines', event: 'INSERT', on: (p) => applyMinesRow(p.new as CoupleMinesRow) },
+      { table: 'couple_mines', event: 'UPDATE', on: (p) => applyMinesRow(p.new as CoupleMinesRow) },
       // 飞行棋对局历史：一局结束落库后即时刷新
       { table: 'couple_board_game_history', event: 'INSERT', on: () => void reloadBoardHistory() },
       // 兜底：铃铛通知表的实时通道已被验证可靠（能收到消息提示），
@@ -1156,6 +1332,7 @@ export default function CouplePage() {
         void reloadTruthHistory()
         void reloadBoard()
         void reloadBoardHistory()
+        void reloadMines()
       },
     }
   )
@@ -1171,12 +1348,15 @@ export default function CouplePage() {
     void reloadTruthHistory()
     void reloadBoard()
     void reloadBoardHistory()
-  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory])
+    void reloadMines()
+  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines])
 
   /**
    * 保底轮询：业务表的实时事件偶发丢失（表未加进实时发布、网络抖动）时，
    * 每隔 5 秒主动拉一次当前模块的数据，列表最多延迟几秒，不用手动刷新浏览器。
+   * 飞行棋整局暂停时降到 30 秒一次，只为感知对方「继续游戏」，省流量。
    */
+  const boardPausedPolling = activeModule === 'board' && boardGame?.state.gamePaused
   useEffect(() => {
     if (!ready) return
     const reloads: Record<string, () => void> = {
@@ -1186,14 +1366,15 @@ export default function CouplePage() {
       quiz: () => void reloadQuiz(),
       truth: () => void reloadTruthHistory(),
       board: () => void reloadBoard(),
+      mines: () => void reloadMines(),
     }
     const reload = activeModule ? reloads[activeModule] : undefined
     if (!reload) return
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') reload()
-    }, 5000)
+    }, boardPausedPolling ? 30_000 : 5_000)
     return () => window.clearInterval(timer)
-  }, [ready, activeModule, reloadMeals, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard])
+  }, [ready, activeModule, boardPausedPolling, reloadMeals, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadMines])
 
   useEffect(() => {
     try {
@@ -1515,6 +1696,15 @@ export default function CouplePage() {
   /** 我在棋局里的下标：member_a（红棋）为 0，member_b（蓝棋）为 1 */
   const myBoardIndex: 0 | 1 = boardGame && memberId === boardGame.member_b ? 1 : 0
   const boardState = boardGame?.state ?? null
+  /* 扫雷的派生常量：与飞行棋同口径（下标 0 = member_a ❤️，1 = member_b 💙） */
+  const myMinesIndex: 0 | 1 = minesGame && memberId === minesGame.member_b ? 1 : 0
+  const minesState = minesGame?.state ?? null
+  const minesNames: [string, string] | null = minesGame
+    ? [
+        minesGame.member_a === memberId ? memberName || '我' : friendName,
+        minesGame.member_b === memberId ? memberName || '我' : friendName,
+      ]
+    : null
   /** 双方展示名：下标 0 = member_a（红棋），1 = member_b（蓝棋） */
   const boardNames: [string, string] | null = boardGame && memberId
     ? [
@@ -1540,6 +1730,7 @@ export default function CouplePage() {
       turn: first.turn,
       paused: [0, 0],
       penalty: [false, false],
+      gamePaused: false,
       dice: null,
       log: [
         { at, text: '🎯棋盘已生成，先各掷一次骰子定先手（大点数先走）' },
@@ -1562,8 +1753,42 @@ export default function CouplePage() {
     }
   }
 
+  /** 暂停 / 继续整局棋：暂停后双方可以去做别的（棋局不再频繁占用网络），回来接着玩 */
+  const toggleBoardPause = async () => {
+    if (!boardGame || !boardState || !memberId || !friendId || boardState.winner !== null) return
+    setBoardSaving(true)
+    try {
+      const next = { ...boardState, gamePaused: !boardState.gamePaused }
+      await upsertCoupleBoardGame(memberId, friendId, next)
+      setBoardGame({ ...boardGame, state: next, updated_at: new Date().toISOString() })
+      toast.show(next.gamePaused ? '⏸️ 已暂停，可以去做别的，回来点「继续游戏」接着玩' : '▶️ 继续游戏，轮到谁掷骰看顶部提示')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setBoardSaving(false)
+    }
+  }
+
+  /** 重新设置棋盘：销毁本局（数据库与本地都不再保留），之后可重新开一局 */
+  const endBoardGame = async () => {
+    if (!boardGame || !memberId || !friendId) return
+    if (!window.confirm('是否结束？\n本局将被销毁（数据库和本地不再保留这局数据），确认后可以重新设置棋盘再开一局。')) return
+    setBoardSaving(true)
+    try {
+      await deleteCoupleBoardGame(memberId, friendId)
+      setBoardGame(null)
+      setBoardSetup(false)
+      toast.show('本局已销毁，重新设置棋盘开新一局吧')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setBoardSaving(false)
+    }
+  }
+
   const rollBoardDice = async () => {
     if (!boardGame || !boardState || !memberId || !friendId) return
+    if (boardState.gamePaused) return toast.show('本局已暂停，点「继续游戏」接着玩', 'err')
     if (boardState.winner !== null || boardState.pending || boardState.turn !== myBoardIndex) return
     setBoardSaving(true)
     setDiceResult(null)
@@ -1696,23 +1921,157 @@ export default function CouplePage() {
   }, [boardState, boardGame, myBoardIndex, friendName, toast])
 
   /**
-   * 飞行棋对局中加快同步：等待对方行动（对方掷骰 / 对方作答真心话）时，
-   * 每 2 秒主动拉一次棋局——实时推送可用时它只是冗余兜底，
-   * 推送连不上时也能把回合交接的等待压到 2 秒内。
+   * 飞行棋 / 扫雷对局中加快同步：等待对方行动时，每 2 秒主动拉一次棋局——
+   * 实时推送可用时它只是冗余兜底，推送连不上时也能把回合交接的等待压到 2 秒内。
+   * 棋局暂停、已分胜负 / 已通关时自动停掉，不占网络。
    */
   const awaitingBoardPeer =
     activeModule === 'board' &&
     boardGame !== null &&
     boardGame.state.winner === null &&
+    !boardGame.state.gamePaused &&
     (boardGame.state.turn !== myBoardIndex ||
       (boardGame.state.pending !== null && boardGame.state.pending.player !== myBoardIndex))
+  const awaitingMinesPeer =
+    activeModule === 'mines' && minesGame !== null && !minesGame.state.cleared && minesGame.state.turn !== myMinesIndex
   useEffect(() => {
-    if (!awaitingBoardPeer) return
+    if (!awaitingBoardPeer && !awaitingMinesPeer) return
     const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void reloadBoard()
+      if (document.visibilityState !== 'visible') return
+      if (awaitingBoardPeer) void reloadBoard()
+      if (awaitingMinesPeer) void reloadMines()
     }, 2000)
     return () => window.clearInterval(timer)
-  }, [awaitingBoardPeer, reloadBoard])
+  }, [awaitingBoardPeer, awaitingMinesPeer, reloadBoard, reloadMines])
+
+  /* ------------------------------ 扫雷操作 ------------------------------ */
+
+  const startMinesGame = async () => {
+    if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+    const preset = MINES_PRESETS.find((item) => item.key === minesPresetKey) ?? MINES_PRESETS[1]
+    const myName = memberName || '我'
+    // 下标与 member_a / member_b 对齐：member_a（❤️）= 较小的 id
+    const names: [string, string] = memberId < friendId ? [myName, friendName] : [friendName, myName]
+    const first = rollForFirst(names, '先点')
+    const at = new Date().toISOString()
+    const state: CoupleMinesState = {
+      rows: preset.rows,
+      cols: preset.cols,
+      mineTotal: preset.mines,
+      mines: [],
+      cells: Array(preset.rows * preset.cols).fill(MINES_CELL.closed),
+      turn: first.turn,
+      log: [
+        { at, text: `💣${preset.rows}×${preset.cols} 棋盘已生成，共 ${preset.mines} 颗雷` },
+        ...first.logs.map((text) => ({ at, text })),
+      ],
+      hits: [],
+      reward: null,
+      cleared: false,
+    }
+    setMinesSaving(true)
+    try {
+      await upsertCoupleMines(memberId, friendId, state)
+      const [memberA, memberB] = orderedPair(memberId, friendId)
+      setMinesGame({ member_a: memberA, member_b: memberB, state, updated_at: new Date().toISOString() })
+      toast.show('扫雷开始，轮流点开格子吧 💣')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setMinesSaving(false)
+    }
+  }
+
+  /** 点击格子：open 模式打开（仅轮到的人），flag 模式切换标记（双方随时可标，不消耗回合） */
+  const actMinesCell = async (index: number) => {
+    if (!minesGame || !minesState || !memberId || !friendId) return
+    if (minesState.cleared || minesSaving) return
+    if (minesState.cells[index] === MINES_CELL.opened) return
+    const names: [string, string] =
+      memberId === minesGame.member_a
+        ? [memberName || '我', friendName]
+        : [friendName, memberName || '我']
+    // 标记模式：双方任何时候都可以标记 / 取消标记，不消耗回合
+    if (minesMode === 'flag') {
+      setMinesSaving(true)
+      try {
+        const next: CoupleMinesState = {
+          ...minesState,
+          cells: minesState.cells.map((c, i) => (i === index ? (c === MINES_CELL.flagged ? MINES_CELL.closed : MINES_CELL.flagged) : c)),
+        }
+        await upsertCoupleMines(memberId, friendId, next)
+        setMinesGame({ ...minesGame, state: next, updated_at: new Date().toISOString() })
+      } catch (error) {
+        toast.show((error as Error).message, 'err')
+      } finally {
+        setMinesSaving(false)
+      }
+      return
+    }
+    if (minesState.cells[index] === MINES_CELL.flagged) {
+      return toast.show('这格被标记了，切到 🚩 标记模式点一下可取消标记', 'err')
+    }
+    if (minesState.turn !== myMinesIndex) return toast.show(`还没轮到你，等 ${friendName} 点完这一格～`, 'err')
+    setMinesSaving(true)
+    try {
+      // 先取最新棋局：回合已变化 / 格子已被点开时放弃本次操作，降低双端同时操作的覆盖风险
+      const fresh = (await fetchCoupleMines(memberId, friendId)) ?? minesGame
+      const latest = fresh.state
+      if (latest.cleared || latest.turn !== myMinesIndex || latest.cells[index] !== MINES_CELL.closed) {
+        setMinesGame(fresh)
+        return
+      }
+      const { state: next, hitTask } = applyMinesOpen(latest, myMinesIndex, index, names)
+      await upsertCoupleMines(memberId, friendId, next)
+      setMinesGame({ ...fresh, state: next, updated_at: new Date().toISOString() })
+      if (hitTask) setMinesTask(hitTask)
+      if (next.cleared && !latest.cleared) setMinesReward(next.reward)
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setMinesSaving(false)
+    }
+  }
+
+  /** 结束本局扫雷：销毁数据库与本地数据，之后可重新开一局 */
+  const endMinesGame = async () => {
+    if (!minesGame || !memberId || !friendId) return
+    if (!window.confirm('是否结束？\n本局扫雷将被销毁（数据库和本地不再保留这局数据），确认后可以重新开一局。')) return
+    setMinesSaving(true)
+    try {
+      await deleteCoupleMines(memberId, friendId)
+      setMinesGame(null)
+      toast.show('本局已销毁，重新开一局吧')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setMinesSaving(false)
+    }
+  }
+
+  // 对方点完格子轮到我 / 对方通关时弹提醒与奖励
+  const prevMinesRef = useRef<CoupleMinesState | null>(null)
+  useEffect(() => {
+    const prev = prevMinesRef.current
+    prevMinesRef.current = minesState
+    if (!minesState || !prev || !minesGame) return
+    if (minesState.cleared && !prev.cleared) {
+      setMinesReward(minesState.reward)
+      return
+    }
+    if (
+      !minesState.cleared &&
+      minesState.turn === myMinesIndex &&
+      prev.turn !== myMinesIndex
+    ) {
+      toast.show(`💣 ${friendName} 点完啦，轮到你拆雷了！`)
+    }
+    const latestHit = minesState.hits[minesState.hits.length - 1]
+    const prevHit = prev.hits[prev.hits.length - 1]
+    if (latestHit && prevHit?.at !== latestHit.at && latestHit.player !== myMinesIndex) {
+      toast.show(`💣 ${friendName} 踩到地雷！TA 的任务：${latestHit.task}`)
+    }
+  }, [minesState, minesGame, myMinesIndex, friendName, toast])
 
   const submitChoice = (val: string) => {
     const choice = val.trim()
@@ -1768,6 +2127,7 @@ export default function CouplePage() {
             { id: 'quiz', icon: '💞', title: '同步抉择', detail: `${ALL_QUESTIONS.length + customQuestions.length} 道题` },
             { id: 'truth', icon: '🎲', title: '真心话大冒险', detail: '聊聊心里话，完成小挑战' },
             { id: 'board', icon: '🎯', title: '情侣飞行棋', detail: '联网轮流掷骰对战' },
+            { id: 'mines', icon: '💣', title: '情侣扫雷', detail: '轮流拆雷，踩雷做任务' },
           ].map((module) => (
             <button key={module.id} type="button" className="card flex min-h-28 flex-col items-start justify-between gap-3 text-left transition hover:border-brand-200" onClick={() => setActiveModule(module.id)}>
               <span className="text-2xl">{module.icon}</span>
@@ -1970,26 +2330,35 @@ export default function CouplePage() {
                   {boardState.winner === null && (
                     <button
                       className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-40"
-                      disabled={boardState.turn !== myBoardIndex || boardSaving || Boolean(boardState.pending)}
+                      disabled={boardState.turn !== myBoardIndex || boardSaving || Boolean(boardState.pending) || Boolean(boardState.gamePaused)}
                       onClick={() => void rollBoardDice()}
                     >
-                      {boardState.turn === myBoardIndex
-                        ? boardSaving
-                          ? '掷骰中…'
-                          : boardState.paused[myBoardIndex] > 0
-                            ? '掷骰子（本回合暂停）'
-                            : '掷骰子'
-                        : `等待 ${friendName} 掷骰…`}
+                      {boardState.gamePaused
+                        ? '⏸️ 本局已暂停'
+                        : boardState.turn === myBoardIndex
+                          ? boardSaving
+                            ? '掷骰中…'
+                            : boardState.paused[myBoardIndex] > 0
+                              ? '掷骰子（本回合暂停）'
+                              : '掷骰子'
+                          : `等待 ${friendName} 掷骰…`}
                     </button>
                   )}
-                  <button
-                    className="btn-ghost w-full"
-                    onClick={() => {
-                      if (window.confirm('重新生成棋盘会结束当前棋局，确定吗？')) setBoardSetup(true)
-                    }}
-                  >
-                    重新设置棋盘
-                  </button>
+                  {boardState.gamePaused && boardState.winner === null && (
+                    <div className="rounded-2xl bg-amber-50 p-3 text-center text-xs leading-relaxed text-amber-700">
+                      ⏸️ 本局已暂停：双方可以去做别的，棋局不再频繁同步（省流量）；回来点「继续游戏」接着玩。
+                    </div>
+                  )}
+                  {boardState.winner === null && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <button className="btn-ghost" disabled={boardSaving} onClick={() => void toggleBoardPause()}>
+                        {boardState.gamePaused ? '▶️ 继续游戏' : '⏸️ 暂停'}
+                      </button>
+                      <button className="btn-ghost text-rose-600" disabled={boardSaving} onClick={() => void endBoardGame()}>
+                        重新设置棋盘
+                      </button>
+                    </div>
+                  )}
                 </>
               ) : null}
 
@@ -2037,6 +2406,126 @@ export default function CouplePage() {
                   )
                 })}
               </div>
+            </section>
+          )}
+
+          {activeModule === 'mines' && (
+            <section className="card space-y-4">
+              <div>
+                <h3 className="font-semibold">💣情侣扫雷</h3>
+                <p className="text-xs text-slate-400">轮流点开格子，踩到雷做任务，点开全部安全格即通关。</p>
+              </div>
+              {!minesLoaded ? (
+                <p className="py-6 text-center text-sm text-slate-400">棋局加载中…</p>
+              ) : !minesGame || minesGame.state.cleared ? (
+                <>
+                  {minesGame?.state.cleared && (
+                    <div className="rounded-2xl bg-emerald-50 p-4 text-center text-sm leading-relaxed text-emerald-700">
+                      🎉 上一局通关成功！<br />解锁奖励：{minesGame.state.reward}
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    <label className="text-xs text-slate-500">棋盘大小</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {MINES_PRESETS.map((preset) => (
+                        <button
+                          key={preset.key}
+                          type="button"
+                          className={`rounded-xl px-3 py-2 text-xs font-medium ring-1 transition ${
+                            minesPresetKey === preset.key
+                              ? 'bg-brand-50 text-brand-700 ring-brand-300'
+                              : 'bg-white text-slate-500 ring-slate-200'
+                          }`}
+                          onClick={() => setMinesPresetKey(preset.key)}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <button className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-40" disabled={minesSaving} onClick={() => void startMinesGame()}>
+                    {minesSaving ? '生成中…' : minesGame ? '重新开一局' : '生成雷区并开始'}
+                  </button>
+                  <p className="text-center text-[11px] leading-relaxed text-slate-400">
+                    开局双方各掷一次骰子定先后；轮流点开一格，数字表示周围地雷数（无雷自动展开相邻格）；
+                    双方随时可 🚩 标记疑似地雷（不消耗回合）；踩到 💣 触发互动任务；点开全部安全格即通关解锁奖励。
+                  </p>
+                </>
+              ) : minesState ? (
+                <>
+                  <div className="flex items-center justify-between gap-2 rounded-2xl bg-brand-50 px-3 py-2 text-xs text-brand-700">
+                    <span className="min-w-0 flex-1 truncate">❤️ {minesNames?.[0]}</span>
+                    <span className="shrink-0 font-semibold">
+                      {minesState.turn === myMinesIndex ? '轮到你点开一格' : `等待 ${friendName} 点…`}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-right">💙 {minesNames?.[1]}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="grid flex-1 grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        className={`rounded-xl px-3 py-2 text-xs font-medium ring-1 transition ${
+                          minesMode === 'open' ? 'bg-brand-50 text-brand-700 ring-brand-300' : 'bg-white text-slate-500 ring-slate-200'
+                        }`}
+                        onClick={() => setMinesMode('open')}
+                      >
+                        🔍 打开格子
+                      </button>
+                      <button
+                        type="button"
+                        className={`rounded-xl px-3 py-2 text-xs font-medium ring-1 transition ${
+                          minesMode === 'flag' ? 'bg-amber-50 text-amber-700 ring-amber-300' : 'bg-white text-slate-500 ring-slate-200'
+                        }`}
+                        onClick={() => setMinesMode('flag')}
+                      >
+                        🚩 标记地雷
+                      </button>
+                    </div>
+                    <span className="chip shrink-0 border-rose-200 bg-rose-50 text-rose-600">💣{minesState.hits.length}</span>
+                    <span className="chip shrink-0 border-amber-200 bg-amber-50 text-amber-600">
+                      🚩{minesState.cells.filter((c) => c === MINES_CELL.flagged).length}
+                    </span>
+                  </div>
+                  <div className="select-none" style={{ display: 'grid', gridTemplateColumns: `repeat(${minesState.cols}, minmax(0, 1fr))`, gap: '0.125rem' }}>
+                    {minesState.cells.map((cell, index) => {
+                      const isMine = minesState.mines.includes(index)
+                      const openedMine = cell === MINES_CELL.opened && isMine
+                      const around = cell === MINES_CELL.opened && !isMine ? minesAroundOf(minesState, index) : 0
+                      return (
+                        <button
+                          key={index}
+                          type="button"
+                          disabled={
+                            minesSaving ||
+                            (minesMode === 'open' &&
+                              (minesState.turn !== myMinesIndex || cell !== MINES_CELL.closed))
+                          }
+                          onClick={() => void actMinesCell(index)}
+                          className={`flex aspect-square items-center justify-center rounded text-[11px] font-bold ring-1 transition ${
+                            cell === MINES_CELL.opened
+                              ? openedMine
+                                ? 'bg-rose-100 text-rose-600 ring-rose-200'
+                                : `bg-white ring-slate-100 ${MINES_NUMBER_COLORS[around] ?? 'text-slate-700'}`
+                              : cell === MINES_CELL.flagged
+                                ? 'bg-amber-50 ring-amber-200'
+                                : 'bg-slate-100 ring-slate-200 active:scale-95'
+                          }`}
+                        >
+                          {cell === MINES_CELL.flagged ? '🚩' : cell === MINES_CELL.opened ? (openedMine ? '💣' : around || '') : ''}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="max-h-40 space-y-1 overflow-y-auto rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+                    {[...minesState.log].reverse().map((item, index) => (
+                      <p key={`${item.at}-${index}`} className="break-words">{item.text}</p>
+                    ))}
+                  </div>
+                  <button className="btn-ghost w-full text-rose-600" disabled={minesSaving} onClick={() => void endMinesGame()}>
+                    结束本局（销毁数据重新设置）
+                  </button>
+                </>
+              ) : null}
             </section>
           )}
         </>
@@ -2491,6 +2980,35 @@ export default function CouplePage() {
             <button className="btn-primary w-full" onClick={() => setDiceResult(null)}>
               {diceResult.reroll && diceResult.player === myBoardIndex ? '继续掷骰 🎲' : '知道了'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 扫雷 · 踩雷任务弹窗 */}
+      {minesTask && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="animate-pop-in w-full max-w-xs space-y-3 rounded-2xl bg-white p-5 text-center shadow-2xl">
+            <div className="animate-bounce text-5xl leading-none">💣</div>
+            <p className="text-base font-bold text-slate-800">踩到地雷啦！</p>
+            <p className="break-words rounded-xl bg-rose-50 p-3 text-sm leading-relaxed text-rose-700">
+              你的互动任务：{minesTask}
+            </p>
+            <p className="text-[11px] text-slate-400">完成后把回合交给对方继续拆雷～</p>
+            <button className="btn-primary w-full" onClick={() => setMinesTask(null)}>接受挑战 💪</button>
+          </div>
+        </div>
+      )}
+
+      {/* 扫雷 · 通关奖励弹窗 */}
+      {minesReward && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="animate-pop-in w-full max-w-xs space-y-3 rounded-2xl bg-white p-5 text-center shadow-2xl">
+            <div className="text-5xl leading-none">🎉</div>
+            <p className="text-base font-bold text-slate-800">通关成功！</p>
+            <p className="break-words rounded-xl bg-emerald-50 p-3 text-sm leading-relaxed text-emerald-700">
+              解锁奖励：{minesReward}
+            </p>
+            <button className="btn-primary w-full" onClick={() => setMinesReward(null)}>太棒了 🎉</button>
           </div>
         </div>
       )}

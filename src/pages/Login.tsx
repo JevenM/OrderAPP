@@ -28,20 +28,26 @@ export default function Login() {
     setErr('')
     setProbe('')
     try {
-      let ok: boolean
-      try {
-        ok = await enter(code)
-      } catch (first) {
-        // 网络抖动 / 限流导致的偶发失败：隔 1.5 秒自动再试一次，大多数情况第二次就过了
-        const msg = (first as Error).message || ''
-        if (!/邀请码|连不上 Supabase 配置/.test(msg)) {
-          await new Promise((r) => window.setTimeout(r, 1500))
+      // 登录是 REST 请求，跟实时通道是否可用无关；为抗住偶发网络抖动最多试 3 次
+      let ok = false
+      let lastErr: unknown
+      for (let i = 0; i < 3; i += 1) {
+        try {
           ok = await enter(code)
-        } else {
-          throw first
+          break
+        } catch (e) {
+          lastErr = e
+          const msg = (e as Error).message || ''
+          // 邀请码错误 / Supabase 配置缺失这类确定性问题就别再重试了
+          if (/邀请码|连不上 Supabase 配置/.test(msg)) throw e
+          if (i < 2) await new Promise((r) => window.setTimeout(r, 800 + i * 1000))
         }
       }
-      if (!ok) setErr('邀请码不对哦，再问问他～')
+      if (!ok && !lastErr) {
+        setErr('邀请码不对哦，再问问他～')
+      } else if (!ok && lastErr) {
+        setErr((lastErr as Error).message || '网络不太好，已自动重试 3 次还是失败')
+      }
     } catch (e) {
       const msg = (e as Error).message || '网络不太好，稍后再试～'
       setErr(msg)

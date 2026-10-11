@@ -1245,6 +1245,8 @@ export interface CoupleBoardState {
   winner: 0 | 1 | null
   /** 踩到真心话格时待作答的题目（答完才清除） */
   pending: { type: 'truth'; prompt: string; player: 0 | 1 } | null
+  /** 整局暂停（双方任一人可开启/解除）：暂停时双方可以去做别的，回来接着玩 */
+  gamePaused?: boolean
 }
 
 export interface CoupleBoardGameRow {
@@ -1278,6 +1280,14 @@ export async function upsertCoupleBoardGame(userA: string, userB: string, state:
       { onConflict: 'member_a,member_b' }
     )
   if (error) fail(error, '同步飞行棋棋局')
+}
+
+/** 销毁共享棋局（结束本局）：数据库不再保留该局数据，之后可重新设置棋盘 */
+export async function deleteCoupleBoardGame(userA: string, userB: string): Promise<void> {
+  if (!userA || !userB || userA === userB) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_board_games').delete().eq('member_a', memberA).eq('member_b', memberB)
+  if (error) fail(error, '结束飞行棋棋局')
 }
 
 export interface CoupleBoardGameHistoryRow {
@@ -1316,6 +1326,80 @@ export async function listCoupleBoardGameHistory(
     .limit(limit)
   if (error) fail(error, '加载飞行棋对局历史')
   return (data ?? []) as CoupleBoardGameHistoryRow[]
+}
+
+/* ------------------------------ 情侣扫雷 ------------------------------ */
+
+/** 扫雷格子状态：0 未开 1 已开（含踩雷） 2 标记疑似地雷 */
+export const MINES_CELL = { closed: 0, opened: 1, flagged: 2 } as const
+
+/** 踩雷触发的互动任务记录 */
+export interface CoupleMinesHit {
+  player: 0 | 1
+  index: number
+  task: string
+  at: string
+}
+
+export interface CoupleMinesState {
+  rows: number
+  cols: number
+  /** 地雷总数（开局设定） */
+  mineTotal: number
+  /** 地雷所在的格子下标（行 × cols + 列）；首次点开时才生成，保证第一步安全 */
+  mines: number[]
+  /** 每格状态，见 MINES_CELL */
+  cells: number[]
+  /** 轮到谁点：0 = member_a（❤️），1 = member_b（💙）；标记不消耗回合 */
+  turn: 0 | 1
+  log: CoupleBoardLogItem[]
+  /** 踩雷记录：谁、哪格、触发的任务 */
+  hits: CoupleMinesHit[]
+  /** 通关时随机解锁的奖励文案 */
+  reward: string | null
+  /** 所有非地雷格子全部点开 = 通关 */
+  cleared: boolean
+}
+
+export interface CoupleMinesRow {
+  member_a: string
+  member_b: string
+  state: CoupleMinesState
+  updated_at: string
+}
+
+export async function fetchCoupleMines(userA: string, userB: string): Promise<CoupleMinesRow | null> {
+  if (!userA || !userB || userA === userB) return null
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_mines')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .maybeSingle()
+  if (error) fail(error, '加载情侣扫雷棋局')
+  return (data as CoupleMinesRow | null) ?? null
+}
+
+/** 生成 / 更新共享扫雷：双方实时同步，后写覆盖先写（回合校验由调用方负责） */
+export async function upsertCoupleMines(userA: string, userB: string, state: CoupleMinesState): Promise<void> {
+  if (!userA || !userB || userA === userB) throw new Error('请先添加好友再开始情侣扫雷')
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase
+    .from('couple_mines')
+    .upsert(
+      { member_a: memberA, member_b: memberB, state, updated_at: new Date().toISOString() },
+      { onConflict: 'member_a,member_b' }
+    )
+  if (error) fail(error, '同步情侣扫雷棋局')
+}
+
+/** 销毁共享扫雷（结束本局）：数据库不再保留该局数据 */
+export async function deleteCoupleMines(userA: string, userB: string): Promise<void> {
+  if (!userA || !userB || userA === userB) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_mines').delete().eq('member_a', memberA).eq('member_b', memberB)
+  if (error) fail(error, '结束情侣扫雷棋局')
 }
 
 /* ------------------------------ 订单 ------------------------------ */
