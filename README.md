@@ -78,7 +78,7 @@ cp .env.example .env
 
 | 变量 | 说明 |
 | --- | --- |
-| `VITE_SUPABASE_URL` | Supabase 项目 Settings → API → Project URL |
+| `VITE_SUPABASE_URL` | Supabase 项目 Settings → API → Project URL；手机/国内网络直连不稳时可填 Cloudflare 代理域名（见「十二」） |
 | `VITE_SUPABASE_ANON_KEY` | 同上，`anon public` key |
 | `VITE_INVITE_CODE` | 她的邀请码（本地随便填，线上由 Secret 决定） |
 | `VITE_ADMIN_CODE` | 管理口令，可不填 |
@@ -191,7 +191,7 @@ git push
 
 | Secret | 必填 | 值 |
 | --- | --- | --- |
-| `VITE_SUPABASE_URL` | ✅ | `https://xxxx.supabase.co` |
+| `VITE_SUPABASE_URL` | ✅ | `https://xxxx.supabase.co`，或 Cloudflare 代理域名（见「十二」） |
 | `VITE_SUPABASE_ANON_KEY` | ✅ | `eyJhbGci...` |
 | `VITE_INVITE_CODE` | ✅ | 她的邀请码 |
 | `VITE_ADMIN_CODE` | ❌ | 不填则用默认管理员 |
@@ -437,10 +437,127 @@ export const CHANGELOG: ChangelogEntry[] = [
 | **toast 显示「3.2MB → 3.2MB」没变小** | 浏览器不支持 canvas 压缩，走了原图兜底；换 Chrome / Safari 新版 |
 | **控制台一直刷 `WebSocket ... ERR_CONNECTION_RESET`** | Supabase Realtime 的 ws 被网络拦截，**不影响功能**：`lib/realtime.ts` 会自动降级为 10 秒轮询刷新 |
 | **连不上 Supabase / 一直弹错误 toast** | 检查 `.env`（本地）或 Secrets（线上）两个 Supabase 值；免费项目 **7 天不用会暂停**，去控制台手动恢复 |
+| **手机蜂窝网登不进、电脑/热点却正常** | 网络对 `supabase.co`（及 `*.workers.dev`）不可达（DNS 污染 / IPv6 回程问题），按「**十二**」配 Cloudflare Worker 代理解决 |
 | **刷新后 404** | 已用 Hash 路由（`#/order`），正常不会出现 |
 | **收不到通知** | 后台右上角点「🔔 通知」授权；iOS Safari 需先「添加到主屏幕」再打开，且系统需 iOS 16.4+ |
 | **Node 报错 / 构建失败** | Node 版本太低，Vite 5 需要 18+（推荐 20） |
 
+
+---
+
+## 十二、Cloudflare Worker 代理 Supabase（解决手机 / 国内网络直连不上）
+
+### 1）什么情况需要配
+
+- 手机蜂窝网络（4G/5G）下登录一直转圈 / 失败，**电脑或电脑开手机热点却正常**
+- 控制台刷 `Failed to fetch` / `ERR_CONNECTION_TIMED_OUT` / WebSocket 连不上
+
+**根因**：`supabase.co` 在部分国内网络下 DNS 污染或 IPv6 回程不可达；`*.workers.dev` 域名同样被墙。
+**方案**：用一个托管在 Cloudflare 的自有域名（如 `supa.maoge.cme`）跑一个 Worker 反向代理 Supabase，前端 `VITE_SUPABASE_URL` 指向它。REST（登录/数据）和 wss（实时）都走这个域名。
+
+### 2）前置
+
+- 一个已接入 Cloudflare 的域名（免费版即可；域名只需做 DNS，不用买服务器）
+- Supabase 项目地址，形如 `abcdefghijk.supabase.co`（控制台 Settings → API → Project URL）
+- anon key **不变**
+
+### 3）创建 Worker
+
+Cloudflare 控制台 → **Workers & Pages → Create（Hello World 模板）** → 命名（如 `supabase-proxy`）→ 编辑代码，**全选替换**为：
+
+```js
+const SUPABASE = 'abcdefghijk.supabase.co'   // ← 改成你的项目域名（不带 https://、不带结尾斜杠）
+
+export default {
+  async fetch(request) {
+    const url = new URL(request.url)
+    url.hostname = SUPABASE
+
+    // 预检（OPTIONS）不转给 Supabase，直接回 CORS；
+    // 浏览器申请了哪些头就允许哪些头，解决 supabase-js 重试头 x-retry-count 被拒
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers':
+        request.headers.get('Access-Control-Request-Headers') || '*',
+      'Access-Control-Max-Age': '86400',
+      'x-proxy-worker': 'live',   // 标记头：curl 里看到它 = Worker 确实在跑
+    }
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: corsHeaders })
+    }
+
+    const newReq = new Request(url.toString(), request)
+    newReq.headers.set('Host', SUPABASE)   // Supabase 网关靠 Host 头识别项目，必须改写
+
+    // WebSocket（Realtime 实时通道）直接透传，不走响应包装
+    if ((request.headers.get('upgrade') || '').toLowerCase() === 'websocket') {
+      return fetch(newReq)
+    }
+
+    const res = await fetch(newReq)
+    const headers = new Headers(res.headers)
+    headers.set('Access-Control-Allow-Origin', '*')
+    headers.set('x-proxy-worker', 'live')
+    return new Response(res.body, { status: res.status, headers })
+  }
+}
+```
+
+改好 `SUPABASE` 常量后点右上角 **Deploy**（只 Save 不 Deploy 不生效）。
+
+### 4）绑定自定义域名（关键步骤，两种方式选一）
+
+**方式 A（推荐）：Worker Custom Domain**
+Worker → **Settings → Domains & Routes → Add → Custom Domain** → 填 `supa.yourdomain.com`，
+提示「已有 DNS 记录，是否替换」就**确认替换**，等状态变 Active。它会自动创建橙色云代理记录并强制接管该子域。
+
+**方式 B：DNS CNAME + Route**
+1. DNS → 添加 `CNAME  supa → abcd.supabase.co`，**橙色云（Proxied）**，灰色云等于没配；
+2. Worker → Settings → Domains & Routes → **Add route** → `supa.yourdomain.com/*` → 选这个 Worker。
+
+> ⚠️ **不能用「裸 CNAME 不挂 Worker」**：Supabase 靠 Host 头识别项目，裸代理不改写 Host，
+> 预检会返回 Supabase 原生头（不含 `x-retry-count`）→ 浏览器 CORS 报错。
+> ⚠️ **不要用 Worker 自带的 `*.workers.dev` 地址**：该域名在国内被墙，直接 `ERR_CONNECTION_TIMED_OUT`。
+
+### 5）改前端并重新构建
+
+```
+VITE_SUPABASE_URL=https://supa.yourdomain.com   # anon key 不变
+```
+
+- 本地：改 `.env` 后**必须重启 `npm run dev`**（Vite 环境变量只在启动时读入）；
+- 线上：仓库 Secrets 改完后**必须 Run workflow 重新构建**（`VITE_*` 是构建期烧进 JS 的），浏览器强刷。
+
+### 6）验证（curl，一锤定音）
+
+```bash
+# ① 链路是否通（401 + JSON 是正常的：探测请求没带 key）
+curl -i "https://supa.yourdomain.com/rest/v1/"
+# 期望：HTTP 401 + {"message":"No API key found in request"...} + x-proxy-worker: live
+
+# ② 预检是否被 Worker 接管
+curl -i -X OPTIONS "https://supa.yourdomain.com/rest/v1/app_settings" ^
+  -H "Origin: http://localhost:5173" ^
+  -H "Access-Control-Request-Method: GET" ^
+  -H "Access-Control-Request-Headers: x-retry-count, authorization, apikey, content-type"
+# 期望：HTTP 204 + access-control-allow-headers 里含 x-retry-count + x-proxy-worker: live
+```
+
+### 7）踩坑速查（实测遇到过的）
+
+| 现象 | 原因 / 解决 |
+| --- | --- |
+| CORS 报 `x-retry-count is not allowed` | Worker 没接管该域名（代码没 Deploy / 没绑 Custom Domain / Route 没挂 / 绑到了旧 Worker）→ 按第 4 步重绑，用上面 ② 的 curl 确认出现 `x-proxy-worker: live` |
+| `522 Connection timed out` | Worker 里 `SUPABASE` 常量写错（带了 `https://`、typo），或 Supabase 项目被暂停（免费版闲置约一周，控制台 Restore） |
+| `ERR_CONNECTION_TIMED_OUT`（域名是 `*.workers.dev`） | workers.dev 被墙，必须换成自定义域名 |
+| `GET /rest/v1/ 401` | **正常现象**，说明链路已通，不用处理 |
+| 通了但改了 `.env` 没变化 | Vite 构建期变量：重启 dev server / 重新构建部署 + 浏览器强刷 |
+| 实时通道偶断重连 | Cloudflare 免费版约 100 秒空闲断开，supabase-js 自动重连，无感；即便 wss 彻底不通，应用也会自动降级为轮询 |
+
+> 安全性：代理只是转发，anon key + RLS 的安全模型与直连 `supabase.co` 完全一致，不会额外暴露数据。
+
+---
 
 ##### 好友功能
 
