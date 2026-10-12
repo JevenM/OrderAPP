@@ -528,6 +528,14 @@ VITE_SUPABASE_URL=https://supa.yourdomain.com   # anon key 不变
 
 - 本地：改 `.env` 后**必须重启 `npm run dev`**（Vite 环境变量只在启动时读入）；
 - 线上：仓库 Secrets 改完后**必须 Run workflow 重新构建**（`VITE_*` 是构建期烧进 JS 的），浏览器强刷。
+1. 改仓库 Secret GitHub 仓库页面 → Settings → Secrets and variables → Actions → 找到 VITE_SUPABASE_URL → 右侧 Update → 填新值（如 https://supa.maoge.me）→ Save。
+
+名字必须严格是 VITE_SUPABASE_URL（带 VITE_ 前缀、大小写一致），填错名字前端会退回默认值；
+如果列表里没有这个 Secret，就 New repository secret 新建一个。
+2. 手动重新构建（改 Secret 不会自动触发） 仓库 → Actions → 左侧 Deploy to GitHub Pages → 右上角 Run workflow → 分支选 master → Run。
+
+3. 强刷浏览器 等 1 分钟左右 Actions 变绿后，Ctrl+Shift+R（Mac Cmd+Shift+R）强刷线上页面——旧 JS 有缓存，普通刷新可能还是老版本。
+
 
 ### 6）验证（curl，一锤定音）
 

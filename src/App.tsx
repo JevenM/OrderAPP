@@ -27,6 +27,8 @@ import AdminCoupleHistory from './pages/AdminCoupleHistory'
 import AdminCoupleWishes from './pages/AdminCoupleWishes'
 import AdminCoupleQuestions from './pages/AdminCoupleQuestions'
 import AdminCoupleTruthDare from './pages/AdminCoupleTruthDare'
+import AdminCoupleData from './pages/AdminCoupleData'
+import AdminHome from './pages/AdminHome'
 import AdminOrders from './pages/AdminOrders'
 import AdminMeals from './pages/AdminMeals'
 import AdminDishes from './pages/AdminDishes'
@@ -35,7 +37,7 @@ import AdminMembers from './pages/AdminMembers'
 /** 互动空间开关；好友管理面板不对普通用户展示 */
 export const ENABLE_FRIENDS = true
 
-const HOME: Record<Role, string> = { her: '/order', me: '/admin/orders' }
+const HOME: Record<Role, string> = { her: '/order', me: '/admin' }
 
 export default function App() {
   // 实时通道探测在 realtime.ts 模块加载时自动跑（早于 React 渲染），
@@ -78,7 +80,9 @@ function Shell() {
               <Route path="/meals" element={<MealLogPage />} />
               <Route path="/feed" element={<FeedPage />} />
               {ENABLE_FRIENDS && <Route path="/couple" element={<CouplePage />} />}
+              {isAdmin && <Route path="/admin" element={<AdminHome />} />}
               {isAdmin && <Route path="/admin/friendships" element={<AdminFriendships />} />}
+              {isAdmin && <Route path="/admin/couple-data" element={<AdminCoupleData />} />}
               {isAdmin && <Route path="/admin/couple-history" element={<AdminCoupleHistory />} />}
               {isAdmin && <Route path="/admin/couple-wishes" element={<AdminCoupleWishes />} />}
               {isAdmin && <Route path="/admin/couple-questions" element={<AdminCoupleQuestions />} />}
@@ -285,11 +289,10 @@ function Layout() {
                   )}
                   {isAdmin && role === 'me' && (
                     <>
-                      <MenuItem onClick={() => run(() => navigate('/admin/friendships'))}>好友关系管理</MenuItem>
-                      <MenuItem onClick={() => run(() => navigate('/admin/couple-questions'))}>同步抉择题库</MenuItem>
-                      <MenuItem onClick={() => run(() => navigate('/admin/couple-truth'))}>真心话大冒险记录</MenuItem>
-                      <MenuItem onClick={() => run(() => navigate('/admin/couple-history'))}>情侣答题历史</MenuItem>
-                      <MenuItem onClick={() => run(() => navigate('/admin/couple-wishes'))}>情侣秘密心愿</MenuItem>
+                      <MenuItem onClick={() => run(() => navigate('/admin'))}>🗂 管理总览</MenuItem>
+                      <MenuItem onClick={() => run(() => navigate('/admin/couple-data'))}>💞 互动数据管理</MenuItem>
+                      <MenuItem onClick={() => run(() => navigate('/admin/couple-questions'))}>❓ 同步抉择题库</MenuItem>
+                      <MenuItem onClick={() => run(() => navigate('/admin/friendships'))}>🤝 好友关系管理</MenuItem>
                     </>
                   )}
                   <MenuItem onClick={() => run(() => setProfileOpen(true))}>个人资料</MenuItem>

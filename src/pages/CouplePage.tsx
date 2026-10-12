@@ -8,11 +8,20 @@ import {
   createCoupleMinesHistory,
   createCoupleTruthDare,
   notifyMinesTurn,
+  notifyMinesNew,
+  notifyBoardTurn,
+  notifyBoardNew,
+  notifyWufuTurn,
+  notifyWufuNew,
+  notifyCoupleChatMessage,
+  notifyCoupleMealNudge,
   createCoupleWish,
   deleteCoupleBoardGame,
   deleteCoupleMines,
+  deleteCoupleWufu,
   fetchCoupleBoardGame,
   fetchCoupleMines,
+  fetchCoupleWufu,
   fetchCoupleQuiz,
   fetchCoupleQuizHistory,
   listCoupleBoardGameHistory,
@@ -30,6 +39,7 @@ import {
   saveCoupleQuizChoice,
   upsertCoupleBoardGame,
   upsertCoupleMines,
+  upsertCoupleWufu,
   type CoupleBoardCell,
   type CoupleBoardCellKind,
   type CoupleBoardGameHistoryRow,
@@ -44,9 +54,11 @@ import {
   type CoupleQuizHistoryRow,
   type CoupleQuizRow,
   type CoupleTruthDareRow,
+  type CoupleWufuRow,
+  type CoupleWufuState,
 } from '../lib/db'
 import { todayStr } from '../lib/date'
-import { EXTRA_COUPLE_QUESTIONS } from '../lib/coupleQuestions'
+import { DEEP_COUPLE_QUESTIONS, EXTRA_COUPLE_QUESTIONS, TRUTH_PROMPTS } from '../lib/coupleQuestions'
 import { useRealtime } from '../lib/realtime'
 import { SLOT_LABEL, type Meal, type MealSlot } from '../lib/types'
 import { useFriends } from '../store/friends'
@@ -55,7 +67,7 @@ import { useSession } from '../store/session'
 type Wish = { id: string; text: string; owner: string }
 type DrawnWish = Wish & { drawer: string }
 type ChatItem = { id: string; sender_id: string; receiver_id: string; content: string; created_at: string }
-export type QuestionKind = '轻松版' | '走心版' | '自定义'
+export type QuestionKind = '轻松版' | '走心版' | '深度版' | '自定义'
 export type Question = { id: string; title: string; a: string; b: string; kind: QuestionKind }
 type QuizView = {
   question: Question | null
@@ -472,30 +484,8 @@ const BUILT_IN_QUESTIONS: Question[] = [
   { id: 'heart-60', title: '我们最棒的一天', a: '在一起的第一个日子', b: '一起熬过难关的日子', kind: '走心版' },
 ]
 
-export const ALL_QUESTIONS = [...BUILT_IN_QUESTIONS, ...EXTRA_COUPLE_QUESTIONS]
+export const ALL_QUESTIONS = [...BUILT_IN_QUESTIONS, ...EXTRA_COUPLE_QUESTIONS, ...DEEP_COUPLE_QUESTIONS]
 let managedQuestionsCache: Question[] | null = null
-const TRUTH_PROMPTS = [
-  '最近一次觉得被我理解的时刻是什么？',
-  '我们一起做过的哪件小事让你最开心？',
-  '你希望我多了解你的哪一个习惯或想法？',
-  '遇到压力时，什么样的陪伴最能帮到你？',
-  '你觉得我们最近在哪件事上配合得很好？',
-  '有什么简单的小约会是你想和我尝试的？',
-  '我做过哪件小事让你觉得很贴心？',
-  '未来一年你最期待我们一起完成什么？',
-  '意见不同时，怎样沟通会让你更安心？',
-  '你想和我一起养成什么日常习惯？',
-  '最近有什么感谢我的事还没说出口？',
-  '你希望我们怎样庆祝彼此的小成就？',
-  '和我在一起时，你最自在的时刻通常是什么？',
-  '你最近想学会或重新拾起什么兴趣？',
-  '我们可以怎样让忙碌的日子也留有相处时间？',
-  '你心目中舒服的周末是什么样子？',
-  '有什么话题你希望我们找时间认真聊聊？',
-  '你希望我在你难过时先做的第一件事是什么？',
-  '如果安排一次半天约会，你最想怎么度过？',
-  '你觉得我们共同创造的哪段回忆最珍贵？',
-]
 const DARES = [
   '用三个具体细节夸夸对方，不能只说“很好”。',
   '给对方倒一杯水或准备一份小零食。',
@@ -556,6 +546,8 @@ function buildBoardCells(size: number, extraTexts: string[] = []): CoupleBoardCe
     list.push(cell)
     groups.set(cell.kind, list)
   }
+  // 冲线（goal）格大概率不出现：约 10 局棋盘才出现 1 次冲线，保留惊喜感、不稀释常规玩法
+  if (Math.random() > 0.1) groups.delete('goal')
   const picked: CoupleBoardCell[] = []
   // 第一轮：每种类型先各出一个，保证玩法齐全
   if (middle >= groups.size) {
@@ -602,15 +594,89 @@ function rollForFirst(names: [string, string], verb = '先走'): { turn: 0 | 1; 
   return { turn, logs }
 }
 
+/* ------------------------------ 摆方五福棋（模块级工具） ------------------------------ */
+
+/**
+ * 五福棋全部成项棋形（吃子规则）：
+ * 通天 = 5 子斜贯两条对角；大棍（五福）= 5 子整行 / 整列；
+ * 四斜 = 4 子斜连两条相邻边；三斜 = 3 子斜连两条相邻边；小方（井口）= 紧邻 2×2 方格。
+ * cells 为 25 个落子点（行优先）中组成该棋形的点。
+ */
+const WUFU_PATTERNS: Array<{ name: string; cells: number[] }> = [
+  // 大棍：5 行 + 5 列
+  ...Array.from({ length: 5 }, (_, r) => ({ name: '大棍', cells: [0, 1, 2, 3, 4].map((c) => r * 5 + c) })),
+  ...Array.from({ length: 5 }, (_, c) => ({ name: '大棍', cells: [0, 1, 2, 3, 4].map((r) => r * 5 + c) })),
+  // 通天：两条主对角线
+  { name: '通天', cells: [0, 6, 12, 18, 24] },
+  { name: '通天', cells: [4, 8, 12, 16, 20] },
+  // 四斜：长 4 的对角线，两端落在两条相邻边
+  { name: '四斜', cells: [1, 7, 13, 19] },
+  { name: '四斜', cells: [5, 11, 17, 23] },
+  { name: '四斜', cells: [3, 7, 11, 15] },
+  { name: '四斜', cells: [9, 13, 17, 21] },
+  // 三斜：长 3 的对角线，两端落在两条相邻边
+  { name: '三斜', cells: [2, 6, 10] },
+  { name: '三斜', cells: [14, 18, 22] },
+  { name: '三斜', cells: [2, 8, 14] },
+  { name: '三斜', cells: [10, 16, 22] },
+  // 小方（井口）：紧邻 2×2 小正方形
+  ...Array.from({ length: 16 }, (_, i) => {
+    const r = Math.floor(i / 4)
+    const c = i % 4
+    return { name: '小方', cells: [r * 5 + c, r * 5 + c + 1, (r + 1) * 5 + c, (r + 1) * 5 + c + 1] }
+  }),
+]
+
+/** 玩家（1 = member_a ❤️ / 2 = member_b 💙）当前已成项的棋形下标集合 */
+function wufuFormedPatterns(board: number[], player: number): Set<number> {
+  const formed = new Set<number>()
+  WUFU_PATTERNS.forEach((pattern, index) => {
+    if (pattern.cells.every((cell) => board[cell] === player)) formed.add(index)
+  })
+  return formed
+}
+
+/** 玩家处于成项棋形中的棋子集合（受保护，不能被对方提走） */
+function wufuProtectedCells(board: number[], player: number): Set<number> {
+  const cells = new Set<number>()
+  WUFU_PATTERNS.forEach((pattern) => {
+    if (pattern.cells.every((cell) => board[cell] === player)) pattern.cells.forEach((cell) => cells.add(cell))
+  })
+  return cells
+}
+
+/** 走子阶段：某棋子沿线可走到的相邻空点（上下左右一格） */
+function wufuMoveTargets(board: number[], from: number): number[] {
+  const r = Math.floor(from / 5)
+  const c = from % 5
+  const targets: number[] = []
+  if (r > 0 && board[from - 5] === 0) targets.push(from - 5)
+  if (r < 4 && board[from + 5] === 0) targets.push(from + 5)
+  if (c > 0 && board[from - 1] === 0) targets.push(from - 1)
+  if (c < 4 && board[from + 1] === 0) targets.push(from + 1)
+  return targets
+}
+
+/** 走子阶段：玩家是否还有任何一步可走（无路可走即判负） */
+function wufuHasAnyMove(board: number[], player: number): boolean {
+  for (let cell = 0; cell < 25; cell += 1) {
+    if (board[cell] === player && wufuMoveTargets(board, cell).length) return true
+  }
+  return false
+}
+
 /* ------------------------------ 情侣扫雷（模块级工具） ------------------------------ */
 
-/** 扫雷尺寸档位：多种大小可选，雷数随之递增 */
+/** 扫雷尺寸档位：多种大小可选，雷数随之递增；另支持「自定义」行/列/雷数 */
 const MINES_PRESETS = [
   { key: 's', label: '6×6 · 6雷', rows: 6, cols: 6, mines: 6 },
   { key: 'm', label: '8×8 · 10雷', rows: 8, cols: 8, mines: 10 },
   { key: 'l', label: '10×10 · 15雷', rows: 10, cols: 10, mines: 15 },
   { key: 'xl', label: '12×12 · 24雷', rows: 12, cols: 12, mines: 24 },
 ]
+
+/** 自定义数值收敛到安全范围（生成棋盘时调用） */
+const clampInt = (value: number, min: number, max: number) => Math.min(max, Math.max(min, Math.round(value)))
 
 /** 通关奖励池：随机解锁一条 */
 const MINES_REWARDS = [
@@ -938,6 +1004,8 @@ export default function CouplePage() {
   /* ------------------------------ 同步抉择 ------------------------------ */
   const [questionKind, setQuestionKind] = useState<QuestionKind>('轻松版')
   const [managedQuestions, setManagedQuestions] = useState<Question[] | null>(managedQuestionsCache)
+  /* 深度版题目是否来自服务端题库表（0027 迁移入库），影响 pair 题目配置的过滤口径 */
+  const [deepFromBank, setDeepFromBank] = useState(false)
   const [pairQuestionIds, setPairQuestionIds] = useState<string[] | null>(null)
   const [pairQuestionsLoaded, setPairQuestionsLoaded] = useState(false)
   const [usedQuestionIds, setUsedQuestionIds] = useState<Set<string>>(new Set())
@@ -977,6 +1045,8 @@ export default function CouplePage() {
   const [boardSaving, setBoardSaving] = useState(false)
   const [boardSetup, setBoardSetup] = useState(false)
   const [boardSize, setBoardSize] = useState(30)
+  /* 棋盘格数是否用自定义数值（10～100） */
+  const [boardSizeCustom, setBoardSizeCustom] = useState(false)
   const [boardStepMin, setBoardStepMin] = useState(1)
   const [boardStepMax, setBoardStepMax] = useState(6)
   const [boardTruthAnswer, setBoardTruthAnswer] = useState('')
@@ -993,11 +1063,24 @@ export default function CouplePage() {
   const [minesHistory, setMinesHistory] = useState<CoupleMinesHistoryRow[]>([])
   const [minesHistoryOpenId, setMinesHistoryOpenId] = useState<string | null>(null)
 
+  /* ------------------------------ 联网摆方（五福棋） ------------------------------ */
+  const [wufuGame, setWufuGame] = useState<CoupleWufuRow | null>(null)
+  const [wufuLoaded, setWufuLoaded] = useState(false)
+  const [wufuSaving, setWufuSaving] = useState(false)
+  /* 走子阶段已选中的己方棋子（点击相邻空点走子；再点一次取消） */
+  const [wufuSelected, setWufuSelected] = useState<number | null>(null)
+  /* 成项棋形刚形成时的闪烁高亮（cells + key，1.8 秒后自动消退） */
+  const [wufuFlash, setWufuFlash] = useState<{ cells: number[]; key: number } | null>(null)
+
   /* ------------------------------ 联网扫雷 ------------------------------ */
   const [minesGame, setMinesGame] = useState<CoupleMinesRow | null>(null)
   const [minesLoaded, setMinesLoaded] = useState(false)
   const [minesSaving, setMinesSaving] = useState(false)
   const [minesPresetKey, setMinesPresetKey] = useState('m')
+  /* 自定义扫雷尺寸：行 / 列 / 雷数（生成棋盘时会按范围收敛） */
+  const [minesCustomRows, setMinesCustomRows] = useState(9)
+  const [minesCustomCols, setMinesCustomCols] = useState(9)
+  const [minesCustomMines, setMinesCustomMines] = useState(12)
   /* 当前点击模式：open 打开格子 / flag 标记疑似地雷（标记不消耗回合） */
   const [minesMode, setMinesMode] = useState<'open' | 'flag'>('open')
   /* 踩雷任务弹层 / 通关奖励弹层 */
@@ -1007,6 +1090,22 @@ export default function CouplePage() {
   const questionPool = questionKind === '自定义'
     ? customQuestions
     : (managedQuestions ?? ALL_QUESTIONS).filter((question) => question.kind === questionKind && (pairQuestionIds === null || pairQuestionIds.includes(question.id)))
+  /* 同步抉择总进度：总题库 = 题库全部题目（含轻松版/走心版）+ 双方自定义题；
+     已做 = 历史记录里做过的题（进行中、还没双方答完的那道不计入，保证两边数字一致） */
+  const quizTotalQuestions = useMemo(
+    () => [...(managedQuestions ?? ALL_QUESTIONS), ...customQuestions],
+    [managedQuestions, customQuestions]
+  )
+  const activeUnrevealedQuizId = quiz.question && !quiz.revealed ? quiz.question.id : null
+  const quizDoneCount = useMemo(
+    () => quizTotalQuestions.filter((question) => usedQuestionIds.has(question.id) && question.id !== activeUnrevealedQuizId).length,
+    [quizTotalQuestions, usedQuestionIds, activeUnrevealedQuizId]
+  )
+  /* 真心话进度：双方历史里答过的题（按题目文本去重）占 400 道题库的比例 */
+  const truthDoneCount = useMemo(() => {
+    const used = new Set(truthHistory.map((row) => row.prompt))
+    return TRUTH_PROMPTS.filter((prompt) => used.has(prompt)).length
+  }, [truthHistory])
   const loveMessage = LOVE_MESSAGES[dayNumber() % LOVE_MESSAGES.length]
   const mealDone = (list: Meal[]) => REQUIRED_SLOTS.filter((s) => list.some((m) => m.slot === s)).length
   const loveUnlocked = Boolean(friendId) && mealDone(myMeals) === 3 && mealDone(peerMeals) === 3
@@ -1018,6 +1117,20 @@ export default function CouplePage() {
   const [noticeQuiz, setNoticeQuiz] = useState<CoupleQuizHistoryRow | null>(null)
   const [noticeQuizLoading, setNoticeQuizLoading] = useState(false)
   const lovePrevRef = useRef<boolean | null>(null)
+
+  /* 催对方打卡：我已打完三餐、对方还没打完时可发一条铃铛提醒，60 秒内只催一次 */
+  const [mealNudgeCooldown, setMealNudgeCooldown] = useState(false)
+  const nudgePeerMeals = async () => {
+    if (!friendId || mealNudgeCooldown) return
+    try {
+      await notifyCoupleMealNudge(friendId, memberName || '我')
+      toast.show(`已经催 ${friendName} 去打卡啦 💬`)
+      setMealNudgeCooldown(true)
+      window.setTimeout(() => setMealNudgeCooldown(false), 60_000)
+    } catch {
+      toast.show('提醒发送失败，稍后再试试', 'err')
+    }
+  }
 
   // 双方三餐打卡齐的那一刻同时揭晓：本方打完最后一餐、或对方实时打完，解锁从 false 变 true 时播放
   useEffect(() => {
@@ -1112,16 +1225,26 @@ export default function CouplePage() {
     [memberId, friendId]
   )
 
-  const reloadBoard = useCallback(async () => {
-    if (!memberId || !friendId) return
-    try {
-      applyBoardRow(await fetchCoupleBoardGame(memberId, friendId))
-    } catch (error) {
-      console.warn('加载飞行棋棋局失败', error)
-    } finally {
-      setBoardLoaded(true)
-    }
-  }, [memberId, friendId, applyBoardRow])
+  const reloadBoard = useCallback(
+    async (force = false) => {
+      if (!memberId || !friendId) return
+      const k = key('board', memberId, friendId)
+      const cached = !force ? readCache<CoupleBoardGameRow | null>(k, null) : null
+      if (cached) {
+        applyBoardRow(cached)
+        setBoardLoaded(true)
+        return
+      }
+      try {
+        applyBoardRow(await fetchCoupleBoardGame(memberId, friendId))
+      } catch (error) {
+        console.warn('加载飞行棋棋局失败', error)
+      } finally {
+        setBoardLoaded(true)
+      }
+    },
+    [memberId, friendId, applyBoardRow]
+  )
 
   const reloadBoardHistory = useCallback(async () => {
     if (!memberId || !friendId) return
@@ -1156,16 +1279,62 @@ export default function CouplePage() {
     [memberId, friendId]
   )
 
-  const reloadMines = useCallback(async () => {
-    if (!memberId || !friendId) return
-    try {
-      applyMinesRow(await fetchCoupleMines(memberId, friendId))
-    } catch (error) {
-      console.warn('加载情侣扫雷棋局失败', error)
-    } finally {
-      setMinesLoaded(true)
-    }
-  }, [memberId, friendId, applyMinesRow])
+  const reloadMines = useCallback(
+    async (force = false) => {
+      if (!memberId || !friendId) return
+      const k = key('mines', memberId, friendId)
+      const cached = !force ? readCache<CoupleMinesRow | null>(k, null) : null
+      if (cached) {
+        applyMinesRow(cached)
+        setMinesLoaded(true)
+        return
+      }
+      try {
+        applyMinesRow(await fetchCoupleMines(memberId, friendId))
+      } catch (error) {
+        console.warn('加载情侣扫雷棋局失败', error)
+      } finally {
+        setMinesLoaded(true)
+      }
+    },
+    [memberId, friendId, applyMinesRow]
+  )
+
+  /** 应用远端摆方棋局：null 表示本局已被对方销毁 */
+  const applyWufuRow = useCallback(
+    (row: CoupleWufuRow | null) => {
+      if (!row) {
+        setWufuGame(null)
+        return
+      }
+      if (!memberId || !friendId) return
+      const [a, b] = orderedPair(memberId, friendId)
+      if (row.member_a !== a || row.member_b !== b) return
+      setWufuGame(row)
+    },
+    [memberId, friendId]
+  )
+
+  const reloadWufu = useCallback(
+    async (force = false) => {
+      if (!memberId || !friendId) return
+      const k = key('wufu', memberId, friendId)
+      const cached = !force ? readCache<CoupleWufuRow | null>(k, null) : null
+      if (cached) {
+        applyWufuRow(cached)
+        setWufuLoaded(true)
+        return
+      }
+      try {
+        applyWufuRow(await fetchCoupleWufu(memberId, friendId))
+      } catch (error) {
+        console.warn('加载摆方棋局失败', error)
+      } finally {
+        setWufuLoaded(true)
+      }
+    },
+    [memberId, friendId, applyWufuRow]
+  )
 
   const reloadWishes = useCallback(async () => {
     if (!memberId || !friendId) return
@@ -1295,8 +1464,9 @@ export default function CouplePage() {
     [memberId, closedDrawIds]
   )
 
-  /* 列表读取带 10 秒内存缓存：频繁轮询不再重复打网络（实时连通时由事件即时刷新，不走这里） */
-  const FETCH_TTL = 10_000
+  /* 轮询兜底带 60 秒内存缓存：对局中的快速刷（2 秒一次）也不会重复打网络，
+     实时连通时由事件即时刷新，不走这里；放宽后各模块轮询最多 1 次/分钟 */
+  const FETCH_TTL = 60_000
   const fetchStamp: Record<string, number> = {}
   const throttled = (key: string, fn: () => void | Promise<void>) => {
     const t = fetchStamp[key]
@@ -1314,12 +1484,19 @@ export default function CouplePage() {
     else if (m === 'chat') throttled('messages', reloadMessages)
     else if (m === 'quiz') throttled('quiz', reloadQuiz)
     else if (m === 'truth') throttled('truth', reloadTruthHistory)
-    else if (m === 'board') throttled('board', reloadBoard)
-    else if (m === 'mines') throttled('mines', reloadMines)
+    else if (m === 'board') {
+      throttled('board', reloadBoard)
+      // 对局历史一并兜底刷新：实时推送偶发丢失时不至于「打完一局要手动刷新才看到」
+      throttled('boardHistory', reloadBoardHistory)
+    } else if (m === 'mines') {
+      throttled('mines', reloadMines)
+      throttled('minesHistory', reloadMinesHistory)
+    } else if (m === 'wufu') throttled('wufu', reloadWufu)
     else if (m === 'love') throttled('meals', reloadMeals)
-  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadMines, reloadMeals])
+  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadMeals])
 
-  /* 切到某个模块时立即拉一次（不走 10 秒缓存），让数据尽快展示，不用等下一轮轮询 */
+  /* 切到某个模块时立即拉一次；棋局类（飞行棋/扫雷/摆方）走各自动作里的缓存，
+     只在本地还没有该模块数据时补拉一次，来回切 Tab 不再重复打网络 */
   useEffect(() => {
     if (!ready) return
     const m = activeModule
@@ -1327,10 +1504,11 @@ export default function CouplePage() {
     else if (m === 'chat') void reloadMessages()
     else if (m === 'quiz') void reloadQuiz()
     else if (m === 'truth') void reloadTruthHistory()
-    else if (m === 'board') void reloadBoard()
-    else if (m === 'mines') void reloadMines()
+    else if (m === 'board') void reloadBoard(boardLoaded ? undefined : true)
+    else if (m === 'mines') void reloadMines(minesLoaded ? undefined : true)
+    else if (m === 'wufu') void reloadWufu(wufuLoaded ? undefined : true)
     else if (m === 'love') void reloadMeals()
-  }, [activeModule, ready, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadMines, reloadMeals])
+  }, [activeModule, ready, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadMines, reloadWufu, reloadMeals, boardLoaded, minesLoaded, wufuLoaded])
 
   useRealtime(
     channelKey,
@@ -1347,6 +1525,9 @@ export default function CouplePage() {
       // 情侣扫雷：对方点开 / 标记 / 通关时即时同步（DELETE 交由轮询兜底）
       { table: 'couple_mines', event: 'INSERT', on: (p) => applyMinesRow(p.new as CoupleMinesRow) },
       { table: 'couple_mines', event: 'UPDATE', on: (p) => applyMinesRow(p.new as CoupleMinesRow) },
+      // 摆方五福棋：对方摆子 / 提子 / 逼子 / 走子时即时同步（DELETE 交由轮询兜底）
+      { table: 'couple_wufu', event: 'INSERT', on: (p) => applyWufuRow(p.new as CoupleWufuRow) },
+      { table: 'couple_wufu', event: 'UPDATE', on: (p) => applyWufuRow(p.new as CoupleWufuRow) },
       // 飞行棋对局历史：一局结束落库后即时刷新
       { table: 'couple_board_game_history', event: 'INSERT', on: () => void reloadBoardHistory() },
       // 扫雷对局历史：一局通关落库后即时刷新
@@ -1377,26 +1558,52 @@ export default function CouplePage() {
     ],
     {
       enabled: ready,
-      // 实时推送连不上时的兜底轮询：只刷当前正在看的模块（省流量）；飞行棋整局暂停时降频到 30 秒，只为感知对方「继续游戏」
-      pollMs: activeModule === 'board' && boardGame?.state.gamePaused ? 30_000 : 5_000,
+      // 实时推送连不上时的兜底轮询：只刷当前正在看的模块（省流量）
+      // —— 高实时模块（对局中）10 秒；飞行棋整局暂停 30 秒；
+      // —— 其余模块实时性要求低，放宽到 60 秒（实时通道可用时由事件即时刷新，轮询只是兜底）
+      pollMs:
+        (activeModule === 'board' && !boardGame?.state.gamePaused) ||
+        (activeModule === 'mines' && !minesGame?.state.cleared) ||
+        (activeModule === 'wufu' && wufuGame?.state.winner === null)
+          ? 10_000
+          : activeModule === 'board' && boardGame?.state.gamePaused
+            ? 30_000
+            : 60_000,
       onPoll: () => pollActiveModule(),
     }
   )
 
-  // 首次进入：拉取双方共享的全部互动数据（导航进来即全量刷新，保证各模块即时有数据）
+  // 首次进入只拉「默认打开的模块」数据（省流量）；
+  // 其余模块切到对应 Tab / 收到实时推送时再拉（切模块效果见下方「切到某模块立即拉一次」）
   useEffect(() => {
     if (!ready) return
-    void reloadWishes()
-    void reloadMessages()
-    void reloadQuiz()
-    void reloadEvents()
-    void reloadMeals()
-    void reloadTruthHistory()
-    void reloadBoard()
-    void reloadBoardHistory()
-    void reloadMines()
-    void reloadMinesHistory()
-  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory])
+    if (activeModuleRef.current === 'board') {
+      void reloadBoard()
+      void reloadBoardHistory()
+    } else if (activeModuleRef.current === 'mines') {
+      void reloadMines()
+      void reloadMinesHistory()
+    } else if (activeModuleRef.current === 'wufu') {
+      void reloadWufu()
+    } else if (activeModuleRef.current === 'wish') {
+      void reloadWishes()
+      void reloadEvents()
+    } else if (activeModuleRef.current === 'chat') {
+      void reloadMessages()
+    } else if (activeModuleRef.current === 'quiz') {
+      void reloadQuiz()
+    } else if (activeModuleRef.current === 'truth') {
+      void reloadTruthHistory()
+    } else if (activeModuleRef.current === 'love') {
+      void reloadMeals()
+    } else {
+      // 无模块参数（停留在模块网格页）：只拉入口卡片计数用到的轻量数据
+      void reloadWishes()
+      void reloadMessages()
+      void reloadQuiz()
+      void reloadTruthHistory()
+    }
+  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu])
 
   useEffect(() => {
     try {
@@ -1407,24 +1614,41 @@ export default function CouplePage() {
     }
   }, [activeModule])
 
-  // 铃铛通知跳转：/couple?module=truth 直接打开真心话大冒险模块（?quiz= 的揭晓弹窗优先）
+  // 铃铛通知跳转：/couple?module=truth 直接打开真心话大冒险模块（?quiz= 的揭晓弹窗优先）；
+  // 带 &focus=1 时（点击铃铛通知进入）高亮定位到对应模块，提示用户「要看的是这里」
+  const [moduleFocus, setModuleFocus] = useState(false)
   useEffect(() => {
     const module = searchParams.get('module')
     if (!module) return
+    const focus = searchParams.get('focus') === '1'
     setSearchParams(
       (params) => {
         params.delete('module')
+        params.delete('focus')
         return params
       },
       { replace: true }
     )
     if (noticeQuizId) return
-    if (['love', 'wish', 'chat', 'quiz', 'truth', 'board'].includes(module)) setActiveModule(module)
+    if (['love', 'wish', 'chat', 'quiz', 'truth', 'board', 'mines', 'wufu'].includes(module)) {
+      setActiveModule(module)
+      if (focus) setModuleFocus(true)
+    }
   }, [searchParams, noticeQuizId, setSearchParams])
+
+  // 高亮几秒后自动消退 + 滚动把模块带到视野内
+  useEffect(() => {
+    if (!moduleFocus) return
+    document.getElementById('couple-active-module')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const timer = window.setTimeout(() => setModuleFocus(false), 4200)
+    return () => window.clearTimeout(timer)
+  }, [moduleFocus])
 
   useEffect(() => {
     let active = true
-    void listCoupleQuizBank(ALL_QUESTIONS)
+    // 深度版（是/否题）不参与首次播种：线上题库表可能还没跑 0027 迁移（kind 约束未放开），
+    // 播种失败会拖垮整个题库初始化；深度版改由 0027 迁移入库，或在下方从客户端合并
+    void listCoupleQuizBank(ALL_QUESTIONS.filter((question) => question.kind !== '深度版'))
       .then((rows) => {
         if (!active) return
         const enabledQuestions = rows.filter((row) => row.enabled).map((row) => ({
@@ -1434,8 +1658,12 @@ export default function CouplePage() {
           b: row.b,
           kind: row.kind,
         }))
-        managedQuestionsCache = enabledQuestions
-        setManagedQuestions(enabledQuestions)
+        // 题库表里还没有深度版（未跑迁移）时，从客户端直接并入，保证「深度版」可玩
+        const bankHasDeep = rows.some((row) => row.kind === '深度版')
+        const merged = bankHasDeep ? enabledQuestions : [...enabledQuestions, ...DEEP_COUPLE_QUESTIONS]
+        setDeepFromBank(bankHasDeep)
+        managedQuestionsCache = merged
+        setManagedQuestions(merged)
       })
       .catch(() => {
         if (active) setManagedQuestions(null)
@@ -1478,6 +1706,14 @@ export default function CouplePage() {
       .catch((error) => console.warn('加载已做题目失败', error))
     return () => { active = false }
   }, [memberId, friendId])
+
+  // 双方都答完（揭晓）的那一刻，把这道题计入「已做」，让进度数字在两边实时 +1
+  useEffect(() => {
+    if (quiz.revealed && quiz.question) {
+      const id = quiz.question.id
+      setUsedQuestionIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)))
+    }
+  }, [quiz.revealed, quiz.question])
 
   useEffect(() => {
     if (!noticeQuizId || !memberId || !friendId) {
@@ -1555,7 +1791,13 @@ export default function CouplePage() {
     }
     const pool = kind === '自定义'
       ? customQuestions
-      : (managedQuestions ?? []).filter((question) => question.kind === kind && (pairQuestionIds === null || pairQuestionIds.includes(question.id)))
+      : (managedQuestions ?? []).filter((question) =>
+          question.kind === kind &&
+          (pairQuestionIds === null ||
+            pairQuestionIds.includes(question.id) ||
+            // 深度版还是客户端合并来的（未入库）时，不受旧的 pair 题目配置限制
+            (question.kind === '深度版' && !deepFromBank))
+        )
     let usedIds = usedQuestionIds
     if (memberId && friendId) {
       try {
@@ -1656,6 +1898,8 @@ export default function CouplePage() {
   const drawTruth = () => {
     const usedPrompts = new Set(truthHistory.map((row) => row.prompt))
     const pool = TRUTH_PROMPTS.filter((p) => !usedPrompts.has(p))
+    // 400 道全部答完时提示一轮完成，然后从头再来（第二轮同样不重复）
+    if (!pool.length) toast.show(`${TRUTH_PROMPTS.length} 道真心话都答过啦，从头再来一轮 🎉`)
     const list = pool.length ? pool : TRUTH_PROMPTS
     setTruthDraw({ type: 'truth', prompt: list[Math.floor(Math.random() * list.length)] })
     setTruthAnswer('')
@@ -1721,6 +1965,35 @@ export default function CouplePage() {
   /* 扫雷的派生常量：与飞行棋同口径（下标 0 = member_a ❤️，1 = member_b 💙） */
   const myMinesIndex: 0 | 1 = minesGame && memberId === minesGame.member_b ? 1 : 0
   const minesState = minesGame?.state ?? null
+  /* 摆方五福棋的派生常量：同口径（❤️=member_a 先摆与否由掷骰决定） */
+  const myWufuIndex: 0 | 1 = wufuGame && memberId === wufuGame.member_b ? 1 : 0
+  const wufuState = wufuGame?.state ?? null
+  const wufuNames: [string, string] | null = wufuGame
+    ? [
+        wufuGame.member_a === memberId ? memberName || '我' : friendName,
+        wufuGame.member_b === memberId ? memberName || '我' : friendName,
+      ]
+    : null
+  /** 我的棋子编号（1 = ❤️ member_a / 2 = 💙 member_b） */
+  const myWufuPiece = myWufuIndex + 1
+  /** 双方棋盘上的存子数 */
+  const wufuPieceCount = useMemo(() => {
+    const board = wufuState?.board ?? []
+    return [board.filter((cell) => cell === 1).length, board.filter((cell) => cell === 2).length] as [number, number]
+  }, [wufuState])
+  /** 走子阶段我选中棋子后可走的空点 */
+  const wufuMoveTargetCells = useMemo(
+    () => (wufuState && wufuSelected !== null && wufuState.board[wufuSelected] === myWufuPiece ? wufuMoveTargets(wufuState.board, wufuSelected) : []),
+    [wufuState, wufuSelected, myWufuPiece]
+  )
+  /** 对方已成项的棋子（受保护不可被提），只在需要点选对方棋子时计算 */
+  const wufuEnemyProtected = useMemo(() => {
+    if (!wufuState || wufuState.winner !== null || wufuState.turn !== myWufuIndex) return new Set<number>()
+    const needPick =
+      wufuState.pendingCaptures > 0 || (wufuState.phase === 'forceRemove' && wufuState.turn === 1 - wufuState.firstMover)
+    if (!needPick) return new Set<number>()
+    return wufuProtectedCells(wufuState.board, 3 - myWufuPiece)
+  }, [wufuState, myWufuIndex, myWufuPiece])
   const minesNames: [string, string] | null = minesGame
     ? [
         minesGame.member_a === memberId ? memberName || '我' : friendName,
@@ -1744,7 +2017,8 @@ export default function CouplePage() {
     const first = rollForFirst(names)
     const at = new Date().toISOString()
     const state: CoupleBoardState = {
-      size: boardSize,
+      // 自定义格数收敛到 10～100，防止误输入过大/过小
+      size: clampInt(boardSize, 10, 100),
       stepMin: boardStepMin,
       stepMax,
       cells: buildBoardCells(boardSize, parseCustomCells(boardCustomText)),
@@ -1766,6 +2040,11 @@ export default function CouplePage() {
       await upsertCoupleBoardGame(memberId, friendId, state)
       const [memberA, memberB] = orderedPair(memberId, friendId)
       setBoardGame({ member_a: memberA, member_b: memberB, state, updated_at: new Date().toISOString() })
+      // 自己新建的棋盘不算「对方生成了新棋盘」，提前对齐 prev 快照避免误弹 toast
+      prevBoardRef.current = state
+      // 先手是对方时，给对方落一条铃铛提醒（离线也能看到）
+      const myIndex: 0 | 1 = memberId < friendId ? 0 : 1
+      if (first.turn !== myIndex) void notifyBoardNew(friendId, myName)
       setBoardSetup(false)
       toast.show('棋盘已生成，先手已定，开掷吧 🎯')
     } catch (error) {
@@ -1832,6 +2111,11 @@ export default function CouplePage() {
       const { state: next, darePrompt, messages, reroll } = applyBoardRoll(latest, myBoardIndex, dice, names)
       await upsertCoupleBoardGame(memberId, friendId, next)
       setBoardGame({ ...fresh, state: next, updated_at: new Date().toISOString() })
+      // 轮到对方行动（无待答真心话、未分胜负、未整局暂停）：给对方落一条铃铛提醒，
+      // 这样对方不在线时，回来登录也能从铃铛看到「轮到你了」
+      if (next.winner === null && !next.pending && next.turn !== myBoardIndex && !next.gamePaused) {
+        void notifyBoardTurn(friendId, memberName || '我')
+      }
       if (darePrompt) {
         // 踩到大冒险格：抽到的题目也进真心话大冒险记录
         void createCoupleTruthDare({
@@ -1901,6 +2185,10 @@ export default function CouplePage() {
           : fresh.state
       await upsertCoupleBoardGame(memberId, friendId, next)
       setBoardGame({ ...fresh, state: next, updated_at: new Date().toISOString() })
+      // 答完真心话后轮到对方掷骰：给对方落一条铃铛提醒（离线也能看到）
+      if (next.winner === null && !next.pending && next.turn !== myBoardIndex && !next.gamePaused) {
+        void notifyBoardTurn(friendId, memberName || '我')
+      }
       setBoardTruthAnswer('')
       void reloadTruthHistory()
       toast.show('答案已提交，对方马上就能看到 💬')
@@ -1927,11 +2215,13 @@ export default function CouplePage() {
     ) {
       toast.show(`🎲 ${friendName} 掷出 ${boardState.dice} 点走完啦，轮到你掷骰了！`)
     }
-    // 对方生成新棋盘（未掷骰、棋盘内容变化且先手是对方）
+    // 对方生成新棋盘（未掷骰、棋盘内容变化且先手是对方）。
+    // 注意：必须按内容比较——轮询 / 实时推送每次都会反序列化出全新对象，
+    // 引用比较会恒为 true，导致「等对方先掷骰」期间每 2 秒重复弹一次。
     if (
       boardState.winner === null &&
       boardState.dice === null &&
-      prev.cells !== boardState.cells &&
+      JSON.stringify(prev.cells) !== JSON.stringify(boardState.cells) &&
       boardState.turn !== myBoardIndex
     ) {
       toast.show(`🎯 ${friendName} 生成了新棋盘，等 TA 先掷骰～`)
@@ -1939,8 +2229,10 @@ export default function CouplePage() {
     // 对方率先到达终点
     if (boardState.winner !== null && prev.winner === null && boardState.winner !== myBoardIndex) {
       toast.show(`🏁 ${friendName} 率先到达终点，这局 TA 赢啦～`)
+      // 对方落库历史后实时推送偶发丢失时，这里兜底刷新一次对局历史列表
+      void reloadBoardHistory()
     }
-  }, [boardState, boardGame, myBoardIndex, friendName, toast])
+  }, [boardState, boardGame, myBoardIndex, friendName, toast, reloadBoardHistory])
 
   /**
    * 飞行棋 / 扫雷对局中加快同步：等待对方行动时，每 2 秒主动拉一次棋局——
@@ -1956,21 +2248,32 @@ export default function CouplePage() {
       (boardGame.state.pending !== null && boardGame.state.pending.player !== myBoardIndex))
   const awaitingMinesPeer =
     activeModule === 'mines' && minesGame !== null && !minesGame.state.cleared && minesGame.state.turn !== myMinesIndex
+  const awaitingWufuPeer =
+    activeModule === 'wufu' && wufuGame !== null && wufuGame.state.winner === null && wufuGame.state.turn !== myWufuIndex
   useEffect(() => {
-    if (!awaitingBoardPeer && !awaitingMinesPeer) return
+    if (!awaitingBoardPeer && !awaitingMinesPeer && !awaitingWufuPeer) return
     const timer = window.setInterval(() => {
       if (document.visibilityState !== 'visible') return
       if (awaitingBoardPeer) void reloadBoard()
       if (awaitingMinesPeer) void reloadMines()
+      if (awaitingWufuPeer) void reloadWufu()
     }, 2000)
     return () => window.clearInterval(timer)
-  }, [awaitingBoardPeer, awaitingMinesPeer, reloadBoard, reloadMines])
+  }, [awaitingBoardPeer, awaitingMinesPeer, awaitingWufuPeer, reloadBoard, reloadMines, reloadWufu])
 
   /* ------------------------------ 扫雷操作 ------------------------------ */
 
   const startMinesGame = async () => {
     if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
-    const preset = MINES_PRESETS.find((item) => item.key === minesPresetKey) ?? MINES_PRESETS[1]
+    // 自定义尺寸：行/列收敛到 5～16，雷数收敛到 1 ～ (格数×30%，且保证首点安全区有空间)
+    const customRows = clampInt(minesCustomRows, 5, 16)
+    const customCols = clampInt(minesCustomCols, 5, 16)
+    const customMinesMax = Math.max(1, Math.min(Math.floor(customRows * customCols * 0.3), customRows * customCols - 9))
+    const customMines = clampInt(minesCustomMines, 1, customMinesMax)
+    const preset =
+      minesPresetKey === 'custom'
+        ? { key: 'custom', label: '自定义', rows: customRows, cols: customCols, mines: customMines }
+        : MINES_PRESETS.find((item) => item.key === minesPresetKey) ?? MINES_PRESETS[1]
     const myName = memberName || '我'
     // 下标与 member_a / member_b 对齐：member_a（❤️）= 较小的 id
     const names: [string, string] = memberId < friendId ? [myName, friendName] : [friendName, myName]
@@ -1996,6 +2299,11 @@ export default function CouplePage() {
       await upsertCoupleMines(memberId, friendId, state)
       const [memberA, memberB] = orderedPair(memberId, friendId)
       setMinesGame({ member_a: memberA, member_b: memberB, state, updated_at: new Date().toISOString() })
+      // 自己新建的雷区不算对方的动作，提前对齐 prev 快照避免误弹 toast
+      prevMinesRef.current = state
+      // 先手是对方时，给对方落一条铃铛提醒（离线也能看到）
+      const myIndex: 0 | 1 = memberId < friendId ? 0 : 1
+      if (first.turn !== myIndex) void notifyMinesNew(friendId, myName)
       toast.show('扫雷开始，轮流点开格子吧 💣')
     } catch (error) {
       toast.show((error as Error).message, 'err')
@@ -2046,6 +2354,10 @@ export default function CouplePage() {
       const { state: next, hitTask } = applyMinesOpen(latest, myMinesIndex, index, names)
       await upsertCoupleMines(memberId, friendId, next)
       setMinesGame({ ...fresh, state: next, updated_at: new Date().toISOString() })
+      // 点完轮到对方（未通关）：给对方落一条铃铛提醒，对方离线也能在回来后看到「轮到你了」
+      if (!next.cleared && next.turn !== myMinesIndex) {
+        void notifyMinesTurn(friendId, memberName || '我')
+      }
       if (hitTask) setMinesTask(hitTask)
       if (next.cleared && !latest.cleared) {
         setMinesReward(next.reward)
@@ -2077,16 +2389,270 @@ export default function CouplePage() {
     }
   }
 
+  /* ------------------------------ 联网摆方（五福棋） ------------------------------ */
+
+  /** 上一份棋局快照：识别「轮到我 / 对方获胜」等变化，避免把自己的动作误当提示 */
+  const prevWufuRef = useRef<CoupleWufuState | null>(null)
+
+  /** 开新棋局：双方掷骰定先手，先手摆 13 子、后手摆 12 子 */
+  const startWufuGame = async () => {
+    if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+    const myName = memberName || '我'
+    const names: [string, string] = memberId < friendId ? [myName, friendName] : [friendName, myName]
+    const first = rollForFirst(names, '先摆')
+    const at = new Date().toISOString()
+    const state: CoupleWufuState = {
+      board: Array(25).fill(0),
+      phase: 'place',
+      firstMover: first.turn,
+      turn: first.turn,
+      placed: 0,
+      capturedInPlace: false,
+      pendingCaptures: 0,
+      log: [
+        { at, text: '♟️摆方开局：先摆子 → 成项提子 → 走子，把对方吃到只剩 2 子即获胜' },
+        ...first.logs.map((text) => ({ at, text })),
+        { at, text: `📐先手 ${names[first.turn]} 摆 13 子，${names[1 - first.turn]} 摆 12 子` },
+      ],
+      winner: null,
+    }
+    setWufuSaving(true)
+    try {
+      await upsertCoupleWufu(memberId, friendId, state)
+      const [memberA, memberB] = orderedPair(memberId, friendId)
+      setWufuGame({ member_a: memberA, member_b: memberB, state, updated_at: new Date().toISOString() })
+      prevWufuRef.current = state
+      setWufuSelected(null)
+      // 先手是对方时，给对方落一条铃铛提醒（离线也能看到）
+      const myIndex: 0 | 1 = memberId < friendId ? 0 : 1
+      if (first.turn !== myIndex) void notifyWufuNew(friendId, myName)
+      else toast.show('🎲 点数更大，这局由你先摆子！')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setWufuSaving(false)
+    }
+  }
+
+  /**
+   * 当前行动方完成这一手（摆子 / 逼子 / 走子 + 可能的提子都结束后调用）：
+   * 切换该谁行动，并处理摆子 → 逼子 / 走子的阶段流转与「无路可走即输」判定。
+   * mover 为刚刚行动完的一方（提子期间 turn 一直保持行动方不变）。
+   */
+  const wufuFinishTurn = (next: CoupleWufuState, mover: 0 | 1) => {
+    if (next.winner !== null) return
+    const at = new Date().toISOString()
+    if (next.phase === 'place') {
+      if (next.placed < 25) {
+        // 摆子继续：第 placed 手（从 0 计）该谁摆，先手摆双数手
+        next.turn = next.placed % 2 === 0 ? next.firstMover : (1 - next.firstMover) as 0 | 1
+        return
+      }
+      if (next.capturedInPlace) {
+        next.phase = 'walk'
+        next.turn = (1 - next.firstMover) as 0 | 1
+        next.log.push({ at, text: '🚶25 子摆完，进入走子阶段：棋子沿线走一格，成项照样提子（后手先走）' })
+      } else {
+        next.phase = 'forceRemove'
+        next.turn = (1 - next.firstMover) as 0 | 1
+        next.log.push({ at, text: '⚖️棋盘摆满但双方都没吃子：后手先移出对方一枚棋子（逼子），然后先手开始走子' })
+      }
+      return
+    }
+    // 走子阶段：轮到对方行动；对方无路可走则直接判负
+    const nextPlayer = (1 - mover) as 0 | 1
+    next.turn = nextPlayer
+    if (!wufuHasAnyMove(next.board, nextPlayer + 1)) {
+      next.winner = mover
+      next.log.push({ at, text: `🏆${wufuNames ? wufuNames[nextPlayer] : '对方'} 无路可走，${wufuNames ? wufuNames[mover] : '你'} 获胜！` })
+    }
+  }
+
+  /** 成项后的待提子数按「对方可被提的棋子数」收敛（受保护的不能提） */
+  const wufuCapCaptures = (next: CoupleWufuState, opp: number, freshCount: number, at: string) => {
+    const protectedCells = wufuProtectedCells(next.board, opp)
+    let capturable = 0
+    next.board.forEach((cell, i) => {
+      if (cell === opp && !protectedCells.has(i)) capturable += 1
+    })
+    if (capturable === 0) {
+      next.pendingCaptures = 0
+      next.log.push({ at, text: '🛡对方棋子都在成项棋形里受保护，这次提不了子' })
+      return true // 没得提，直接算这一手完成
+    }
+    next.pendingCaptures = Math.min(freshCount, capturable)
+    if (next.pendingCaptures < freshCount) next.log.push({ at, text: `🛡对方可提的棋子只剩 ${capturable} 枚，按 ${capturable} 枚提` })
+    return next.pendingCaptures === 0
+  }
+
+  /** 摆方落点统一入口：摆子（点空点）/ 提子（点对方可提的子）/ 逼子 / 走子（先点己子再点相邻空点） */
+  const wufuClickPoint = async (index: number) => {
+    if (!wufuState || !wufuGame || !memberId || !friendId) return
+    if (wufuSaving) return
+    if (wufuState.winner !== null) return toast.show('本局已结束，点「再来一局」重新开始吧～')
+    if (wufuState.turn !== myWufuIndex) return toast.show(`还没轮到你，等 ${friendName} 行动吧～`)
+    const at = new Date().toISOString()
+    const board = [...wufuState.board]
+    const me = myWufuPiece
+    const opp = 3 - me
+    const myName = memberName || '我'
+    const next: CoupleWufuState = { ...wufuState, board, log: [...wufuState.log] }
+    let needFinishTurn = false
+    let flashCells: number[] | null = null
+
+    if (next.pendingCaptures > 0) {
+      // ① 成项后的提子：点对方的棋子提走（提完才轮到对方）
+      if (board[index] !== opp) return toast.show('现在要提子：点击对方棋盘上「闪烁标记」的棋子', 'err')
+      if (wufuEnemyProtected.has(index)) return toast.show('这枚棋子在对方成项棋形里，受保护不能提，换一枚试试', 'err')
+      board[index] = 0
+      next.pendingCaptures -= 1
+      const enemyLeft = board.filter((cell) => cell === opp).length
+      next.log.push({ at, text: `⚔️${myName} 提走 ${friendName} 一子（TA 还剩 ${enemyLeft} 枚）` })
+      if (next.phase === 'walk' && enemyLeft <= 2) {
+        next.pendingCaptures = 0
+        next.winner = myWufuIndex
+        next.log.push({ at, text: `🏆${friendName} 只剩 2 子，${myName} 获胜！` })
+      }
+      if (next.pendingCaptures === 0) needFinishTurn = true
+    } else if (next.phase === 'place') {
+      // ② 摆子：点空点落子，落子成项立刻获得提子机会
+      if (board[index] !== 0) return toast.show('这个点已经有棋子啦，换一个空点', 'err')
+      const before = wufuFormedPatterns(board, me)
+      board[index] = me
+      next.placed += 1
+      const fresh = [...wufuFormedPatterns(board, me)].filter((patternIndex) => !before.has(patternIndex))
+      if (fresh.length) {
+        next.capturedInPlace = true
+        const names = [...new Set(fresh.map((patternIndex) => WUFU_PATTERNS[patternIndex].name))]
+        flashCells = fresh.flatMap((patternIndex) => WUFU_PATTERNS[patternIndex].cells)
+        next.log.push({ at, text: `✨${myName} 摆成【${names.join(' + ')}】！可提对方 ${fresh.length} 子` })
+        needFinishTurn = wufuCapCaptures(next, opp, fresh.length, at)
+      } else {
+        needFinishTurn = true
+      }
+    } else if (next.phase === 'forceRemove') {
+      // ③ 逼子：摆满 25 点但全程没吃子，后手移出对方一枚棋子，随后先手开始走子
+      if (board[index] !== opp) return toast.show('逼子：点击对方的一枚棋子，把它移出棋盘', 'err')
+      board[index] = 0
+      next.log.push({ at, text: `⚖️${myName} 逼子：移出 ${friendName} 一枚棋子` })
+      next.phase = 'walk'
+      next.turn = next.firstMover
+      next.log.push({ at, text: '🚶进入走子阶段：棋子沿线走一格，成项照样提子（先手先走）' })
+      if (!wufuHasAnyMove(next.board, next.firstMover + 1)) {
+        next.winner = (1 - next.firstMover) as 0 | 1
+        next.log.push({ at, text: `🏆${wufuNames ? wufuNames[next.firstMover] : '对方'} 无路可走，${myName} 获胜！` })
+      }
+    } else {
+      // ④ 走子：先点己方棋子选中，再点相邻空点走过去
+      if (board[index] === me) {
+        if (wufuSelected === index) {
+          setWufuSelected(null)
+          return toast.show('已取消选子，重新点要走的棋子')
+        }
+        const targets = wufuMoveTargets(board, index)
+        setWufuSelected(index)
+        return toast.show(targets.length ? `已选中，再点相邻的空点走子（有 ${targets.length} 个可走点）` : '这枚棋子四周没有空点，换一枚试试')
+      }
+      if (wufuSelected === null) {
+        return toast.show(`先点击自己（${myWufuIndex === 0 ? '❤️红' : '💙蓝'}）的棋子，再点相邻空点`, 'err')
+      }
+      if (board[index] !== 0) return toast.show('那是对方的棋子：先点自己的棋子，再点相邻空点', 'err')
+      if (!wufuMoveTargetCells.includes(index)) return toast.show('只能沿线走到上下左右紧邻的空点', 'err')
+      const before = wufuFormedPatterns(board, me)
+      board[wufuSelected] = 0
+      board[index] = me
+      setWufuSelected(null)
+      const fresh = [...wufuFormedPatterns(board, me)].filter((patternIndex) => !before.has(patternIndex))
+      if (fresh.length) {
+        const names = [...new Set(fresh.map((patternIndex) => WUFU_PATTERNS[patternIndex].name))]
+        flashCells = fresh.flatMap((patternIndex) => WUFU_PATTERNS[patternIndex].cells)
+        next.log.push({ at, text: `✨${myName} 走成【${names.join(' + ')}】！可提对方 ${fresh.length} 子` })
+        needFinishTurn = wufuCapCaptures(next, opp, fresh.length, at)
+      } else {
+        needFinishTurn = true
+      }
+    }
+
+    if (needFinishTurn) wufuFinishTurn(next, myWufuIndex)
+    if (flashCells) setWufuFlash({ cells: flashCells, key: Date.now() })
+    setWufuSaving(true)
+    try {
+      await upsertCoupleWufu(memberId, friendId, next)
+      const [memberA, memberB] = orderedPair(memberId, friendId)
+      setWufuGame({ member_a: memberA, member_b: memberB, state: next, updated_at: new Date().toISOString() })
+      prevWufuRef.current = next
+      // 轮到对方行动时落一条铃铛提醒（对方离线也能看到）
+      if (next.winner === null && next.turn !== myWufuIndex) void notifyWufuTurn(friendId, myName)
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setWufuSaving(false)
+    }
+  }
+
+  /** 结束本局摆方：销毁数据库与本地数据，之后可重新开一局 */
+  const endWufuGame = async () => {
+    if (!wufuGame || !memberId || !friendId) return
+    if (!window.confirm('是否结束？\n本局摆方将被销毁（数据库和本地不再保留这局数据），确认后可以重新开一局。')) return
+    setWufuSaving(true)
+    try {
+      await deleteCoupleWufu(memberId, friendId)
+      setWufuGame(null)
+      setWufuSelected(null)
+      toast.show('本局已销毁，重新开一局吧')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setWufuSaving(false)
+    }
+  }
+
+  // 我选中的棋子若已不在棋盘（被提走 / 棋局更新 / 本局结束），自动取消选子
+  useEffect(() => {
+    if (wufuSelected === null) return
+    if (!wufuState || wufuState.board[wufuSelected] !== myWufuPiece || wufuState.winner !== null) setWufuSelected(null)
+  }, [wufuState, wufuSelected, myWufuPiece])
+
+  // 成项棋形的高亮 1.8 秒后自动消退
+  useEffect(() => {
+    if (!wufuFlash) return
+    const timer = window.setTimeout(() => setWufuFlash(null), 1800)
+    return () => window.clearTimeout(timer)
+  }, [wufuFlash])
+
+  // 对方行动完轮到我 / 对方成项提子 / 对方获胜时给出提示
+  useEffect(() => {
+    const prev = prevWufuRef.current
+    prevWufuRef.current = wufuState
+    if (!wufuState || !prev || !wufuGame) return
+    if (wufuState.winner !== null && prev.winner === null) {
+      toast.show(wufuState.winner === myWufuIndex ? '🏆 恭喜！你赢了这局摆方！' : `🏳️ ${friendName} 赢了这局摆方，不服再来一局？`)
+      return
+    }
+    if (wufuState.turn === myWufuIndex && prev.turn !== myWufuIndex && wufuState.winner === null) {
+      // 「轮到你下摆方」的常驻铃铛提醒已由行动方写入，这里只做页面内轻量 toast
+      toast.show(
+        activeModule === 'wufu' && document.visibilityState === 'visible'
+          ? `♟️ ${friendName} 行动完，轮到你啦！`
+          : '♟️ 轮到你下摆方了！去互动空间 → 摆方五福棋继续吧～'
+      )
+    }
+    // 对方的关键动作（成项 / 提我的子 / 逼子）弹出提示，让节奏一目了然
+    const freshLogs = wufuState.log.slice(prev.log.length).filter((item) => item.text.includes(friendName))
+    const keyLog = freshLogs.find((item) => ['✨', '⚔️', '⚖️'].some((prefix) => item.text.startsWith(prefix)))
+    if (keyLog) toast.show(keyLog.text)
+  }, [wufuState, wufuGame, myWufuIndex, friendName, activeModule, toast])
+
   // 对方点完格子轮到我 / 对方通关时弹提醒与奖励
   const prevMinesRef = useRef<CoupleMinesState | null>(null)
-  // 离开页面时才补发铃铛提醒，用时间戳节流，避免一次离开期间刷一堆通知
-  const lastTurnBellRef = useRef(0)
   useEffect(() => {
     const prev = prevMinesRef.current
     prevMinesRef.current = minesState
     if (!minesState || !prev || !minesGame) return
     if (minesState.cleared && !prev.cleared) {
       setMinesReward(minesState.reward)
+      // 对方通关落库后实时推送偶发丢失时，这里兜底刷新一次对局历史列表
+      void reloadMinesHistory()
       return
     }
     if (
@@ -2094,26 +2660,20 @@ export default function CouplePage() {
       minesState.turn === myMinesIndex &&
       prev.turn !== myMinesIndex
     ) {
-      const onMinesPage = activeModule === 'mines' && document.visibilityState === 'visible'
-      if (onMinesPage) {
-        // 正在扫雷页：轻量 toast 即可，不刷铃铛
-        toast.show(`💣 ${friendName} 点完啦，轮到你拆雷了！`)
-      } else {
-        // 离开页面（隐藏或在别的模块）：补一条常驻铃铛提醒，节流到每 20 秒最多一条
-        const now = Date.now()
-        if (now - lastTurnBellRef.current > 20_000) {
-          lastTurnBellRef.current = now
-          const recipient = isAdmin ? 'me' : memberId ?? ''
-          if (recipient) void notifyMinesTurn(recipient, friendName)
-        }
-      }
+      // 「轮到你拆雷」的常驻铃铛提醒已改由行动方点完格子时直接写入（对方离线也能收到），
+      // 这里只负责页面内的轻量 toast 提醒，不再重复写铃铛
+      toast.show(
+        activeModule === 'mines' && document.visibilityState === 'visible'
+          ? `💣 ${friendName} 点完啦，轮到你拆雷了！`
+          : `💣 轮到你拆雷了！去互动空间 → 情侣扫雷继续吧～`
+      )
     }
     const latestHit = minesState.hits[minesState.hits.length - 1]
     const prevHit = prev.hits[prev.hits.length - 1]
     if (latestHit && prevHit?.at !== latestHit.at && latestHit.player !== myMinesIndex) {
       toast.show(`💣 ${friendName} 踩到地雷！TA 的任务：${latestHit.task}`)
     }
-  }, [minesState, minesGame, myMinesIndex, friendName, toast, activeModule, isAdmin, memberId])
+  }, [minesState, minesGame, myMinesIndex, friendName, toast, activeModule, reloadMinesHistory])
 
   const submitChoice = (val: string) => {
     const choice = val.trim()
@@ -2140,11 +2700,30 @@ export default function CouplePage() {
     try {
       const msg = await broadcastCoupleMessage(memberId, friendId, text)
       mergeMessages([msg], key('chat', memberId, friendId))
+      // 给对方落一条铃铛提醒：对方离线时，回来登录也能从铃铛看到新留言
+      void notifyCoupleChatMessage(friendId, memberName || '我', text)
       setMessageText('')
     } catch (error) {
       toast.show((error as Error).message, 'err')
     }
   }
+
+  // 收到对方新留言：不在留言板模块时弹 toast 提醒（在留言板上时消息实时可见，不打扰）
+  const lastPeerMsgIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    const lastPeer = [...messages].reverse().find((m) => m.sender_id !== myId)
+    if (!lastPeer) return
+    if (lastPeerMsgIdRef.current === null) {
+      // 首次加载：只记录位置，不把历史留言当新消息提醒
+      lastPeerMsgIdRef.current = lastPeer.id
+      return
+    }
+    if (lastPeer.id === lastPeerMsgIdRef.current) return
+    lastPeerMsgIdRef.current = lastPeer.id
+    if (activeModule !== 'chat') {
+      toast.show(`💬 ${friendName} 给你留言了：${lastPeer.content.slice(0, 20)}${lastPeer.content.length > 20 ? '…' : ''}`)
+    }
+  }, [messages, activeModule, friendName, toast, myId])
 
   const clearMessages = () => {
     setMessages([])
@@ -2172,10 +2751,11 @@ export default function CouplePage() {
             { id: 'love', icon: '💌', title: '今日情话', detail: loveUnlocked ? '今日已解锁' : '完成三餐打卡解锁' },
             { id: 'wish', icon: '🎁', title: '秘密心愿', detail: `${wishesList.length} 个心愿` },
             { id: 'chat', icon: '💬', title: '甜蜜留言', detail: `${messages.length} 条留言` },
-            { id: 'quiz', icon: '💞', title: '同步抉择', detail: `${ALL_QUESTIONS.length + customQuestions.length} 道题` },
-            { id: 'truth', icon: '🎲', title: '真心话大冒险', detail: '聊聊心里话，完成小挑战' },
+            { id: 'quiz', icon: '💞', title: '同步抉择', detail: `已做 ${quizDoneCount}/${quizTotalQuestions.length} 题` },
+            { id: 'truth', icon: '🎲', title: '真心话大冒险', detail: `已答 ${truthDoneCount}/${TRUTH_PROMPTS.length} 题` },
             { id: 'board', icon: '🎯', title: '情侣飞行棋', detail: '联网轮流掷骰对战' },
             { id: 'mines', icon: '💣', title: '情侣扫雷', detail: '轮流拆雷，踩雷做任务' },
+            { id: 'wufu', icon: '♟️', title: '摆方五福棋', detail: '摆子提子走子，吃到剩2子' },
           ].map((module) => (
             <button key={module.id} type="button" className="card flex min-h-28 flex-col items-start justify-between gap-3 text-left transition hover:border-brand-200" onClick={() => setActiveModule(module.id)}>
               <span className="text-2xl">{module.icon}</span>
@@ -2190,10 +2770,24 @@ export default function CouplePage() {
         <>
           <button type="button" className="btn-ghost w-full" onClick={() => setActiveModule(null)}>← 返回互动入口</button>
           {activeModule === 'truth' && (
-            <section className="card space-y-4">
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
               <div>
-                <h3 className="font-semibold">🎲真心话大冒险</h3>
-                <p className="text-xs text-slate-400">真心话要写下答案，提交后对方立刻知晓；题目和答案都会留档。</p>
+                <div className="flex min-w-0 items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-semibold">🎲真心话大冒险</h3>
+                    <p className="text-xs text-slate-400">真心话要写下答案，提交后对方立刻知晓；题目和答案都会留档。</p>
+                  </div>
+                  <span className="chip shrink-0 border-rose-200 bg-rose-50 text-rose-600">
+                    已答 {truthDoneCount}/{TRUTH_PROMPTS.length}
+                  </span>
+                </div>
+                {/* 答题进度条：已答过的题不再重复出现，全部答完后从头再来 */}
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-rose-400 to-orange-400 transition-all duration-500"
+                    style={{ width: `${(truthDoneCount / TRUTH_PROMPTS.length) * 100}%` }}
+                  />
+                </div>
               </div>
               {truthDraw ? (
                 <div className="space-y-3 rounded-2xl bg-rose-50 p-4">
@@ -2237,7 +2831,7 @@ export default function CouplePage() {
                   <h4 className="text-sm font-semibold text-slate-600">我们的记录</h4>
                   <span className="chip border-slate-200 bg-slate-50 text-slate-500">{truthHistory.length} 条</span>
                 </div>
-                <div className="max-h-64 space-y-2 overflow-y-auto rounded-xl bg-slate-50 p-3">
+                <div className="touch-scroll max-h-64 space-y-2 overflow-y-auto rounded-xl bg-slate-50 p-3">
                   {truthHistory.length === 0 && <p className="py-4 text-center text-xs text-slate-400">还没有记录，抽一题试试吧～</p>}
                   {truthHistory.map((row) => {
                     const isMine = row.sender_id === memberId
@@ -2262,7 +2856,7 @@ export default function CouplePage() {
             </section>
           )}
           {activeModule === 'board' && (
-            <section className="card space-y-4">
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
               <div>
                 <h3 className="font-semibold">🎯情侣飞行棋</h3>
                 <p className="text-xs text-slate-400">联网对战，先到终点者获胜。</p>
@@ -2277,7 +2871,37 @@ export default function CouplePage() {
                     </div>
                   )}
                   <div className="grid grid-cols-2 gap-2">
-                    <label className="text-xs text-slate-500">棋盘格数<select className="input mt-1" value={boardSize} onChange={(event) => setBoardSize(Number(event.target.value))}><option value={20}>20 格</option><option value={30}>30 格</option><option value={40}>40 格</option><option value={50}>50 格</option></select></label>
+                    <label className="text-xs text-slate-500">
+                      棋盘格数
+                      <select
+                        className="input mt-1"
+                        value={boardSizeCustom ? 'custom' : String(boardSize)}
+                        onChange={(event) => {
+                          if (event.target.value === 'custom') setBoardSizeCustom(true)
+                          else {
+                            setBoardSizeCustom(false)
+                            setBoardSize(Number(event.target.value))
+                          }
+                        }}
+                      >
+                        <option value={20}>20 格</option>
+                        <option value={30}>30 格</option>
+                        <option value={40}>40 格</option>
+                        <option value={50}>50 格</option>
+                        <option value="custom">自定义…</option>
+                      </select>
+                      {boardSizeCustom && (
+                        <input
+                          type="number"
+                          min={10}
+                          max={100}
+                          className="input mt-1"
+                          value={boardSize}
+                          onChange={(event) => setBoardSize(Number(event.target.value) || 10)}
+                        />
+                      )}
+                      {boardSizeCustom && <span className="mt-0.5 block text-[10px] text-slate-400">格数范围 10～100</span>}
+                    </label>
                     <label className="text-xs text-slate-500">每次最少步数<select className="input mt-1" value={boardStepMin} onChange={(event) => setBoardStepMin(Number(event.target.value))}>{[1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value} 步</option>)}</select></label>
                     <label className="text-xs text-slate-500">每次最多步数<select className="input mt-1" value={boardStepMax} onChange={(event) => setBoardStepMax(Math.max(boardStepMin, Number(event.target.value)))}>{[2, 3, 4, 5, 6, 8, 10].map((value) => <option key={value} value={value}>{value} 步</option>)}</select></label>
                   </div>
@@ -2344,7 +2968,7 @@ export default function CouplePage() {
                         </span>
                       ))}
                   </div>
-                  <div className="max-h-40 space-y-1 overflow-y-auto rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+                  <div className="touch-scroll max-h-40 space-y-1 overflow-y-auto rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
                     {[...boardState.log].reverse().map((item, index) => (
                       <p key={`${item.at}-${index}`} className="break-words">{item.text}</p>
                     ))}
@@ -2443,7 +3067,7 @@ export default function CouplePage() {
                           <p className="text-[11px] text-slate-400">
                             棋盘 {row.state.size} 格 · 步数 {row.state.stepMin}-{row.state.stepMax} · 终局位置 ❤️ {row.state.positions[0] + 1} 格 / 💙 {row.state.positions[1] + 1} 格
                           </p>
-                          <div className="max-h-44 space-y-1 overflow-y-auto rounded-lg bg-white p-2 text-[11px] leading-relaxed text-slate-600">
+                          <div className="touch-scroll max-h-44 space-y-1 overflow-y-auto rounded-lg bg-white p-2 text-[11px] leading-relaxed text-slate-600">
                             {row.state.log.map((item, index) => (
                               <p key={index} className="break-words">{item.text}</p>
                             ))}
@@ -2458,7 +3082,7 @@ export default function CouplePage() {
           )}
 
           {activeModule === 'mines' && (
-            <section className="card space-y-4">
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
               <div>
                 <h3 className="font-semibold">💣情侣扫雷</h3>
                 <p className="text-xs text-slate-400">轮流点开格子，踩到雷做任务，点开全部安全格即通关。</p>
@@ -2489,7 +3113,36 @@ export default function CouplePage() {
                           {preset.label}
                         </button>
                       ))}
+                      <button
+                        type="button"
+                        className={`rounded-xl px-3 py-2 text-xs font-medium ring-1 transition ${
+                          minesPresetKey === 'custom'
+                            ? 'bg-brand-50 text-brand-700 ring-brand-300'
+                            : 'bg-white text-slate-500 ring-slate-200'
+                        }`}
+                        onClick={() => setMinesPresetKey('custom')}
+                      >
+                        自定义…
+                      </button>
                     </div>
+                    {minesPresetKey === 'custom' && (
+                      <div className="space-y-1">
+                        <div className="grid grid-cols-3 gap-2">
+                          <label className="text-[11px] text-slate-500">行数
+                            <input type="number" min={5} max={16} className="input mt-1" value={minesCustomRows} onChange={(e) => setMinesCustomRows(Number(e.target.value) || 5)} />
+                          </label>
+                          <label className="text-[11px] text-slate-500">列数
+                            <input type="number" min={5} max={16} className="input mt-1" value={minesCustomCols} onChange={(e) => setMinesCustomCols(Number(e.target.value) || 5)} />
+                          </label>
+                          <label className="text-[11px] text-slate-500">雷数
+                            <input type="number" min={1} max={72} className="input mt-1" value={minesCustomMines} onChange={(e) => setMinesCustomMines(Number(e.target.value) || 1)} />
+                          </label>
+                        </div>
+                        <p className="text-[10px] leading-relaxed text-slate-400">
+                          行列范围 5～16；雷数范围 1～格数×30%（超出会自动收敛），首格周围保证安全。
+                        </p>
+                      </div>
+                    )}
                   </div>
                   <button className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-40" disabled={minesSaving} onClick={() => void startMinesGame()}>
                     {minesSaving ? '生成中…' : minesGame ? '重新开一局' : '生成雷区并开始'}
@@ -2564,7 +3217,7 @@ export default function CouplePage() {
                       )
                     })}
                   </div>
-                  <div className="max-h-40 space-y-1 overflow-y-auto rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+                  <div className="touch-scroll max-h-40 space-y-1 overflow-y-auto rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
                     {[...minesState.log].reverse().map((item, index) => (
                       <p key={`${item.at}-${index}`} className="break-words">{item.text}</p>
                     ))}
@@ -2572,64 +3225,255 @@ export default function CouplePage() {
                   <button className="btn-ghost w-full text-rose-600" disabled={minesSaving} onClick={() => void endMinesGame()}>
                     结束本局（销毁数据重新设置）
                   </button>
-                  {/* 对局历史：每局通关的棋盘、踩雷互动和结果都可回看 */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <h4 className="text-sm font-semibold text-slate-600">📜对局历史</h4>
-                      <span className="chip border-slate-200 bg-slate-50 text-slate-500">{minesHistory.length} 局</span>
-                    </div>
-                    {minesHistory.length === 0 && (
-                      <p className="rounded-xl bg-slate-50 py-3 text-center text-xs text-slate-400">还没有通关的扫雷，先来一局吧～</p>
-                    )}
-                    {minesHistory.map((row) => {
-                      const open = minesHistoryOpenId === row.id
-                      const hitCount = row.state.hits?.length ?? 0
-                      return (
-                        <div key={row.id} className="rounded-xl bg-slate-50 p-3 text-xs">
-                          <button
-                            className="flex w-full items-center justify-between gap-2 text-left"
-                            onClick={() => setMinesHistoryOpenId(open ? null : row.id)}
-                          >
-                            <span className="min-w-0 flex-1 truncate font-semibold text-slate-700">
-                              🎉 通关 · {row.state.rows}×{row.state.cols} · 💣{hitCount}
-                            </span>
-                            <span className="shrink-0 whitespace-nowrap text-[10px] text-slate-400">
-                              {new Date(row.finished_at).toLocaleString('zh-CN')}
-                            </span>
-                            <span className="shrink-0 text-slate-400">{open ? '收起' : '展开 ▼'}</span>
-                          </button>
-                          {open && (
-                            <div className="mt-2 space-y-2">
-                              {row.state.reward && (
-                                <p className="text-[11px] text-emerald-600">🎁 解锁奖励：{row.state.reward}</p>
-                              )}
-                              {hitCount > 0 ? (
-                                <div className="max-h-44 space-y-1 overflow-y-auto rounded-lg bg-white p-2 text-[11px] leading-relaxed text-slate-600">
-                                  {row.state.hits.map((h, i) => (
-                                    <p key={i} className="break-words">
-                                      💣 {h.player === myMinesIndex ? '你' : friendName} 踩雷：{h.task}
-                                    </p>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="text-[11px] text-slate-400">全程零踩雷，默契满分 💯</p>
-                              )}
+                </>
+              ) : null}
+
+              {/* 对局历史：放在对局进行中的分支外面，没开局（或上一局刚通关）时也能回看之前的记录 */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-slate-600">📜对局历史</h4>
+                  <span className="chip border-slate-200 bg-slate-50 text-slate-500">{minesHistory.length} 局</span>
+                </div>
+                {minesHistory.length === 0 && (
+                  <p className="rounded-xl bg-slate-50 py-3 text-center text-xs text-slate-400">还没有通关的扫雷，先来一局吧～</p>
+                )}
+                {minesHistory.map((row) => {
+                  const open = minesHistoryOpenId === row.id
+                  const hitCount = row.state.hits?.length ?? 0
+                  return (
+                    <div key={row.id} className="rounded-xl bg-slate-50 p-3 text-xs">
+                      <button
+                        className="flex w-full items-center justify-between gap-2 text-left"
+                        onClick={() => setMinesHistoryOpenId(open ? null : row.id)}
+                      >
+                        <span className="min-w-0 flex-1 truncate font-semibold text-slate-700">
+                          🎉 通关 · {row.state.rows}×{row.state.cols} · 💣{hitCount}
+                        </span>
+                        <span className="shrink-0 whitespace-nowrap text-[10px] text-slate-400">
+                          {new Date(row.finished_at).toLocaleString('zh-CN')}
+                        </span>
+                        <span className="shrink-0 text-slate-400">{open ? '收起' : '展开 ▼'}</span>
+                      </button>
+                      {open && (
+                        <div className="mt-2 space-y-2">
+                          {row.state.reward && (
+                            <p className="text-[11px] text-emerald-600">🎁 解锁奖励：{row.state.reward}</p>
+                          )}
+                          {hitCount > 0 ? (
+                            <div className="touch-scroll max-h-44 space-y-1 overflow-y-auto rounded-lg bg-white p-2 text-[11px] leading-relaxed text-slate-600">
+                              {row.state.hits.map((h, i) => (
+                                <p key={i} className="break-words">
+                                  💣 {h.player === myMinesIndex ? '你' : friendName} 踩雷：{h.task}
+                                </p>
+                              ))}
                             </div>
+                          ) : (
+                            <p className="text-[11px] text-slate-400">全程零踩雷，默契满分 💯</p>
                           )}
                         </div>
-                      )
-                    })}
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          )}
+
+          {activeModule === 'wufu' && (
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
+              <div>
+                <h3 className="font-semibold">♟️摆方五福棋</h3>
+                <p className="text-xs text-slate-400">摆子 → 成项提子 → 走子，把对方吃到只剩 2 子即获胜。</p>
+              </div>
+              {!wufuLoaded ? (
+                <p className="py-6 text-center text-sm text-slate-400">棋局加载中…</p>
+              ) : !wufuGame || wufuState?.winner !== null ? (
+                <>
+                  {wufuState?.winner !== null && wufuNames && (
+                    <div className="rounded-2xl bg-brand-50 p-4 text-center text-sm leading-relaxed text-brand-700">
+                      {wufuState?.winner === 0
+                        ? `🏆 本局 ${wufuNames[0]} 获胜！`
+                        : `🏆 本局 ${wufuNames[1]} 获胜！`}
+                      <br />
+                      <span className="text-xs text-slate-400">不服再来一局？</span>
+                    </div>
+                  )}
+                  <details className="rounded-xl bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-500">
+                    <summary className="cursor-pointer text-xs font-semibold text-slate-600">📖 怎么玩？</summary>
+                    <div className="mt-2 space-y-1">
+                      <p>🎲 开局掷骰定先手：先手摆 13 子、后手摆 12 子。</p>
+                      <p>📐 摆子：轮流点空点落子，落子成项立刻提对方 1 子。</p>
+                      <p>⚖️ 若 25 子摆完双方都没吃子：后手先逼掉对方一子，然后先手开始走子。</p>
+                      <p>🚶 走子：棋子沿线走一格到相邻空点，再次成项照样提子。</p>
+                      <p>🏆 把对方吃到只剩 2 子，或对方无路可走，即获胜。</p>
+                      <p>⚔️ 五种成项棋形（对方已成项的棋子受保护不能提）：</p>
+                      <ul className="list-inside list-disc space-y-0.5 pl-2 text-slate-400">
+                        <li>通天：5 子斜连，贯穿两条对角</li>
+                        <li>大棍（五福）：5 子横或竖连成一条直线</li>
+                        <li>四斜：4 子斜连，连接两条相邻边</li>
+                        <li>三斜：3 子斜连，连接两条相邻边</li>
+                        <li>小方（井口）：4 子组成紧邻的小正方形</li>
+                      </ul>
+                    </div>
+                  </details>
+                  <button
+                    type="button"
+                    className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={wufuSaving}
+                    onClick={() => void startWufuGame()}
+                  >
+                    {wufuSaving ? '生成中…' : wufuGame ? '再来一局' : '掷骰开一局'}
+                  </button>
+                </>
+              ) : wufuState && wufuNames ? (
+                <>
+                  <div className="flex items-center justify-between gap-2 rounded-2xl bg-brand-50 px-3 py-2 text-xs text-brand-700">
+                    <span className="min-w-0 flex-1 truncate">
+                      ❤️ {wufuNames[0]}{wufuState.firstMover === 0 ? '（先手）' : ''}
+                    </span>
+                    <span className="shrink-0 text-[11px] font-semibold">
+                      {wufuState.phase === 'place'
+                        ? `摆子 第 ${wufuState.placed}/25 手`
+                        : wufuState.phase === 'forceRemove'
+                          ? '逼子阶段'
+                          : '走子阶段'}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-right">
+                      💙 {wufuNames[1]}{wufuState.firstMover === 1 ? '（先手）' : ''}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="chip border-rose-200 bg-rose-50 text-rose-600">❤️ {wufuPieceCount[0]}</span>
+                    <span className="chip border-slate-200 bg-slate-50 text-slate-500">
+                      {wufuState.winner !== null
+                        ? '本局已结束'
+                        : wufuState.turn === myWufuIndex
+                          ? '轮到你行动'
+                          : `等 ${friendName} 行动`}
+                    </span>
+                    <span className="chip border-sky-200 bg-sky-50 text-sky-600">💙 {wufuPieceCount[1]}</span>
+                  </div>
+
+                  {(() => {
+                    const myTurn = wufuState.turn === myWufuIndex && wufuState.winner === null
+                    let hint: string
+                    let hintClass: string
+                    if (wufuState.winner !== null) {
+                      hint = wufuState.winner === myWufuIndex ? '🏆 你赢啦！点下方「再来一局」继续' : `🏳️ ${friendName} 赢啦，点下方「再来一局」翻盘`
+                      hintClass = 'border-brand-200 bg-brand-50 text-brand-700'
+                    } else if (!myTurn) {
+                      hint = `🕐 等 ${friendName} 行动…（对方离线时铃铛会提醒你）`
+                      hintClass = 'border-slate-200 bg-slate-50 text-slate-500'
+                    } else if (wufuState.pendingCaptures > 0) {
+                      hint = `⚔️ 你成了棋形！点击对方「闪烁」的棋子提走 ${wufuState.pendingCaptures} 枚（🛡 受保护的不行）`
+                      hintClass = 'border-rose-200 bg-rose-50 text-rose-700'
+                    } else if (wufuState.phase === 'place') {
+                      hint = '📐 摆子阶段：点击任意空点落子，落子成项立刻提子'
+                      hintClass = 'border-brand-200 bg-brand-50 text-brand-700'
+                    } else if (wufuState.phase === 'forceRemove') {
+                      hint = '⚖️ 逼子阶段：棋盘摆满没吃子，点对方一枚棋子移出棋盘，然后先手开始走子'
+                      hintClass = 'border-amber-200 bg-amber-50 text-amber-700'
+                    } else if (wufuSelected === null) {
+                      hint = `🚶 走子阶段：先点自己（${myWufuIndex === 0 ? '❤️红' : '💙蓝'}）的棋子，再点相邻空点走子`
+                      hintClass = 'border-brand-200 bg-brand-50 text-brand-700'
+                    } else {
+                      hint = wufuMoveTargetCells.length
+                        ? '再点你高亮的相邻空点走过去，走成棋形照样提子'
+                        : '这枚四周没有空点，点另一枚自己的棋子试试'
+                      hintClass = 'border-brand-200 bg-brand-50 text-brand-700'
+                    }
+                    return (
+                      <div className={`rounded-xl border px-3 py-2 text-xs font-medium leading-relaxed ${hintClass}`}>{hint}</div>
+                    )
+                  })()}
+
+                  <div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-100">
+                    <div className="grid grid-cols-5">
+                      {wufuState.board.map((cell, index) => {
+                        const r = Math.floor(index / 5)
+                        const c = index % 5
+                        const myTurn = wufuState.turn === myWufuIndex && wufuState.winner === null
+                        const isOwn = cell === myWufuPiece
+                        const isEnemy = cell !== 0 && !isOwn
+                        const selected = wufuSelected === index
+                        const isTarget = myTurn && wufuMoveTargetCells.includes(index)
+                        const flashOn = wufuFlash?.cells.includes(index) ?? false
+                        const protectedOn = wufuEnemyProtected.has(index)
+                        const capturableOn =
+                          isEnemy &&
+                          (wufuState.pendingCaptures > 0 || (wufuState.phase === 'forceRemove' && myTurn)) &&
+                          !protectedOn
+                        return (
+                          <button
+                            key={index}
+                            type="button"
+                            disabled={wufuSaving}
+                            onClick={() => void wufuClickPoint(index)}
+                            className={`relative flex aspect-square select-none items-center justify-center
+                              ${r > 0 ? 'border-t' : ''} ${c > 0 ? 'border-l' : ''}
+                              ${flashOn ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200'}
+                              transition active:scale-95`}
+                          >
+                            {cell === 0 && isTarget ? (
+                              <span className="h-3 w-3 rounded-full bg-brand-400/80" />
+                            ) : cell === 0 ? (
+                              <span className="h-1.5 w-1.5 rounded-full bg-slate-300/70" />
+                            ) : (
+                              <span
+                                className={`flex h-9 w-9 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-md transition
+                                  ${cell === 1 ? 'bg-gradient-to-br from-rose-400 to-rose-600' : 'bg-gradient-to-br from-sky-400 to-sky-600'}
+                                  ${selected ? 'scale-110 ring-2 ring-brand-500 ring-offset-2' : ''}
+                                  ${capturableOn ? 'animate-pulse ring-2 ring-amber-400 ring-offset-2' : ''}`}
+                              >
+                                {cell === 1 ? '❤️' : '💙'}
+                              </span>
+                            )}
+                            {protectedOn && (
+                              <span className="absolute right-0.5 top-0.5 text-[9px]">🛡</span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <p className="mt-2 text-center text-[10px] text-slate-400">
+                      {wufuFlash ? '✨ 成项！高亮的棋形立刻提对方 1 子' : '点格子行动，受保护（🛡）的棋子不能提'}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className="chip border-slate-200 bg-slate-50 text-slate-500">棋子 ❤️{wufuPieceCount[0]} / 💙{wufuPieceCount[1]}</span>
+                    <span className="chip border-slate-200 bg-slate-50 text-slate-500">
+                      {wufuState.phase === 'place' ? `摆子 ${wufuState.placed}/25` : wufuState.phase === 'forceRemove' ? '逼子' : '走子'}
+                    </span>
+                    {wufuState.pendingCaptures > 0 && (
+                      <span className="chip border-rose-200 bg-rose-50 text-rose-600">⚔️ 待提子 {wufuState.pendingCaptures}</span>
+                    )}
+                    <button type="button" className="btn-ghost ml-auto shrink-0 text-xs" disabled={wufuSaving} onClick={() => void endWufuGame()}>
+                      结束本局
+                    </button>
+                  </div>
+
+                  <div className="space-y-1">
+                    <h4 className="text-xs font-semibold text-slate-500">📜 对局动态</h4>
+                    {wufuState.log.length === 0 ? (
+                      <p className="rounded-xl bg-slate-50 py-2 text-center text-[11px] text-slate-400">暂无动态</p>
+                    ) : (
+                      <div className="touch-scroll max-h-40 space-y-1 overflow-y-auto rounded-lg bg-slate-50 p-2 text-[11px] leading-relaxed text-slate-600">
+                        {[...wufuState.log].reverse().map((item, i) => (
+                          <p key={i} className="break-words">{item.text}</p>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </>
               ) : null}
             </section>
           )}
-        </>
-      )}
 
       {activeModule === 'love' ? <>
       {/* 今日专属情话：双方三餐打卡完毕才解锁，两边看到同一句 */}
-      <section className="card space-y-3">
+      <section id="couple-active-module" className={`card space-y-3${moduleFocus ? ' module-focus' : ''}`}>
         <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <h3 className="break-words font-semibold">💌今日专属情话</h3>
@@ -2657,9 +3501,21 @@ export default function CouplePage() {
             ) : (
               <p className="text-center text-[11px] text-slate-400">先添加好友，才能一起解锁情话哦</p>
             )}
-            <button className="btn-soft w-full" onClick={() => navigate('/meals')}>
-              去完成我的三餐打卡
-            </button>
+            {mealDone(myMeals) < REQUIRED_SLOTS.length ? (
+              <button className="btn-soft w-full" onClick={() => navigate('/meals')}>
+                去完成我的三餐打卡
+              </button>
+            ) : (
+              friendId && (
+                <button
+                  className="btn-soft w-full disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={mealNudgeCooldown}
+                  onClick={() => void nudgePeerMeals()}
+                >
+                  {mealNudgeCooldown ? '刚刚已经催过啦，稍等一会～' : `💌 催 ${friendName} 去打卡`}
+                </button>
+              )
+            )}
           </div>
         )}
       </section>
@@ -2668,7 +3524,7 @@ export default function CouplePage() {
 
       {activeModule === 'wish' ? <>
       {/* 秘密心愿池：好友双方共享，抽签结果双方同步 */}
-      <section className="card space-y-3">
+      <section id="couple-active-module" className={`card space-y-3${moduleFocus ? ' module-focus' : ''}`}>
         <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <h3 className="break-words font-semibold">🎁秘密心愿抽签</h3>
@@ -2705,7 +3561,7 @@ export default function CouplePage() {
 
       {activeModule === 'chat' ? <>
       {/* 甜蜜留言板：入库持久化，双方实时可见 */}
-      <section className="card space-y-3">
+      <section id="couple-active-module" className={`card space-y-3${moduleFocus ? ' module-focus' : ''}`}>
         <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <h3 className="break-words font-semibold">💬甜蜜聊天留言板</h3>
@@ -2715,7 +3571,7 @@ export default function CouplePage() {
             清空
           </button>
         </div>
-        <div className="max-h-56 space-y-2 overflow-y-auto rounded-xl bg-slate-50 p-3">
+        <div className="touch-scroll max-h-72 space-y-2 overflow-y-auto rounded-xl bg-slate-50 p-3">
           {messages.length === 0 && (
             <div className="py-5 text-center text-xs text-slate-400">发一句“今天也要开心”吧</div>
           )}
@@ -2768,13 +3624,27 @@ export default function CouplePage() {
 
       {activeModule === 'quiz' ? <>
       {/* 同步抉择：共享会话保证双方同题，双方作答后动画揭晓 */}
-      <section className="card space-y-3">
+      <section id="couple-active-module" className={`card space-y-3${moduleFocus ? ' module-focus' : ''}`}>
         <div>
-          <h3 className="font-semibold">💞同步抉择</h3>
-          <p className="text-[11px] text-slate-400">题目与选择双方实时同步，一起在线玩更配哦</p>
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <h3 className="font-semibold">💞同步抉择</h3>
+              <p className="text-[11px] text-slate-400">题目与选择双方实时同步，一起在线玩更配哦</p>
+            </div>
+            <span className="chip shrink-0 border-brand-200 bg-brand-50 text-brand-600">
+              已做 {quizDoneCount}/{quizTotalQuestions.length}
+            </span>
+          </div>
+          {/* 做题进度条：双方每答完一题实时前进 */}
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-brand-400 to-rose-400 transition-all duration-500"
+              style={{ width: `${quizTotalQuestions.length ? Math.min(100, (quizDoneCount / quizTotalQuestions.length) * 100) : 0}%` }}
+            />
+          </div>
         </div>
-        <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-3">
-          {(['轻松版', '走心版', '自定义'] as QuestionKind[]).map((kind) => (
+        <div className="grid grid-cols-2 gap-2 min-[360px]:grid-cols-4">
+          {(['轻松版', '走心版', '深度版', '自定义'] as QuestionKind[]).map((kind) => (
             <button
               key={kind}
               className={`min-w-0 rounded-xl border px-2 py-2 text-xs ${
@@ -2982,6 +3852,8 @@ export default function CouplePage() {
           </section>
         </div>
       )}
+      </>
+    )}
 
       {/* 情话揭晓动画：双方三餐打卡齐的那一刻同时绽放 */}
       {activeModule === 'love' && loveReveal && (

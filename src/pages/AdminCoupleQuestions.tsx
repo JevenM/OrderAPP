@@ -221,7 +221,7 @@ export default function AdminCoupleQuestions() {
           <input id="couple-question-title" className="input" maxLength={160} placeholder="题目标题" value={editing.title} onChange={(event) => setEditing({ ...editing, title: event.target.value })} />
           <input className="input" maxLength={160} placeholder="选项 A" value={editing.a} onChange={(event) => setEditing({ ...editing, a: event.target.value })} />
           <input className="input" maxLength={160} placeholder="选项 B" value={editing.b} onChange={(event) => setEditing({ ...editing, b: event.target.value })} />
-          <select className="input" value={editing.kind} onChange={(event) => setEditing({ ...editing, kind: event.target.value as QuestionKind })}><option value="轻松版">轻松版</option><option value="走心版">走心版</option></select>
+          <select className="input" value={editing.kind} onChange={(event) => setEditing({ ...editing, kind: event.target.value as QuestionKind })}><option value="轻松版">轻松版</option><option value="走心版">走心版</option><option value="深度版">深度版</option></select>
           <div className="grid grid-cols-2 gap-2"><button className="btn-ghost" disabled={saving} onClick={() => setEditing(null)}>取消</button><button className="btn-primary" disabled={saving} onClick={() => void saveQuestion()}>{saving ? '保存中…' : '保存题目'}</button></div>
         </section>
       </div>}

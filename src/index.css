@@ -70,6 +70,32 @@ body {
   }
 }
 
+/* 嵌套滚动容器（留言板、记录列表等）：iOS Safari 上不加这些容易滚不动或滚动链穿透整页 */
+.touch-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+
+/* 从铃铛通知跳转进互动空间模块时的高亮呼吸光环，提示用户需要看的是这里 */
+.module-focus {
+  animation: module-focus-ring 1.4s ease-in-out 3;
+}
+
+@keyframes module-focus-ring {
+  0%,
+  100% {
+    box-shadow: 0 4px 16px rgba(244, 63, 94, 0.12);
+    outline: 2px solid rgba(244, 63, 94, 0);
+    outline-offset: 0px;
+  }
+  50% {
+    box-shadow: 0 4px 24px rgba(244, 63, 94, 0.45);
+    outline: 2px solid rgba(244, 63, 94, 0.9);
+    outline-offset: 3px;
+  }
+}
+
 /* 系统开启「减弱动态效果」时关掉动画，照顾晕动/省电场景 */
 @media (prefers-reduced-motion: reduce) {
   *,

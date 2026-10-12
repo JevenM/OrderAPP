@@ -4,7 +4,7 @@ import { listFeedNotifications, markFeedNotificationRead, type FeedNotificationR
 import { timeCn } from '../lib/date'
 import { useUnread } from '../store/unread'
 
-const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️', quiz: '💞', truth: '🎲', together: '💕' }
+const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️', quiz: '💞', truth: '🎲', together: '💕', chat: '💌', board: '🎯', mines: '💣', wufu: '♟️', love: '💌' }
 const PAGE_SIZE = 10
 
 type View = 'preview' | 'all'
@@ -45,12 +45,23 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
     }
     onClose()
     // 按通知类型跳转到对应页面，并带上定位参数：
-    // quiz → 互动空间弹出抉择揭晓；truth → 互动空间直接打开真心话模块；
+    // quiz → 互动空间弹出抉择揭晓；truth/chat/board/mines → 互动空间直接打开对应模块；
+    // 跳转带上 focus=1，模块打开后高亮 + 滚动定位，提示用户「要看的是这里」；
     // post / like / comment / reply → 饭圈定位到对应动态并高亮
     if (notice.type === 'quiz') {
       navigate(`/couple${notice.post_id ? `?quiz=${encodeURIComponent(notice.post_id)}` : ''}`)
     } else if (notice.type === 'truth') {
-      navigate('/couple?module=truth')
+      navigate('/couple?module=truth&focus=1')
+    } else if (notice.type === 'chat') {
+      navigate('/couple?module=chat&focus=1')
+    } else if (notice.type === 'board') {
+      navigate('/couple?module=board&focus=1')
+    } else if (notice.type === 'mines') {
+      navigate('/couple?module=mines&focus=1')
+    } else if (notice.type === 'wufu') {
+      navigate('/couple?module=wufu&focus=1')
+    } else if (notice.type === 'love') {
+      navigate('/couple?module=love&focus=1')
     } else if (notice.type === 'together') {
       // 同在检测的入口 💕 就在顶栏，任何页面都有，留在当前页即可
     } else {
@@ -73,7 +84,7 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
         <button className="text-[11px] text-slate-400 active:text-brand-500" onClick={onClose}>关闭</button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="touch-scroll min-h-0 flex-1 overflow-y-auto">
         {items === null && <div className="px-3 py-8 text-center text-xs text-slate-300">加载中…</div>}
         {items !== null && items.length === 0 && (
           <div className="px-3 py-8 text-center text-xs leading-relaxed text-slate-400">还没有消息</div>

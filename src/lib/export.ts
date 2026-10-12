@@ -58,3 +58,18 @@ export function exportCoupleWishesCsv(rows: CoupleWishExportRow[], filename: str
 export function exportCoupleWishesJson(rows: CoupleWishExportRow[], filename: string): void {
   download(JSON.stringify(rows, null, 2), filename, 'application/json;charset=utf-8')
 }
+
+/** 通用表格导出：任意模块的数据按 headers + rows 生成 CSV（Excel 可直接打开） */
+export function exportTableCsv(
+  filename: string,
+  headers: string[],
+  rows: (string | number | boolean | null | undefined)[][]
+): void {
+  const lines = rows.map((row) => row.map(csvCell).join(','))
+  download(`\uFEFF${[headers.map(csvCell).join(','), ...lines].join('\r\n')}`, filename, 'text/csv;charset=utf-8')
+}
+
+/** 通用 JSON 导出：任意模块的数据原样落盘 */
+export function exportTableJson(filename: string, data: unknown): void {
+  download(JSON.stringify(data, null, 2), filename, 'application/json;charset=utf-8')
+}

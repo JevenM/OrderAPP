@@ -770,7 +770,7 @@ export type CoupleQuizQuestion = {
   title: string
   a: string
   b: string
-  kind: '轻松版' | '走心版' | '自定义'
+  kind: '轻松版' | '走心版' | '深度版' | '自定义'
 }
 
 export async function listCoupleQuizBank(seedQuestions: CoupleQuizQuestion[] = []): Promise<CoupleQuizBankRow[]> {
@@ -1138,18 +1138,101 @@ export async function notifyTogetherRequest(recipient: string, senderName: strin
 }
 
 /**
- * 扫雷轮到对方时的铃铛提醒。
- * 只在「对方离开页面（页面隐藏 / 没停在扫雷模块）」时由接收方补发一条常驻通知，
- * 对方回到页面会看到铃铛未读；正在扫雷模块上时只弹轻量 toast，不刷铃铛，避免刷屏。
+ * 扫雷轮到对方时的铃铛提醒（行动方点完格子、轮到对方时落一条）。
+ * 通知落库后即使对方离线，回来登录也能在铃铛看到未读。
  */
 export async function notifyMinesTurn(recipient: string, senderName: string): Promise<void> {
   if (!recipient) return
   await insertFeedNotices([recipient], {
     sender_name: senderName,
-    type: 'together',
+    type: 'mines',
     post_id: null,
     title: '💣 轮到你拆雷了',
-    body: `${senderName} 刚点完一格，快去拆雷吧～`,
+    body: `${senderName} 刚点完一格，快去互动空间 → 情侣扫雷吧～`,
+  })
+}
+
+/** 扫雷新局已生成且先手是对方：落一条铃铛提醒（对方离线也能看到） */
+export async function notifyMinesNew(recipient: string, senderName: string): Promise<void> {
+  if (!recipient) return
+  await insertFeedNotices([recipient], {
+    sender_name: senderName,
+    type: 'mines',
+    post_id: null,
+    title: '💣 扫雷新一局开好啦',
+    body: `${senderName} 生成了新雷区，先手已定，快去看看吧～`,
+  })
+}
+
+/** 飞行棋轮到对方掷骰：行动方走完后落一条铃铛提醒（对方离线也能看到） */
+export async function notifyBoardTurn(recipient: string, senderName: string): Promise<void> {
+  if (!recipient) return
+  await insertFeedNotices([recipient], {
+    sender_name: senderName,
+    type: 'board',
+    post_id: null,
+    title: '🎲 轮到你掷骰了',
+    body: `${senderName} 走完啦，快去互动空间 → 情侣飞行棋吧～`,
+  })
+}
+
+/** 飞行棋新棋盘已生成且先手是对方：落一条铃铛提醒（对方离线也能看到） */
+export async function notifyBoardNew(recipient: string, senderName: string): Promise<void> {
+  if (!recipient) return
+  await insertFeedNotices([recipient], {
+    sender_name: senderName,
+    type: 'board',
+    post_id: null,
+    title: '🎯 飞行棋新棋盘开好啦',
+    body: `${senderName} 生成了新棋盘，先手已定，快去看看吧～`,
+  })
+}
+
+/** 摆方五福棋轮到对方：行动方走完后落一条铃铛提醒（对方离线也能看到） */
+export async function notifyWufuTurn(recipient: string, senderName: string): Promise<void> {
+  if (!recipient) return
+  await insertFeedNotices([recipient], {
+    sender_name: senderName,
+    type: 'wufu',
+    post_id: null,
+    title: '♟️ 轮到你下摆方了',
+    body: `${senderName} 行动完啦，快去互动空间 → 摆方五福棋吧～`,
+  })
+}
+
+/** 摆方新棋局已开且先手是对方：落一条铃铛提醒（对方离线也能看到） */
+export async function notifyWufuNew(recipient: string, senderName: string): Promise<void> {
+  if (!recipient) return
+  await insertFeedNotices([recipient], {
+    sender_name: senderName,
+    type: 'wufu',
+    post_id: null,
+    title: '♟️ 摆方新棋局开好啦',
+    body: `${senderName} 摆好了新棋局，先手已定，快去看看吧～`,
+  })
+}
+
+/** 留言板新留言：发送方落一条铃铛提醒给对方（对方离线也能看到） */
+export async function notifyCoupleChatMessage(recipient: string, senderName: string, content: string): Promise<void> {
+  if (!recipient) return
+  await insertFeedNotices([recipient], {
+    sender_name: senderName,
+    type: 'chat',
+    post_id: null,
+    title: '💬 留言板有新留言',
+    body: `${senderName}：${clip(content, 24)}`,
+  })
+}
+
+/** 催对方完成三餐打卡：自己已打完三餐、对方还没打完时，落一条铃铛提醒 */
+export async function notifyCoupleMealNudge(recipient: string, senderName: string): Promise<void> {
+  if (!recipient) return
+  await insertFeedNotices([recipient], {
+    sender_name: senderName,
+    type: 'love',
+    post_id: null,
+    title: '💌 催你打卡啦',
+    body: `${senderName} 已完成今日三餐打卡，就差你啦，打卡完就解锁今日情话～`,
   })
 }
 
@@ -1474,6 +1557,74 @@ export async function listCoupleMinesHistory(
     fail(error, '加载情侣扫雷对局历史')
   }
   return (data ?? []) as CoupleMinesHistoryRow[]
+}
+
+/* ------------------------------ 情侣摆方（五福棋） ------------------------------ */
+
+/**
+ * 摆方（五福棋 / 五棍棋）棋局状态：
+ * 25 个落子点（5×5，行优先），board 取值 0=空 / 1=member_a（❤️）/ 2=member_b（💙）。
+ * 三阶段流转：place 摆子（先手 13 子、后手 12 子，落子成项立刻提对方子）→
+ * forceRemove 逼子（摆满 25 点但全程没吃子时，后手先移出对方一子）→
+ * walk 走子（棋子沿线走一格，再次成项照样提子）。
+ * 胜负：一方只剩 2 子，或轮到行动的一方无路可走。
+ */
+export interface CoupleWufuState {
+  board: number[]
+  phase: 'place' | 'forceRemove' | 'walk'
+  /** 先手方（摆 13 子、开局掷骰决定）：0 = member_a，1 = member_b */
+  firstMover: 0 | 1
+  /** 当前该谁行动（提子未完成时保持行动方不变） */
+  turn: 0 | 1
+  /** 已摆子数（摆子阶段 0～25） */
+  placed: number
+  /** 摆子阶段是否出现过提子（决定摆满后走「逼子」还是直接进入走子） */
+  capturedInPlace: boolean
+  /** 成项后待提子数：行动方点选对方棋子提走，提完才换人 */
+  pendingCaptures: number
+  log: { at: string; text: string }[]
+  winner: 0 | 1 | null
+}
+
+export interface CoupleWufuRow {
+  member_a: string
+  member_b: string
+  state: CoupleWufuState
+  updated_at: string
+}
+
+export async function fetchCoupleWufu(userA: string, userB: string): Promise<CoupleWufuRow | null> {
+  if (!userA || !userB || userA === userB) return null
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_wufu')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .maybeSingle()
+  if (error) fail(error, '加载摆方棋局')
+  return (data as CoupleWufuRow | null) ?? null
+}
+
+/** 生成 / 更新共享摆方棋局：双方实时同步，后写覆盖先写（回合校验由调用方负责） */
+export async function upsertCoupleWufu(userA: string, userB: string, state: CoupleWufuState): Promise<void> {
+  if (!userA || !userB || userA === userB) throw new Error('请先添加好友再开始摆方五福棋')
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase
+    .from('couple_wufu')
+    .upsert(
+      { member_a: memberA, member_b: memberB, state, updated_at: new Date().toISOString() },
+      { onConflict: 'member_a,member_b' }
+    )
+  if (error) fail(error, '同步摆方棋局')
+}
+
+/** 销毁共享摆方棋局（结束本局）：数据库不再保留该局数据 */
+export async function deleteCoupleWufu(userA: string, userB: string): Promise<void> {
+  if (!userA || !userB || userA === userB) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_wufu').delete().eq('member_a', memberA).eq('member_b', memberB)
+  if (error) fail(error, '结束摆方棋局')
 }
 
 /* ------------------------------ 订单 ------------------------------ */
@@ -1882,7 +2033,19 @@ export async function removeComment(id: string): Promise<void> {
 
 /* ------------------------ 饭圈消息通知（顶栏未读角标） ------------------------ */
 
-export type FeedNoticeType = 'post' | 'like' | 'comment' | 'reply' | 'quiz' | 'truth' | 'together'
+export type FeedNoticeType =
+  | 'post'
+  | 'like'
+  | 'comment'
+  | 'reply'
+  | 'quiz'
+  | 'truth'
+  | 'together'
+  | 'chat'
+  | 'board'
+  | 'mines'
+  | 'wufu'
+  | 'love'
 
 export interface FeedNotificationRow {
   id: string
@@ -2109,4 +2272,110 @@ export async function unreadCounts(): Promise<{ orders: number; meals: number; r
     supabase.from('dish_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
   ])
   return { orders: o.count ?? 0, meals: m.count ?? 0, requests: r.count ?? 0 }
+}
+
+/* ------------------------ 管理员：互动空间数据统一管理 ------------------------ */
+
+/** 全部留言板消息（跨全部情侣对，新的在前） */
+export async function listAllCoupleMessages(limit = 1000): Promise<CoupleChatMessage[]> {
+  const { data, error } = await supabase
+    .from('couple_messages')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) fail(error, '加载全部留言')
+  return (data ?? []) as CoupleChatMessage[]
+}
+
+/** 管理员修改一条留言内容 */
+export async function updateCoupleMessage(id: string, content: string): Promise<void> {
+  const clean = content.trim()
+  if (!clean) throw new Error('留言内容不能为空')
+  const { error } = await supabase.from('couple_messages').update({ content: clean }).eq('id', id)
+  if (error) fail(error, '更新留言')
+}
+
+/** 管理员批量删除留言 */
+export async function deleteCoupleMessages(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { error } = await supabase.from('couple_messages').delete().in('id', ids)
+  if (error) fail(error, '删除留言')
+}
+
+/** 管理员修正一条答题历史：双方答案一起更新，并重算状态与匹配结果 */
+export async function updateCoupleQuizHistory(id: string, choiceA: string | null, choiceB: string | null): Promise<void> {
+  const a = (choiceA ?? '').trim() || null
+  const b = (choiceB ?? '').trim() || null
+  const patch: Record<string, unknown> = { choice_a: a, choice_b: b }
+  if (a && b) {
+    patch.status = 'revealed'
+    patch.matched = a === b
+    patch.revealed_at = new Date().toISOString()
+  } else {
+    patch.status = 'answering'
+    patch.matched = null
+    patch.revealed_at = null
+  }
+  const { error } = await supabase.from('couple_quiz_history').update(patch).eq('id', id)
+  if (error) fail(error, '更新答题历史')
+}
+
+/** 管理员批量删除答题历史 */
+export async function deleteCoupleQuizHistory(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { error } = await supabase.from('couple_quiz_history').delete().in('id', ids)
+  if (error) fail(error, '删除答题历史')
+}
+
+/** 管理员修改真心话的答案（清空则回到未作答状态） */
+export async function updateCoupleTruthDareAnswer(id: string, answer: string): Promise<void> {
+  const clean = answer.trim()
+  const { error } = await supabase
+    .from('couple_truth_dare')
+    .update({ answer: clean || null, answered_at: clean ? new Date().toISOString() : null })
+    .eq('id', id)
+  if (error) fail(error, '更新真心话答案')
+}
+
+/** 管理员批量删除秘密心愿 */
+export async function deleteCoupleWishes(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { error } = await supabase.from('couple_wishes').delete().in('id', ids)
+  if (error) fail(error, '删除秘密心愿')
+}
+
+/** 管理员查看全部飞行棋对局历史 */
+export async function listAllCoupleBoardGameHistory(limit = 200): Promise<CoupleBoardGameHistoryRow[]> {
+  const { data, error } = await supabase
+    .from('couple_board_game_history')
+    .select('*')
+    .order('finished_at', { ascending: false })
+    .limit(limit)
+  if (error) fail(error, '加载全部飞行棋历史')
+  return (data ?? []) as CoupleBoardGameHistoryRow[]
+}
+
+/** 管理员批量删除飞行棋对局历史 */
+export async function deleteCoupleBoardGameHistory(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { error } = await supabase.from('couple_board_game_history').delete().in('id', ids)
+  if (error) fail(error, '删除飞行棋历史')
+}
+
+/** 管理员查看全部扫雷对局历史（表未建时静默返回空） */
+export async function listAllCoupleMinesHistory(limit = 200): Promise<CoupleMinesHistoryRow[]> {
+  const { data, error } = await supabase
+    .from('couple_mines_history')
+    .select('*')
+    .order('finished_at', { ascending: false })
+    .limit(limit)
+  if (error && !isMissingTable(error)) fail(error, '加载全部扫雷历史')
+  return (data ?? []) as CoupleMinesHistoryRow[]
+}
+
+/** 管理员批量删除扫雷对局历史 */
+export async function deleteCoupleMinesHistory(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { error } = await supabase.from('couple_mines_history').delete().in('id', ids)
+  if (error && !isMissingTable(error)) fail(error, '删除扫雷历史')
 }
