@@ -7,12 +7,25 @@ import {
   createCoupleBoardGameHistory,
   createCoupleMinesHistory,
   createCoupleTruthDare,
+  createCoupleWufuHistory,
+  createCoupleGomokuHistory,
+  deleteCoupleGomoku,
+  fetchCoupleGomoku,
+  listCoupleGomokuHistory,
+  upsertCoupleGomoku,
   notifyMinesTurn,
   notifyMinesNew,
   notifyBoardTurn,
   notifyBoardNew,
   notifyWufuTurn,
   notifyWufuNew,
+  notifyGomokuTurn,
+  notifyGomokuNew,
+  notifyWatermelonScore,
+  createCoupleWatermelonLog,
+  fetchCoupleWatermelon,
+  listCoupleWatermelonLogs,
+  upsertCoupleWatermelon,
   notifyCoupleChatMessage,
   notifyCoupleMealNudge,
   createCoupleWish,
@@ -26,6 +39,7 @@ import {
   fetchCoupleQuizHistory,
   listCoupleBoardGameHistory,
   listCoupleMinesHistory,
+  listCoupleWufuHistory,
   listCoupleQuizBank,
   listCoupleQuizPairQuestions,
   listCoupleEvents,
@@ -54,9 +68,16 @@ import {
   type CoupleQuizHistoryRow,
   type CoupleQuizRow,
   type CoupleTruthDareRow,
+  type CoupleWufuHistoryRow,
   type CoupleWufuRow,
   type CoupleWufuState,
+  type CoupleGomokuHistoryRow,
+  type CoupleGomokuRow,
+  type CoupleGomokuState,
+  type CoupleWatermelonLogRow,
+  type CoupleWatermelonScoreRow,
 } from '../lib/db'
+import { markActive, useIsPeerOnline } from '../lib/presence'
 import { todayStr } from '../lib/date'
 import { DEEP_COUPLE_QUESTIONS, EXTRA_COUPLE_QUESTIONS, TRUTH_PROMPTS } from '../lib/coupleQuestions'
 import { useRealtime } from '../lib/realtime'
@@ -953,6 +974,14 @@ export default function CouplePage() {
   const friendName = selectedFriend?.shownName ?? '好友'
   const myId = memberId || '__me__'
   const ready = Boolean(memberId && friendId)
+  const peerOnline = useIsPeerOnline(friendId, memberId)
+
+  useEffect(() => {
+    if (!memberId) return
+    markActive(memberId)
+    const timer = window.setInterval(() => markActive(memberId), 30_000)
+    return () => window.clearInterval(timer)
+  }, [memberId])
 
   const channelKey = useMemo(
     () => (memberId && friendId ? key('sync', memberId, friendId) : 'couple-offline'),
@@ -1071,6 +1100,24 @@ export default function CouplePage() {
   const [wufuSelected, setWufuSelected] = useState<number | null>(null)
   /* 成项棋形刚形成时的闪烁高亮（cells + key，1.8 秒后自动消退） */
   const [wufuFlash, setWufuFlash] = useState<{ cells: number[]; key: number } | null>(null)
+  /* 摆方对局历史：一局结束（正常分出胜负 / 投降认输）时存档，供回看 */
+  const [wufuHistory, setWufuHistory] = useState<CoupleWufuHistoryRow[]>([])
+  const [wufuHistoryOpenId, setWufuHistoryOpenId] = useState<string | null>(null)
+
+  /* ------------------------------ 联网五子棋 ------------------------------ */
+  const [gomokuGame, setGomokuGame] = useState<CoupleGomokuRow | null>(null)
+  const [gomokuLoaded, setGomokuLoaded] = useState(false)
+  const [gomokuSaving, setGomokuSaving] = useState(false)
+  const [gomokuHistory, setGomokuHistory] = useState<CoupleGomokuHistoryRow[]>([])
+  const [gomokuHistoryOpenId, setGomokuHistoryOpenId] = useState<string | null>(null)
+
+  /* ------------------------------ 情侣西瓜分 ------------------------------ */
+  const [watermelonScore, setWatermelonScore] = useState<CoupleWatermelonScoreRow | null>(null)
+  const [watermelonLogs, setWatermelonLogs] = useState<CoupleWatermelonLogRow[]>([])
+  const [watermelonLoading, setWatermelonLoading] = useState(false)
+  const [watermelonSaving, setWatermelonSaving] = useState(false)
+  const [watermelonDelta, setWatermelonDelta] = useState(0)
+  const [watermelonReason, setWatermelonReason] = useState('')
 
   /* ------------------------------ 联网扫雷 ------------------------------ */
   const [minesGame, setMinesGame] = useState<CoupleMinesRow | null>(null)
@@ -1336,6 +1383,68 @@ export default function CouplePage() {
     [memberId, friendId, applyWufuRow]
   )
 
+  const reloadWufuHistory = useCallback(async () => {
+    if (!memberId || !friendId) return
+    try {
+      setWufuHistory(await listCoupleWufuHistory(memberId, friendId, 20))
+    } catch (error) {
+      console.warn('加载摆方对局历史失败', error)
+    }
+  }, [memberId, friendId])
+
+  const applyGomokuRow = useCallback((row: CoupleGomokuRow | null) => {
+    if (!row) {
+      setGomokuGame(null)
+      return
+    }
+    if (!memberId || !friendId) return
+    const [a, b] = orderedPair(memberId, friendId)
+    if (row.member_a === a && row.member_b === b) setGomokuGame(row)
+  }, [memberId, friendId])
+
+  const reloadGomoku = useCallback(async (force = false) => {
+    if (!memberId || !friendId) return
+    if (!force && gomokuLoaded) return
+    try {
+      applyGomokuRow(await fetchCoupleGomoku(memberId, friendId))
+    } catch (error) {
+      console.warn('加载五子棋棋局失败', error)
+    } finally {
+      setGomokuLoaded(true)
+    }
+  }, [memberId, friendId, applyGomokuRow, gomokuLoaded])
+
+  const reloadGomokuHistory = useCallback(async () => {
+    if (!memberId || !friendId) return
+    try {
+      setGomokuHistory(await listCoupleGomokuHistory(memberId, friendId, 20))
+    } catch (error) {
+      console.warn('加载五子棋历史失败', error)
+    }
+  }, [memberId, friendId])
+
+  const reloadWatermelon = useCallback(async (force = false) => {
+    if (!memberId || !friendId) return
+    if (!force && !watermelonLoading && watermelonScore) return
+    setWatermelonLoading(true)
+    try {
+      setWatermelonScore(await fetchCoupleWatermelon(memberId, friendId))
+    } catch (error) {
+      console.warn('加载西瓜分失败', error)
+    } finally {
+      setWatermelonLoading(false)
+    }
+  }, [memberId, friendId, watermelonLoading, watermelonScore])
+
+  const reloadWatermelonLogs = useCallback(async () => {
+    if (!memberId || !friendId) return
+    try {
+      setWatermelonLogs(await listCoupleWatermelonLogs(memberId, friendId, 20))
+    } catch (error) {
+      console.warn('加载西瓜分明细失败', error)
+    }
+  }, [memberId, friendId])
+
   const reloadWishes = useCallback(async () => {
     if (!memberId || !friendId) return
     try {
@@ -1492,8 +1601,14 @@ export default function CouplePage() {
       throttled('mines', reloadMines)
       throttled('minesHistory', reloadMinesHistory)
     } else if (m === 'wufu') throttled('wufu', reloadWufu)
-    else if (m === 'love') throttled('meals', reloadMeals)
-  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadMeals])
+    else if (m === 'gomoku') {
+      throttled('gomoku', reloadGomoku)
+      throttled('gomokuHistory', reloadGomokuHistory)
+    } else if (m === 'watermelon') {
+      throttled('watermelon', reloadWatermelon)
+      throttled('watermelonLogs', reloadWatermelonLogs)
+    } else if (m === 'love') throttled('meals', reloadMeals)
+  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadMeals])
 
   /* 切到某个模块时立即拉一次；棋局类（飞行棋/扫雷/摆方）走各自动作里的缓存，
      只在本地还没有该模块数据时补拉一次，来回切 Tab 不再重复打网络 */
@@ -1507,8 +1622,14 @@ export default function CouplePage() {
     else if (m === 'board') void reloadBoard(boardLoaded ? undefined : true)
     else if (m === 'mines') void reloadMines(minesLoaded ? undefined : true)
     else if (m === 'wufu') void reloadWufu(wufuLoaded ? undefined : true)
-    else if (m === 'love') void reloadMeals()
-  }, [activeModule, ready, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadMines, reloadWufu, reloadMeals, boardLoaded, minesLoaded, wufuLoaded])
+    else if (m === 'gomoku') {
+      void reloadGomoku(gomokuLoaded ? undefined : true)
+      void reloadGomokuHistory()
+    } else if (m === 'watermelon') {
+      void reloadWatermelon()
+      void reloadWatermelonLogs()
+    } else if (m === 'love') void reloadMeals()
+  }, [activeModule, ready, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadMines, reloadWufu, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadMeals, boardLoaded, minesLoaded, wufuLoaded, gomokuLoaded])
 
   useRealtime(
     channelKey,
@@ -1527,7 +1648,21 @@ export default function CouplePage() {
       { table: 'couple_mines', event: 'UPDATE', on: (p) => applyMinesRow(p.new as CoupleMinesRow) },
       // 摆方五福棋：对方摆子 / 提子 / 逼子 / 走子时即时同步（DELETE 交由轮询兜底）
       { table: 'couple_wufu', event: 'INSERT', on: (p) => applyWufuRow(p.new as CoupleWufuRow) },
-      { table: 'couple_wufu', event: 'UPDATE', on: (p) => applyWufuRow(p.new as CoupleWufuRow) },
+      {
+        table: 'couple_wufu',
+        event: 'UPDATE',
+        on: (p) => {
+          const row = p.new as CoupleWufuRow
+          // 棋局暂停中不再同步（省流量），继续时由「继续游戏」按钮主动拉取
+          if (row.state.paused) return
+          applyWufuRow(row)
+        },
+      },
+      { table: 'couple_gomoku', event: 'INSERT', on: (p) => applyGomokuRow(p.new as CoupleGomokuRow) },
+      { table: 'couple_gomoku', event: 'UPDATE', on: (p) => applyGomokuRow(p.new as CoupleGomokuRow) },
+      { table: 'couple_gomoku_history', event: 'INSERT', on: () => void reloadGomokuHistory() },
+      { table: 'couple_watermelon_scores', on: () => void reloadWatermelon(true) },
+      { table: 'couple_watermelon_logs', event: 'INSERT', on: () => void reloadWatermelonLogs() },
       // 飞行棋对局历史：一局结束落库后即时刷新
       { table: 'couple_board_game_history', event: 'INSERT', on: () => void reloadBoardHistory() },
       // 扫雷对局历史：一局通关落库后即时刷新
@@ -1557,14 +1692,15 @@ export default function CouplePage() {
       { table: 'meals', on: () => void reloadMeals() },
     ],
     {
-      enabled: ready,
+      enabled: ready && !(activeModule === 'wufu' && !!wufuGame?.state.paused) && !(activeModule === 'gomoku' && !!gomokuGame?.state.paused),
       // 实时推送连不上时的兜底轮询：只刷当前正在看的模块（省流量）
       // —— 高实时模块（对局中）10 秒；飞行棋整局暂停 30 秒；
-      // —— 其余模块实时性要求低，放宽到 60 秒（实时通道可用时由事件即时刷新，轮询只是兜底）
+      // —— 摆方整局暂停：0（彻底停轮询，仅靠「继续游戏」主动拉取）
+      // —— 其余模块实时性要求低，放宽到 60 秒
       pollMs:
         (activeModule === 'board' && !boardGame?.state.gamePaused) ||
         (activeModule === 'mines' && !minesGame?.state.cleared) ||
-        (activeModule === 'wufu' && wufuGame?.state.winner === null)
+        (activeModule === 'wufu' && wufuGame?.state.winner === null && !wufuGame?.state.paused)
           ? 10_000
           : activeModule === 'board' && boardGame?.state.gamePaused
             ? 30_000
@@ -1585,6 +1721,12 @@ export default function CouplePage() {
       void reloadMinesHistory()
     } else if (activeModuleRef.current === 'wufu') {
       void reloadWufu()
+    } else if (activeModuleRef.current === 'gomoku') {
+      void reloadGomoku()
+      void reloadGomokuHistory()
+    } else if (activeModuleRef.current === 'watermelon') {
+      void reloadWatermelon()
+      void reloadWatermelonLogs()
     } else if (activeModuleRef.current === 'wish') {
       void reloadWishes()
       void reloadEvents()
@@ -1603,7 +1745,7 @@ export default function CouplePage() {
       void reloadQuiz()
       void reloadTruthHistory()
     }
-  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu])
+  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs])
 
   useEffect(() => {
     try {
@@ -1630,7 +1772,7 @@ export default function CouplePage() {
       { replace: true }
     )
     if (noticeQuizId) return
-    if (['love', 'wish', 'chat', 'quiz', 'truth', 'board', 'mines', 'wufu'].includes(module)) {
+    if (['love', 'wish', 'chat', 'quiz', 'truth', 'board', 'mines', 'wufu', 'gomoku', 'watermelon'].includes(module)) {
       setActiveModule(module)
       if (focus) setModuleFocus(true)
     }
@@ -1994,6 +2136,15 @@ export default function CouplePage() {
     if (!needPick) return new Set<number>()
     return wufuProtectedCells(wufuState.board, 3 - myWufuPiece)
   }, [wufuState, myWufuIndex, myWufuPiece])
+  const myGomokuIndex: 0 | 1 = gomokuGame && memberId === gomokuGame.member_b ? 1 : 0
+  const gomokuState = gomokuGame?.state ?? null
+  const gomokuNames: [string, string] | null = gomokuGame
+    ? [
+        gomokuGame.member_a === memberId ? memberName || '我' : friendName,
+        gomokuGame.member_b === memberId ? memberName || '我' : friendName,
+      ]
+    : null
+
   const minesNames: [string, string] | null = minesGame
     ? [
         minesGame.member_a === memberId ? memberName || '我' : friendName,
@@ -2395,6 +2546,34 @@ export default function CouplePage() {
   const prevWufuRef = useRef<CoupleWufuState | null>(null)
 
   /** 开新棋局：双方掷骰定先手，先手摆 13 子、后手摆 12 子 */
+  const startGomokuGame = async () => {
+    if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+    const at = new Date().toISOString()
+    const names: [string, string] = memberId < friendId ? [memberName || '我', friendName] : [friendName, memberName || '我']
+    const state: CoupleGomokuState = {
+      board: Array(225).fill(0),
+      turn: 0,
+      winner: null,
+      paused: false,
+      log: [{ at, text: `⚫ 五子棋开局：${names[0]}执黑先手，横、竖或斜线连成五子获胜` }],
+    }
+    setGomokuSaving(true)
+    try {
+      await upsertCoupleGomoku(memberId, friendId, state)
+      const [a, b] = orderedPair(memberId, friendId)
+      setGomokuGame({ member_a: a, member_b: b, state, updated_at: at })
+      setGomokuLoaded(true)
+      if (myGomokuIndex !== 0) {
+        if (peerOnline) toast.show(`⚫ ${memberName || '我'} 创建了五子棋，轮到 ${names[0]} 先手`)
+        else void notifyGomokuNew(friendId, memberName || '我')
+      }
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setGomokuSaving(false)
+    }
+  }
+
   const startWufuGame = async () => {
     if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
     const myName = memberName || '我'
@@ -2415,6 +2594,7 @@ export default function CouplePage() {
         { at, text: `📐先手 ${names[first.turn]} 摆 13 子，${names[1 - first.turn]} 摆 12 子` },
       ],
       winner: null,
+      paused: false,
     }
     setWufuSaving(true)
     try {
@@ -2490,6 +2670,7 @@ export default function CouplePage() {
     if (!wufuState || !wufuGame || !memberId || !friendId) return
     if (wufuSaving) return
     if (wufuState.winner !== null) return toast.show('本局已结束，点「再来一局」重新开始吧～')
+    if (wufuState.paused === true) return toast.show('⏸️ 棋局已暂停：点下方「继续游戏」恢复对局～')
     if (wufuState.turn !== myWufuIndex) return toast.show(`还没轮到你，等 ${friendName} 行动吧～`)
     const at = new Date().toISOString()
     const board = [...wufuState.board]
@@ -2581,12 +2762,139 @@ export default function CouplePage() {
       const [memberA, memberB] = orderedPair(memberId, friendId)
       setWufuGame({ member_a: memberA, member_b: memberB, state: next, updated_at: new Date().toISOString() })
       prevWufuRef.current = next
+      // 胜利时落库一份历史快照（供对局历史回看）
+      if (next.winner !== null) void createCoupleWufuHistory(memberId, friendId, next)
       // 轮到对方行动时落一条铃铛提醒（对方离线也能看到）
       if (next.winner === null && next.turn !== myWufuIndex) void notifyWufuTurn(friendId, myName)
     } catch (error) {
       toast.show((error as Error).message, 'err')
     } finally {
       setWufuSaving(false)
+    }
+  }
+
+  const gomokuWinner = (board: number[], index: number, piece: number) => {
+    const row = Math.floor(index / 15)
+    const col = index % 15
+    return [[0, 1], [1, 0], [1, 1], [1, -1]].some(([dr, dc]) => {
+      let count = 1
+      for (const sign of [-1, 1]) {
+        let r = row + dr * sign
+        let c = col + dc * sign
+        while (r >= 0 && r < 15 && c >= 0 && c < 15 && board[r * 15 + c] === piece) {
+          count += 1
+          r += dr * sign
+          c += dc * sign
+        }
+      }
+      return count >= 5
+    })
+  }
+
+  const toggleGomokuPause = async () => {
+    if (!gomokuState || !memberId || !friendId || gomokuSaving) return
+    if (gomokuState.winner !== null) return toast.show('本局已结束，无需暂停～')
+    const paused = !gomokuState.paused
+    const next = { ...gomokuState, paused, log: paused ? [...gomokuState.log, { at: new Date().toISOString(), text: `⏸️${memberName || '我'} 暂停五子棋` }] : gomokuState.log }
+    setGomokuSaving(true)
+    try {
+      await upsertCoupleGomoku(memberId, friendId, next)
+      const [a, b] = orderedPair(memberId, friendId)
+      setGomokuGame({ member_a: a, member_b: b, state: next, updated_at: new Date().toISOString() })
+      if (!paused) void reloadGomoku(true)
+      toast.show(paused ? '⏸️ 五子棋已暂停，网络同步已停止' : '▶️ 五子棋已继续')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setGomokuSaving(false)
+    }
+  }
+
+  const surrenderGomoku = async () => {
+    if (!gomokuState || gomokuState.winner !== null || !memberId || !friendId || gomokuSaving) return
+    if (!window.confirm('确定投降并保存本局五子棋历史吗？')) return
+    const next: CoupleGomokuState = { ...gomokuState, winner: (1 - myGomokuIndex) as 0 | 1, paused: false, log: [...gomokuState.log, { at: new Date().toISOString(), text: `🏳️${memberName || '我'} 投降，${friendName} 获胜` }] }
+    setGomokuSaving(true)
+    try {
+      await createCoupleGomokuHistory(memberId, friendId, next)
+      await deleteCoupleGomoku(memberId, friendId)
+      setGomokuGame(null)
+      void reloadGomokuHistory()
+      toast.show('🏳️ 已投降并保存五子棋历史')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setGomokuSaving(false)
+    }
+  }
+
+  const placeGomoku = async (index: number) => {
+    if (!gomokuState || !gomokuGame || !memberId || !friendId || gomokuSaving) return
+    if (gomokuState.paused) return toast.show('⏸️ 棋局已暂停，请先继续游戏')
+    if (gomokuState.winner !== null) return toast.show('本局已结束，请重新开局')
+    if (gomokuState.turn !== myGomokuIndex) return toast.show(`还没轮到你，等 ${friendName} 落子吧～`)
+    if (gomokuState.board[index] !== 0) return
+    const board = [...gomokuState.board]
+    const piece = myGomokuIndex + 1
+    board[index] = piece
+    const win = gomokuWinner(board, index, piece)
+    const next: CoupleGomokuState = { ...gomokuState, board, winner: win ? myGomokuIndex : null, turn: (1 - myGomokuIndex) as 0 | 1, log: [...gomokuState.log, { at: new Date().toISOString(), text: `${myGomokuIndex === 0 ? '⚫' : '⚪'}${memberName || '我'} 落子 ${Math.floor(index / 15) + 1}行${index % 15 + 1}列${win ? '，五连获胜' : ''}` }] }
+    setGomokuSaving(true)
+    try {
+      await upsertCoupleGomoku(memberId, friendId, next)
+      const [a, b] = orderedPair(memberId, friendId)
+      setGomokuGame({ member_a: a, member_b: b, state: next, updated_at: new Date().toISOString() })
+      if (next.winner !== null) {
+        await createCoupleGomokuHistory(memberId, friendId, next)
+        toast.show('🏆 恭喜，你赢得了五子棋！')
+      } else if (next.turn !== myGomokuIndex) {
+        if (peerOnline) toast.show(`⚫ ${memberName || '我'} 已落子，轮到 ${friendName} 了`)
+        else void notifyGomokuTurn(friendId, memberName || '我')
+      }
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setGomokuSaving(false)
+    }
+  }
+
+  /* ------------------------------ 情侣西瓜分操作 ------------------------------ */
+  const adjustWatermelonScore = async () => {
+    if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+    if (watermelonSaving || watermelonDelta === 0) return toast.show('请先选择加分或减分数值', 'err')
+    setWatermelonSaving(true)
+    try {
+      const fresh = await fetchCoupleWatermelon(memberId, friendId)
+      const [memberA, memberB] = orderedPair(memberId, friendId)
+      const currentScoreA = fresh?.score_a ?? 0
+      const currentScoreB = fresh?.score_b ?? 0
+      const nextScoreA = memberA === friendId ? currentScoreA + watermelonDelta : currentScoreA
+      const nextScoreB = memberB === friendId ? currentScoreB + watermelonDelta : currentScoreB
+      await upsertCoupleWatermelon(memberId, friendId, { scoreA: nextScoreA, scoreB: nextScoreB })
+      setWatermelonScore({ member_a: memberA, member_b: memberB, score_a: nextScoreA, score_b: nextScoreB, updated_at: new Date().toISOString() })
+      const reason = watermelonReason.trim().slice(0, 80) || (watermelonDelta > 0 ? '加分' : '减分')
+      await createCoupleWatermelonLog({
+        userA: memberId,
+        userB: friendId,
+        targetMember: friendId,
+        delta: watermelonDelta,
+        reason,
+        senderId: memberId,
+        senderName: memberName || '我',
+      })
+      void reloadWatermelonLogs()
+      if (peerOnline) {
+        toast.show(`🍉 已给 ${friendName} ${watermelonDelta > 0 ? `加 ${watermelonDelta} 分` : `减 ${Math.abs(watermelonDelta)} 分`}：${reason}`)
+      } else {
+        await notifyWatermelonScore(friendId, memberName || '我', watermelonDelta, reason)
+        toast.show('🍉 西瓜分已记录，对方上线后会在铃铛看到')
+      }
+      setWatermelonDelta(0)
+      setWatermelonReason('')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setWatermelonSaving(false)
     }
   }
 
@@ -2600,6 +2908,58 @@ export default function CouplePage() {
       setWufuGame(null)
       setWufuSelected(null)
       toast.show('本局已销毁，重新开一局吧')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setWufuSaving(false)
+    }
+  }
+
+  /** 投降认输：把整局存档为对局历史（含投降标记），再销毁当前棋局 */
+  const surrenderWufuGame = async () => {
+    if (!wufuState || !wufuGame || !memberId || !friendId || wufuSaving) return
+    if (wufuState.winner !== null) return toast.show('本局已有结果，无需再投降～')
+    if (!window.confirm('🏳️ 认输后本局会保存进「摆方对局历史」并结束棋局，确定要投降吗？')) return
+    setWufuSaving(true)
+    try {
+      const state: CoupleWufuState = {
+        ...wufuState,
+        winner: (1 - myWufuIndex) as 0 | 1,
+        log: [...wufuState.log, { at: new Date().toISOString(), text: `🏳️${memberName || '我'} 主动投降认输，${friendName} 获胜` }],
+      }
+      await createCoupleWufuHistory(memberId, friendId, state)
+      await deleteCoupleWufu(memberId, friendId)
+      setWufuGame(null)
+      setWufuSelected(null)
+      void reloadWufuHistory()
+      toast.show('🏳️ 已投降并存档本局，重新开一局吧')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setWufuSaving(false)
+    }
+  }
+
+  /** 暂停/继续棋局：暂停时前端停止网络轮询与实时订阅（省流量） */
+  const toggleWufuPause = async () => {
+    if (!wufuState || !wufuGame || !memberId || !friendId || wufuSaving) return
+    if (wufuState.winner !== null) return toast.show('本局已结束，无需暂停～')
+    const willPause = !wufuState.paused
+    const next: CoupleWufuState = {
+      ...wufuState,
+      paused: willPause,
+      log: willPause
+        ? [...wufuState.log, { at: new Date().toISOString(), text: `⏸️${memberName || '我'} 暂停棋局（等待对方继续）` }]
+        : wufuState.log,
+    }
+    setWufuSaving(true)
+    try {
+      await upsertCoupleWufu(memberId, friendId, next)
+      const [memberA, memberB] = orderedPair(memberId, friendId)
+      setWufuGame({ member_a: memberA, member_b: memberB, state: next, updated_at: new Date().toISOString() })
+      toast.show(willPause ? '⏸️ 已暂停：网络轮询已停止，点「继续游戏」恢复' : '▶️ 已继续对局')
+      // 继续时主动拉一次最新棋局（对方暂停期间可能已有动作）
+      if (!willPause) void reloadWufu(true)
     } catch (error) {
       toast.show((error as Error).message, 'err')
     } finally {
@@ -2733,11 +3093,11 @@ export default function CouplePage() {
 
   return (
     <div className="space-y-4">
-      <div className="min-w-0 overflow-hidden rounded-3xl bg-gradient-to-br from-brand-500 via-rose-400 to-orange-300 p-4 text-white shadow-card sm:p-5">
+      {/* <div className="min-w-0 overflow-hidden rounded-3xl bg-gradient-to-br from-brand-500 via-rose-400 to-orange-300 p-4 text-white shadow-card sm:p-5">
         <div className="text-xs opacity-80">FRIENDSHIP PLAYGROUND</div>
         <h2 className="mt-1 break-words text-xl font-bold">和 {friendName} 的互动空间</h2>
-        {/* <p className="mt-1 break-words text-xs opacity-90">把日常、心愿和默契，变成你们的共同回忆。</p> */}
-      </div>
+        <p className="mt-1 break-words text-xs opacity-90">把日常、心愿和默契，变成你们的共同回忆。</p>
+      </div> */}
 
       {isAdmin && !memberId && (
         <div className="animate-fade rounded-2xl bg-amber-50 p-3 text-xs leading-relaxed text-amber-700">
@@ -2756,6 +3116,8 @@ export default function CouplePage() {
             { id: 'board', icon: '🎯', title: '情侣飞行棋', detail: '联网轮流掷骰对战' },
             { id: 'mines', icon: '💣', title: '情侣扫雷', detail: '轮流拆雷，踩雷做任务' },
             { id: 'wufu', icon: '♟️', title: '摆方五福棋', detail: '摆子提子走子，吃到剩2子' },
+            { id: 'gomoku', icon: '⚫', title: '情侣五子棋', detail: '联网轮流落子，五连获胜' },
+            { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分，看专属甜蜜分变化' },
           ].map((module) => (
             <button key={module.id} type="button" className="card flex min-h-28 flex-col items-start justify-between gap-3 text-left transition hover:border-brand-200" onClick={() => setActiveModule(module.id)}>
               <span className="text-2xl">{module.icon}</span>
@@ -2914,9 +3276,9 @@ export default function CouplePage() {
                       value={boardCustomText}
                       onChange={(e) => setBoardCustomText(e.target.value)}
                     />
-                    <p className="text-[10px] leading-relaxed text-slate-400">
+                    {/* <p className="text-[10px] leading-relaxed text-slate-400">
                       自定义内容只保存在你的设备上，随生成棋盘一起生效并同步给对方；去重后最多 100 条。
-                    </p>
+                    </p> */}
                   </div>
                   <button className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-40" disabled={boardSaving} onClick={() => void startBoardGame()}>
                     {boardSaving ? '生成中…' : boardGame ? '生成新棋盘并开始' : '生成棋盘并开始'}
@@ -3085,7 +3447,7 @@ export default function CouplePage() {
             <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
               <div>
                 <h3 className="font-semibold">💣情侣扫雷</h3>
-                <p className="text-xs text-slate-400">轮流点开格子，踩到雷做任务，点开全部安全格即通关。</p>
+                {/* <p className="text-xs text-slate-400">轮流点开格子，踩到雷做任务，点开全部安全格即通关。</p> */}
               </div>
               {!minesLoaded ? (
                 <p className="py-6 text-center text-sm text-slate-400">棋局加载中…</p>
@@ -3441,7 +3803,7 @@ export default function CouplePage() {
                     </p>
                   </div>
 
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <span className="chip border-slate-200 bg-slate-50 text-slate-500">棋子 ❤️{wufuPieceCount[0]} / 💙{wufuPieceCount[1]}</span>
                     <span className="chip border-slate-200 bg-slate-50 text-slate-500">
                       {wufuState.phase === 'place' ? `摆子 ${wufuState.placed}/25` : wufuState.phase === 'forceRemove' ? '逼子' : '走子'}
@@ -3449,7 +3811,30 @@ export default function CouplePage() {
                     {wufuState.pendingCaptures > 0 && (
                       <span className="chip border-rose-200 bg-rose-50 text-rose-600">⚔️ 待提子 {wufuState.pendingCaptures}</span>
                     )}
-                    <button type="button" className="btn-ghost ml-auto shrink-0 text-xs" disabled={wufuSaving} onClick={() => void endWufuGame()}>
+                    {wufuState.paused && wufuState.winner === null && (
+                      <span className="chip border-amber-200 bg-amber-50 text-amber-600">⏸️ 已暂停（停止轮询）</span>
+                    )}
+                    {wufuState.winner === null && (
+                      <button
+                        type="button"
+                        className="btn-ghost ml-auto shrink-0 text-xs"
+                        disabled={wufuSaving}
+                        onClick={() => void toggleWufuPause()}
+                      >
+                        {wufuState.paused ? '▶️ 继续游戏' : '⏸️ 暂停棋局'}
+                      </button>
+                    )}
+                    {wufuState.winner === null && (
+                      <button
+                        type="button"
+                        className="btn-ghost shrink-0 border border-rose-200 text-xs text-rose-600 active:bg-rose-50"
+                        disabled={wufuSaving}
+                        onClick={() => void surrenderWufuGame()}
+                      >
+                        🏳️ 投降
+                      </button>
+                    )}
+                    <button type="button" className="btn-ghost shrink-0 text-xs text-slate-400" disabled={wufuSaving} onClick={() => void endWufuGame()}>
                       结束本局
                     </button>
                   </div>
@@ -3466,8 +3851,266 @@ export default function CouplePage() {
                       </div>
                     )}
                   </div>
+
+                  {/* 摆方对局历史：正常分出胜负或投降认输后自动存档，点击展开查看棋局快照 */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-semibold text-slate-500">🏛️ 对局历史（{wufuHistory.length}）</h4>
+                      {wufuHistory.length > 0 && (
+                        <button
+                          type="button"
+                          className="btn-ghost text-xs text-slate-400"
+                          onClick={() => void reloadWufuHistory()}
+                        >
+                          刷新
+                        </button>
+                      )}
+                    </div>
+                    {wufuHistory.length === 0 ? (
+                      <p className="rounded-xl bg-slate-50 py-2 text-center text-[11px] text-slate-400">还没有历史对局</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {wufuHistory.map((row) => {
+                          const s = row.state
+                          const winnerName = s.winner === null ? '—' : (wufuNames && s.winner === 0 ? wufuNames[0] : wufuNames ? wufuNames[1] : '')
+                          const surrendered = s.log.some((item) => item.text.includes('🏳️'))
+                          const open = wufuHistoryOpenId === row.id
+                          return (
+                            <div key={row.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className={`font-semibold ${surrendered ? 'text-slate-500' : 'text-brand-600'}`}>
+                                  {surrendered ? '🏳️ 认输' : '🏆 获胜'}
+                                </span>
+                                <span className="text-slate-400">{winnerName} · {new Date(row.finished_at).toLocaleString('zh-CN')}</span>
+                              </div>
+                              <button
+                                type="button"
+                                className="mt-1 text-[11px] text-brand-500 active:text-brand-600"
+                                onClick={() => setWufuHistoryOpenId(open ? null : row.id)}
+                              >
+                                {open ? '收起棋局快照 ▴' : `展开棋局快照 ▾（共 ${s.log.length} 步）`}
+                              </button>
+                              {open && (
+                                <div className="mt-2 space-y-2">
+                                  <div className="mx-auto w-full max-w-[260px]">
+                                    <div className="grid grid-cols-5 gap-0 rounded-lg border border-slate-200 bg-white p-1.5">
+                                      {s.board.map((cell, i) => {
+                                        const r = Math.floor(i / 5)
+                                        const c = i % 5
+                                        return (
+                                          <div
+                                            key={i}
+                                            className={`flex aspect-square items-center justify-center
+                                              ${r > 0 ? 'border-t' : ''} ${c > 0 ? 'border-l' : ''} border-slate-100`}
+                                          >
+                                            {cell === 1 ? (
+                                              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-rose-400 to-rose-600 text-[10px] font-bold text-white">❤️</span>
+                                            ) : cell === 2 ? (
+                                              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-sky-600 text-[10px] font-bold text-white">💙</span>
+                                            ) : (
+                                              <span className="h-1 w-1 rounded-full bg-slate-300" />
+                                            )}
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                  </div>
+                                  <div className="max-h-40 overflow-y-auto rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
+                                    {s.log.map((item, i) => (
+                                      <p key={i} className="break-words">{item.text}</p>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </>
               ) : null}
+            </section>
+          )}
+
+          {activeModule === 'gomoku' && (
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold">⚫ 情侣五子棋</h3>
+                  {/* <p className="mt-1 text-xs text-slate-500">标准 15×15 棋盘，黑棋先手，横竖斜任意方向连成五子获胜。</p> */}
+                </div>
+                <span className="chip shrink-0 border-slate-200 bg-slate-50 text-slate-600">{gomokuHistory.length} 局历史</span>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-amber-50 p-3 text-xs leading-relaxed text-slate-600">
+                <strong>游戏规则：</strong>双方轮流在交叉点落子，黑棋先手；先在横竖斜任意方向连成连续五子者获胜。棋局可暂停，暂停期间不进行网络同步；投降会结束并保存历史。
+              </div>
+              {!gomokuGame ? (
+                <button type="button" className="btn-primary w-full" disabled={gomokuSaving || !ready} onClick={() => void startGomokuGame()}>
+                  {gomokuSaving ? '创建中…' : '⚫ 开始新棋局'}
+                </button>
+              ) : gomokuState ? (
+                <>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    {gomokuState.winner !== null ? (
+                      <span className="chip border-emerald-200 bg-emerald-50 text-emerald-700">🏆 {gomokuNames?.[gomokuState.winner]} 获胜</span>
+                    ) : gomokuState.paused ? (
+                      <span className="chip border-amber-200 bg-amber-50 text-amber-700">⏸️ 棋局已暂停</span>
+                    ) : (
+                      <span className="chip border-brand-200 bg-brand-50 text-brand-700">{gomokuState.turn === 0 ? '⚫ 黑棋' : '⚪ 白棋'}回合 · {gomokuNames?.[gomokuState.turn]}</span>
+                    )}
+                    {gomokuState.winner === null && (
+                      <button type="button" className="btn-ghost ml-auto text-xs" disabled={gomokuSaving} onClick={() => void toggleGomokuPause()}>
+                        {gomokuState.paused ? '▶️ 继续游戏' : '⏸️ 暂停'}
+                      </button>
+                    )}
+                    {gomokuState.winner === null && (
+                      <button type="button" className="btn-ghost text-xs text-rose-600" disabled={gomokuSaving} onClick={() => void surrenderGomoku()}>🏳️ 投降</button>
+                    )}
+                  </div>
+                  <div className="mx-auto w-full max-w-[min(92vw,560px)] overflow-auto rounded-lg border border-amber-800/30 bg-amber-100 p-2">
+                    <div className="grid aspect-square grid-cols-15 grid-rows-15">
+                      {gomokuState.board.map((cell, index) => (
+                        <button
+                          key={index}
+                          type="button"
+                          aria-label={`第${Math.floor(index / 15) + 1}行第${index % 15 + 1}列${cell ? '已有棋子' : '落子'}`}
+                          className="relative flex min-h-0 min-w-0 items-center justify-center"
+                          disabled={gomokuSaving || gomokuState.paused || gomokuState.winner !== null || gomokuState.turn !== myGomokuIndex || cell !== 0}
+                          onClick={() => void placeGomoku(index)}
+                        >
+                          <span className="absolute inset-1/2 h-px w-full -translate-y-1/2 bg-amber-800/50" />
+                          <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-amber-800/50" />
+                          {cell !== 0 && <span className={`relative z-10 h-[72%] w-[72%] rounded-full shadow ${cell === 1 ? 'bg-slate-900' : 'border border-slate-300 bg-white'}`} />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
+                    {[...gomokuState.log].reverse().map((item, index) => <p key={index}>{item.text}</p>)}
+                  </div>
+                </>
+              ) : null}
+              <div className="space-y-2 border-t border-slate-100 pt-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-semibold text-slate-600">对局历史</h4>
+                  <button type="button" className="btn-ghost text-xs" onClick={() => void reloadGomokuHistory()}>刷新</button>
+                </div>
+                {gomokuHistory.length === 0 ? <p className="text-xs text-slate-400">还没有已结束的对局</p> : gomokuHistory.map((row) => (
+                  <div key={row.id} className="rounded-lg border border-slate-200 p-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span>{row.state.log.some((item) => item.text.includes('🏳️')) ? '🏳️ 投降结束' : '🏆 对局结束'}</span>
+                      <span className="text-slate-400">{gomokuGame && row.winner === myGomokuIndex ? memberName : friendName} · {new Date(row.finished_at).toLocaleString('zh-CN')}</span>
+                    </div>
+                    <button type="button" className="mt-1 text-xs text-brand-600" onClick={() => setGomokuHistoryOpenId(gomokuHistoryOpenId === row.id ? null : row.id)}>
+                      {gomokuHistoryOpenId === row.id ? '收起棋谱' : `查看棋谱（${row.state.log.length} 手）`}
+                    </button>
+                    {gomokuHistoryOpenId === row.id && <div className="mt-2 grid grid-cols-15 overflow-hidden rounded border border-amber-800/30 bg-amber-100">{row.state.board.map((cell, i) => <span key={i} className="flex aspect-square items-center justify-center border border-amber-800/10">{cell === 1 ? '●' : cell === 2 ? '○' : ''}</span>)}</div>}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {activeModule === 'watermelon' && (
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold">🍉 情侣西瓜分</h3>
+                  <p className="mt-1 text-xs text-slate-500">信用分：给 {friendName} 加分或减分。</p>
+                </div>
+                <span className="chip shrink-0 border-emerald-200 bg-emerald-50 text-emerald-700">{watermelonLogs.length} 条记录</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {(() => {
+                  const myWatermelonScore = memberId && friendId
+                    ? orderedPair(memberId, friendId)[0] === memberId
+                      ? watermelonScore?.score_a ?? 0
+                      : watermelonScore?.score_b ?? 0
+                    : 0
+                  const peerWatermelonScore = memberId && friendId
+                    ? orderedPair(memberId, friendId)[0] === friendId
+                      ? watermelonScore?.score_a ?? 0
+                      : watermelonScore?.score_b ?? 0
+                    : 0
+                  return (
+                    <>
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-center">
+                        <p className="text-[11px] text-emerald-700/70">{memberName || '我'}的西瓜分</p>
+                        <p className="mt-1 text-2xl font-bold text-emerald-700">{myWatermelonScore}</p>
+                      </div>
+                      <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-center">
+                        <p className="text-[11px] text-rose-700/70">{friendName}的西瓜分</p>
+                        <p className="mt-1 text-2xl font-bold text-rose-700">{peerWatermelonScore}</p>
+                      </div>
+                    </>
+                  )
+                })()}
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-amber-50 p-3 text-xs leading-relaxed text-slate-600">
+                <strong>规则说明：</strong>西瓜分代表你们之间的专属默契值。加分代表 TA 更可爱、更贴心；减分代表想提醒 TA 注意一点小细节。分数可以手动调整，并会保留最近明细。
+              </div>
+
+              <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-semibold text-slate-700">给 {friendName} 调整西瓜分</h4>
+                  <span className="text-[11px] text-slate-400">{watermelonSaving ? '保存中…' : '可加减'}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  {[
+                    { label: '-1', value: -1 },
+                    { label: '+1', value: 1 },
+                    { label: '+10', value: 10 },
+                  ].map((option) => (
+                    <button
+                      key={option.label}
+                      type="button"
+                      className={`btn-ghost text-sm ${watermelonDelta === option.value ? 'ring-2 ring-emerald-400' : ''}`}
+                      onClick={() => setWatermelonDelta(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="原因备注（可选）"
+                  value={watermelonReason}
+                  onChange={(event) => setWatermelonReason(event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn-primary w-full"
+                  disabled={watermelonSaving || watermelonDelta === 0}
+                  onClick={() => void adjustWatermelonScore()}
+                >
+                  {watermelonDelta === 0 ? '先选择加减分数' : watermelonDelta > 0 ? `确认给 ${friendName} 加 ${watermelonDelta} 分` : `确认给 ${friendName} 减 ${Math.abs(watermelonDelta)} 分`}
+                </button>
+              </div>
+
+              <div className="space-y-2 border-t border-slate-100 pt-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-semibold text-slate-600">最近西瓜分明细</h4>
+                  <button type="button" className="btn-ghost text-xs" onClick={() => void reloadWatermelonLogs()}>刷新</button>
+                </div>
+                {watermelonLogs.length === 0 ? (
+                  <p className="text-xs text-slate-400">还没有西瓜分记录，快给 TA 来第一分吧～</p>
+                ) : (
+                  watermelonLogs.map((log) => (
+                    <div key={log.id} className="flex items-center justify-between rounded-lg border border-slate-200 p-2 text-xs">
+                      <div>
+                        <p className="font-medium text-slate-700">{log.sender_name} 给 {log.target_member === friendId ? friendName : memberName || '我'} {log.delta > 0 ? '加了' : '减了'} {Math.abs(log.delta)} 分</p>
+                        <p className="mt-1 text-slate-400">{log.reason || (log.delta > 0 ? '加分' : '减分')} · {new Date(log.created_at).toLocaleString('zh-CN')}</p>
+                      </div>
+                      <span className={`chip ${log.delta > 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
+                        {log.delta > 0 ? `+${log.delta}` : log.delta}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
             </section>
           )}
 

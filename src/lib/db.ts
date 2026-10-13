@@ -1584,6 +1584,8 @@ export interface CoupleWufuState {
   pendingCaptures: number
   log: { at: string; text: string }[]
   winner: 0 | 1 | null
+  /** 整局暂停：暂停时前端停止网络访问（省流量），继续时恢复轮询/实时订阅 */
+  paused?: boolean
 }
 
 export interface CoupleWufuRow {
@@ -1625,6 +1627,272 @@ export async function deleteCoupleWufu(userA: string, userB: string): Promise<vo
   const [memberA, memberB] = couplePair(userA, userB)
   const { error } = await supabase.from('couple_wufu').delete().eq('member_a', memberA).eq('member_b', memberB)
   if (error) fail(error, '结束摆方棋局')
+}
+
+/* ------------------------------ 情侣摆方对局历史 ------------------------------ */
+
+export interface CoupleWufuHistoryRow {
+  id: string
+  member_a: string
+  member_b: string
+  state: CoupleWufuState
+  winner: 0 | 1
+  finished_at: string
+}
+
+/** 摆方一局结束（正常分出胜负 / 投降认输）时，把整份棋局快照存档，供回看 */
+export async function createCoupleWufuHistory(userA: string, userB: string, state: CoupleWufuState): Promise<void> {
+  if (!userA || !userB || userA === userB) return
+  if (state.winner === null) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase
+    .from('couple_wufu_history')
+    .insert({ member_a: memberA, member_b: memberB, state, winner: state.winner })
+  if (error && !isMissingTable(error)) fail(error, '保存摆方对局历史')
+}
+
+export async function listCoupleWufuHistory(userA: string, userB: string, limit = 20): Promise<CoupleWufuHistoryRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_wufu_history')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .order('finished_at', { ascending: false })
+    .limit(limit)
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载摆方对局历史')
+  }
+  return (data ?? []) as CoupleWufuHistoryRow[]
+}
+
+/** 管理员查看全部摆方对局历史（表未建时静默返回空） */
+export async function listAllCoupleWufuHistory(limit = 200): Promise<CoupleWufuHistoryRow[]> {
+  const { data, error } = await supabase
+    .from('couple_wufu_history')
+    .select('*')
+    .order('finished_at', { ascending: false })
+    .limit(limit)
+  if (error && !isMissingTable(error)) fail(error, '加载全部摆方历史')
+  return (data ?? []) as CoupleWufuHistoryRow[]
+}
+
+/** 管理员批量删除摆方对局历史 */
+export async function deleteCoupleWufuHistory(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { error } = await supabase.from('couple_wufu_history').delete().in('id', ids)
+  if (error && !isMissingTable(error)) fail(error, '删除摆方历史')
+}
+
+/* ------------------------------ 情侣五子棋 ------------------------------ */
+
+export interface CoupleGomokuState {
+  board: number[]
+  turn: 0 | 1
+  winner: 0 | 1 | null
+  paused?: boolean
+  log: { at: string; text: string }[]
+}
+
+export interface CoupleGomokuRow {
+  member_a: string
+  member_b: string
+  state: CoupleGomokuState
+  updated_at: string
+}
+
+export interface CoupleGomokuHistoryRow {
+  id: string
+  member_a: string
+  member_b: string
+  state: CoupleGomokuState
+  winner: 0 | 1
+  finished_at: string
+}
+
+export async function fetchCoupleGomoku(userA: string, userB: string): Promise<CoupleGomokuRow | null> {
+  if (!userA || !userB || userA === userB) return null
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase.from('couple_gomoku').select('*').eq('member_a', memberA).eq('member_b', memberB).maybeSingle()
+  if (error) fail(error, '加载五子棋棋局')
+  return (data as CoupleGomokuRow | null) ?? null
+}
+
+export async function upsertCoupleGomoku(userA: string, userB: string, state: CoupleGomokuState): Promise<void> {
+  if (!userA || !userB || userA === userB) throw new Error('请先添加好友再开始五子棋')
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_gomoku').upsert(
+    { member_a: memberA, member_b: memberB, state, updated_at: new Date().toISOString() },
+    { onConflict: 'member_a,member_b' }
+  )
+  if (error) fail(error, '同步五子棋棋局')
+}
+
+export async function deleteCoupleGomoku(userA: string, userB: string): Promise<void> {
+  if (!userA || !userB || userA === userB) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_gomoku').delete().eq('member_a', memberA).eq('member_b', memberB)
+  if (error) fail(error, '结束五子棋棋局')
+}
+
+export async function createCoupleGomokuHistory(userA: string, userB: string, state: CoupleGomokuState): Promise<void> {
+  if (!userA || !userB || userA === userB || state.winner === null) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_gomoku_history').insert({ member_a: memberA, member_b: memberB, state, winner: state.winner })
+  if (error && !isMissingTable(error)) fail(error, '保存五子棋对局历史')
+}
+
+export async function listCoupleGomokuHistory(userA: string, userB: string, limit = 20): Promise<CoupleGomokuHistoryRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase.from('couple_gomoku_history').select('*').eq('member_a', memberA).eq('member_b', memberB).order('finished_at', { ascending: false }).limit(limit)
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载五子棋对局历史')
+  }
+  return (data ?? []) as CoupleGomokuHistoryRow[]
+}
+
+export async function listAllCoupleGomokuHistory(limit = 200): Promise<CoupleGomokuHistoryRow[]> {
+  const { data, error } = await supabase.from('couple_gomoku_history').select('*').order('finished_at', { ascending: false }).limit(limit)
+  if (error && !isMissingTable(error)) fail(error, '加载全部五子棋历史')
+  return (data ?? []) as CoupleGomokuHistoryRow[]
+}
+
+export async function deleteCoupleGomokuHistory(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { error } = await supabase.from('couple_gomoku_history').delete().in('id', ids)
+  if (error && !isMissingTable(error)) fail(error, '删除五子棋历史')
+}
+
+export async function notifyGomokuTurn(recipient: string, senderName: string): Promise<void> {
+  if (!recipient) return
+  await insertFeedNotices([recipient], { sender_name: senderName, type: 'gomoku', post_id: null, title: '⚫ 轮到你下五子棋了', body: `${senderName} 落子完毕，快去互动空间 → 五子棋吧～` })
+}
+
+export async function notifyGomokuNew(recipient: string, senderName: string): Promise<void> {
+  if (!recipient) return
+  await insertFeedNotices([recipient], { sender_name: senderName, type: 'gomoku', post_id: null, title: '⚫ 五子棋新棋局开好啦', body: `${senderName} 创建了五子棋棋局，快去互动空间看看吧～` })
+}
+
+/* ------------------------------ 情侣西瓜分 ------------------------------ */
+
+export interface CoupleWatermelonScoreRow {
+  member_a: string
+  member_b: string
+  score_a: number
+  score_b: number
+  updated_at: string
+}
+
+export interface CoupleWatermelonLogRow {
+  id: string
+  member_a: string
+  member_b: string
+  target_member: string
+  delta: number
+  reason: string
+  sender_id: string
+  sender_name: string
+  created_at: string
+}
+
+export async function fetchCoupleWatermelon(userA: string, userB: string): Promise<CoupleWatermelonScoreRow | null> {
+  if (!userA || !userB || userA === userB) return null
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase.from('couple_watermelon_scores').select('*').eq('member_a', memberA).eq('member_b', memberB).maybeSingle()
+  if (error) {
+    if (isMissingTable(error)) return null
+    fail(error, '加载西瓜分')
+  }
+  return (data as CoupleWatermelonScoreRow | null) ?? null
+}
+
+export async function upsertCoupleWatermelon(userA: string, userB: string, patch: { scoreA?: number; scoreB?: number }): Promise<void> {
+  if (!userA || !userB || userA === userB) throw new Error('请先添加好友再调整西瓜分')
+  const [memberA, memberB] = couplePair(userA, userB)
+  const current = await fetchCoupleWatermelon(memberA, memberB)
+  const next = {
+    member_a: memberA,
+    member_b: memberB,
+    score_a: patch.scoreA ?? current?.score_a ?? 0,
+    score_b: patch.scoreB ?? current?.score_b ?? 0,
+    updated_at: new Date().toISOString(),
+  }
+  const { error } = await supabase.from('couple_watermelon_scores').upsert(next, { onConflict: 'member_a,member_b' })
+  if (error) fail(error, '同步西瓜分')
+}
+
+export async function createCoupleWatermelonLog(input: {
+  userA: string
+  userB: string
+  targetMember: string
+  delta: number
+  reason: string
+  senderId: string
+  senderName: string
+  balanceAfter?: number
+}): Promise<CoupleWatermelonLogRow> {
+  if (!input.userA || !input.userB || input.userA === input.userB) throw new Error('请先添加好友再调整西瓜分')
+  const [memberA, memberB] = couplePair(input.userA, input.userB)
+  if (input.targetMember !== memberA && input.targetMember !== memberB) throw new Error('西瓜分只能给当前好友对象调整')
+  const delta = Math.max(-100, Math.min(100, Math.trunc(input.delta)))
+  if (delta === 0) throw new Error('请选择加分或减分数值')
+  const reason = input.reason.trim().slice(0, 80) || (delta > 0 ? '加分' : '减分')
+  const { data, error } = await supabase.from('couple_watermelon_logs').insert({
+    member_a: memberA,
+    member_b: memberB,
+    target_member: input.targetMember,
+    delta,
+    reason,
+    sender_id: input.senderId,
+    sender_name: input.senderName || '好友',
+  }).select('*').single()
+  if (error) fail(error, '记录西瓜分')
+  return data as CoupleWatermelonLogRow
+}
+
+export async function listCoupleWatermelonLogs(userA: string, userB: string, limit = 30): Promise<CoupleWatermelonLogRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase.from('couple_watermelon_logs').select('*').eq('member_a', memberA).eq('member_b', memberB).order('created_at', { ascending: false }).limit(limit)
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载西瓜分明细')
+  }
+  return (data ?? []) as CoupleWatermelonLogRow[]
+}
+
+export async function listAllCoupleWatermelonScores(limit = 200): Promise<CoupleWatermelonScoreRow[]> {
+  const { data, error } = await supabase.from('couple_watermelon_scores').select('*').order('updated_at', { ascending: false }).limit(limit)
+  if (error && !isMissingTable(error)) fail(error, '加载全部西瓜分')
+  return (data ?? []) as CoupleWatermelonScoreRow[]
+}
+
+export async function listAllCoupleWatermelonLogs(limit = 200): Promise<CoupleWatermelonLogRow[]> {
+  const { data, error } = await supabase.from('couple_watermelon_logs').select('*').order('created_at', { ascending: false }).limit(limit)
+  if (error && !isMissingTable(error)) fail(error, '加载全部西瓜分明细')
+  return (data ?? []) as CoupleWatermelonLogRow[]
+}
+
+export async function deleteCoupleWatermelonLogs(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { error } = await supabase.from('couple_watermelon_logs').delete().in('id', ids)
+  if (error && !isMissingTable(error)) fail(error, '删除西瓜分明细')
+}
+
+export async function notifyWatermelonScore(recipient: string, senderName: string, delta: number, reason: string): Promise<void> {
+  if (!recipient) return
+  const sign = delta > 0 ? `+${delta}` : String(delta)
+  await insertFeedNotices([recipient], {
+    sender_name: senderName,
+    type: 'watermelon',
+    post_id: null,
+    title: `🍉 你的西瓜分 ${sign}`,
+    body: `${senderName} 给你${delta > 0 ? '加' : '减'}了 ${Math.abs(delta)} 分：${reason}`,
+  })
 }
 
 /* ------------------------------ 订单 ------------------------------ */
@@ -2045,6 +2313,8 @@ export type FeedNoticeType =
   | 'board'
   | 'mines'
   | 'wufu'
+  | 'gomoku'
+  | 'watermelon'
   | 'love'
 
 export interface FeedNotificationRow {
@@ -2076,17 +2346,45 @@ async function resolveActorName(memberId: string | null): Promise<string> {
   return data?.name || '好友'
 }
 
-/** 批量落通知：任一条失败都不影响主流程 */
+/** 判断某成员是否在线：最近 5 分钟内有 last_active_at 更新视为在线 */
+async function isRecipientOnline(recipientId: string): Promise<boolean> {
+  try {
+    const { data } = await supabase
+      .from('members')
+      .select('last_active_at')
+      .eq('id', recipientId)
+      .maybeSingle()
+    if (!data?.last_active_at) return false
+    const ts = new Date(data.last_active_at).getTime()
+    return Date.now() - ts < 5 * 60_000
+  } catch {
+    return false
+  }
+}
+
+/** 批量落通知：任一条失败都不影响主流程；游戏类通知会自动跳过在线用户（在线时由前端弹窗提示） */
 async function insertFeedNotices(
   recipients: string[],
   notice: Omit<FeedNotificationRow, 'id' | 'recipient' | 'read_at' | 'created_at'>
 ): Promise<void> {
   const unique = [...new Set(recipients.filter(Boolean))]
   if (!unique.length) return
+  // 游戏类（board / mines / wufu / gomoku）通知：在线用户跳过写铃铛（前端弹窗已提示）
+  const gameTypes: ReadonlySet<string> = new Set(['board', 'mines', 'wufu', 'gomoku', 'watermelon'])
+  const filtered = gameTypes.has(notice.type)
+    ? await Promise.all(
+        unique.map(async (id) => {
+          const online = await isRecipientOnline(id)
+          return online ? null : id
+        })
+      )
+    : unique
+  const finalRecipients = filtered.filter((id): id is string => id !== null)
+  if (!finalRecipients.length) return
   try {
     const { error } = await supabase
       .from('feed_notifications')
-      .insert(unique.map((recipient) => ({ ...notice, recipient })))
+      .insert(finalRecipients.map((recipient) => ({ ...notice, recipient })))
     if (error) {
       console.warn('写入饭圈通知失败', error)
     }
@@ -2222,6 +2520,17 @@ export async function markFeedNotificationRead(identity: string, notificationId:
     .eq('recipient', identity)
     .is('read_at', null)
   if (error) fail(error, '标记消息已读')
+}
+
+/** 一键把该成员所有未读铃铛通知全部标记已读（消除铃铛数字角标） */
+export async function markFeedNotificationsReadAll(identity: string): Promise<void> {
+  if (!identity) return
+  const { error } = await supabase
+    .from('feed_notifications')
+    .update({ read_at: new Date().toISOString() })
+    .eq('recipient', identity)
+    .is('read_at', null)
+  if (error) fail(error, '标记全部消息已读')
 }
 
 /** 未读消息条数（顶栏角标） */

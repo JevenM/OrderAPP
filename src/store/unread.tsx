@@ -41,6 +41,12 @@ const UnreadContext = createContext<UnreadValue>({
   markFeedRead: () => {},
 })
 
+/** 扩展 hook：把铃铛角标数（feedUnread）直接暴露出来，供消息面板「全部已读」按钮使用 */
+export function useUnreadBellCount() {
+  const { feedUnread } = useUnread()
+  return feedUnread
+}
+
 /** 监听订单、饮食、以及饭圈的点赞、评论和新动态，触发消息提醒与通知 */
 export function UnreadProvider({ enabled, children }: { enabled: boolean; children: ReactNode }) {
   const { isAdmin, memberId } = useSession()

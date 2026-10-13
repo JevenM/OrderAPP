@@ -6,12 +6,16 @@ import {
   deleteCoupleQuizHistory,
   deleteCoupleTruthDare,
   deleteCoupleWishes,
+  deleteCoupleWufuHistory,
+  deleteCoupleGomokuHistory,
+  listAllCoupleGomokuHistory,
   listAllCoupleBoardGameHistory,
   listAllCoupleMessages,
   listAllCoupleMinesHistory,
   listAllCoupleQuizHistory,
   listAllCoupleTruthDare,
   listAllCoupleWishes,
+  listAllCoupleWufuHistory,
   updateCoupleMessage,
   updateCoupleQuizHistory,
   updateCoupleTruthDareAnswer,
@@ -22,6 +26,8 @@ import {
   type CoupleQuizHistoryRow,
   type CoupleTruthDareRow,
   type CoupleWish,
+  type CoupleWufuHistoryRow,
+  type CoupleGomokuHistoryRow,
 } from '../lib/db'
 import { exportTableCsv, exportTableJson } from '../lib/export'
 import { useToast } from '../components/Toast'
@@ -39,6 +45,8 @@ const TABS = [
   { key: 'wishes', label: '🌠 秘密心愿' },
   { key: 'board', label: '🛫 飞行棋' },
   { key: 'mines', label: '💣 扫雷' },
+  { key: 'wufu', label: '♟️ 摆方' },
+  { key: 'gomoku', label: '⚫ 五子棋' },
 ] as const
 
 type DataTab = (typeof TABS)[number]['key']
@@ -50,6 +58,8 @@ const TAB_DESC: Record<DataTab, string> = {
   wishes: '双方写下的秘密心愿，可编辑、删除、导出。',
   board: '飞行棋对局历史快照，仅支持查看、删除、导出。',
   mines: '扫雷对局历史快照，仅支持查看、删除、导出。',
+  wufu: '摆方五福棋对局历史快照，仅支持查看、删除、导出。',
+  gomoku: '五子棋对局历史快照，仅支持查看、删除、导出。',
 }
 
 const fmt = (time: string) => new Date(time).toLocaleString('zh-CN')
@@ -65,6 +75,8 @@ export default function AdminCoupleData() {
   const [wishRows, setWishRows] = useState<CoupleWish[]>([])
   const [boardRows, setBoardRows] = useState<CoupleBoardGameHistoryRow[]>([])
   const [minesRows, setMinesRows] = useState<CoupleMinesHistoryRow[]>([])
+  const [wufuRows, setWufuRows] = useState<CoupleWufuHistoryRow[]>([])
+  const [gomokuRows, setGomokuRows] = useState<CoupleGomokuHistoryRow[]>([])
 
   const [pair, setPair] = useState('all')
   const [loading, setLoading] = useState(true)
@@ -87,13 +99,15 @@ export default function AdminCoupleData() {
 
   const reload = useCallback(async () => {
     setLoading(true)
-    const [msg, quiz, truth, wish, board, mines] = await Promise.allSettled([
+    const [msg, quiz, truth, wish, board, mines, wufu, gomoku] = await Promise.allSettled([
       listAllCoupleMessages(),
       listAllCoupleQuizHistory(),
       listAllCoupleTruthDare(),
       listAllCoupleWishes(),
       listAllCoupleBoardGameHistory(),
       listAllCoupleMinesHistory(),
+      listAllCoupleWufuHistory(),
+      listAllCoupleGomokuHistory(),
     ])
     const failures: string[] = []
     if (msg.status === 'fulfilled') setMessages(msg.value)
@@ -108,6 +122,10 @@ export default function AdminCoupleData() {
     else failures.push('飞行棋')
     if (mines.status === 'fulfilled') setMinesRows(mines.value)
     else failures.push('扫雷')
+    if (wufu.status === 'fulfilled') setWufuRows(wufu.value)
+    else failures.push('摆方')
+    if (gomoku.status === 'fulfilled') setGomokuRows(gomoku.value)
+    else failures.push('五子棋')
     if (failures.length) toast.show(`${failures.join('、')}数据加载失败，可点击刷新重试`, 'err')
     setLoading(false)
   }, [toast])
@@ -119,8 +137,8 @@ export default function AdminCoupleData() {
   /** 当前模块的行数（Tab 角标） */
   const tabCount = useCallback(
     (key: DataTab): number =>
-      ({ messages: messages.length, quiz: quizRows.length, truth: truthRows.length, wishes: wishRows.length, board: boardRows.length, mines: minesRows.length })[key],
-    [messages, quizRows, truthRows, wishRows, boardRows, minesRows]
+      ({ messages: messages.length, quiz: quizRows.length, truth: truthRows.length, wishes: wishRows.length, board: boardRows.length, mines: minesRows.length, wufu: wufuRows.length, gomoku: gomokuRows.length })[key],
+    [messages, quizRows, truthRows, wishRows, boardRows, minesRows, wufuRows, gomokuRows]
   )
 
   /* ------------------------------ 各模块筛选 ------------------------------ */
@@ -149,10 +167,18 @@ export default function AdminCoupleData() {
     () => minesRows.filter((row) => pair === 'all' || `${row.member_a}|${row.member_b}` === pair),
     [minesRows, pair]
   )
+  const filteredWufu = useMemo(
+    () => wufuRows.filter((row) => pair === 'all' || `${row.member_a}|${row.member_b}` === pair),
+    [wufuRows, pair]
+  )
+  const filteredGomoku = useMemo(
+    () => gomokuRows.filter((row) => pair === 'all' || `${row.member_a}|${row.member_b}` === pair),
+    [gomokuRows, pair]
+  )
 
   /** 当前模块筛选后的记录数 / 全部 id（用于全选与删除） */
   const currentFilteredCount =
-    ({ messages: filteredMessages.length, quiz: filteredQuiz.length, truth: filteredTruth.length, wishes: filteredWishes.length, board: filteredBoard.length, mines: filteredMines.length })[tab]
+    ({ messages: filteredMessages.length, quiz: filteredQuiz.length, truth: filteredTruth.length, wishes: filteredWishes.length, board: filteredBoard.length, mines: filteredMines.length, wufu: filteredWufu.length, gomoku: filteredGomoku.length })[tab]
   const currentFilteredIds = useMemo(() => {
     switch (tab) {
       case 'messages': return filteredMessages.map((r) => r.id)
@@ -161,8 +187,10 @@ export default function AdminCoupleData() {
       case 'wishes': return filteredWishes.map((r) => r.id)
       case 'board': return filteredBoard.map((r) => r.id)
       case 'mines': return filteredMines.map((r) => r.id)
+      case 'wufu': return filteredWufu.map((r) => r.id)
+      case 'gomoku': return filteredGomoku.map((r) => r.id)
     }
-  }, [tab, filteredMessages, filteredQuiz, filteredTruth, filteredWishes, filteredBoard, filteredMines])
+  }, [tab, filteredMessages, filteredQuiz, filteredTruth, filteredWishes, filteredBoard, filteredMines, filteredWufu, filteredGomoku])
 
   /** 情侣对下拉选项：取当前模块出现过的对（留言板按收发双方归对） */
   const pairOptions = useMemo(() => {
@@ -174,11 +202,11 @@ export default function AdminCoupleData() {
       })
     } else {
       const rows: Array<{ member_a: string; member_b: string }> =
-        tab === 'quiz' ? quizRows : tab === 'truth' ? truthRows : tab === 'wishes' ? wishRows : tab === 'board' ? boardRows : minesRows
+        tab === 'quiz' ? quizRows : tab === 'truth' ? truthRows : tab === 'wishes' ? wishRows : tab === 'board' ? boardRows : tab === 'mines' ? minesRows : tab === 'wufu' ? wufuRows : gomokuRows
       rows.forEach((row) => map.set(`${row.member_a}|${row.member_b}`, pairLabel(row.member_a, row.member_b)))
     }
     return [...map].map(([key, label]) => ({ key, label }))
-  }, [tab, messages, quizRows, truthRows, wishRows, boardRows, minesRows, pairLabel])
+  }, [tab, messages, quizRows, truthRows, wishRows, boardRows, minesRows, wufuRows, gomokuRows, pairLabel])
 
   /* ------------------------------ 通用操作 ------------------------------ */
 
@@ -218,7 +246,9 @@ export default function AdminCoupleData() {
       else if (tab === 'truth') await deleteCoupleTruthDare(ids)
       else if (tab === 'wishes') await deleteCoupleWishes(ids)
       else if (tab === 'board') await deleteCoupleBoardGameHistory(ids)
-      else await deleteCoupleMinesHistory(ids)
+      else if (tab === 'mines') await deleteCoupleMinesHistory(ids)
+      else if (tab === 'wufu') await deleteCoupleWufuHistory(ids)
+      else await deleteCoupleGomokuHistory(ids)
       toast.show(`已删除 ${ids.length} 条数据`)
       exitSelect()
       await reload()
@@ -266,12 +296,26 @@ export default function AdminCoupleData() {
           pairLabel(row.member_a, row.member_b), nameOf(row.winner === 0 ? row.member_a : row.member_b),
           row.state.size, row.state.log.length, fmt(row.finished_at),
         ]))
-    } else {
+    } else if (tab === 'mines') {
       if (!filteredMines.length) return toast.show('没有可导出的数据', 'err')
       exportTableCsv(`扫雷历史-${date}.csv`, ['情侣对', '结果', '行', '列', '雷数', '完成时间'],
         filteredMines.map((row) => [
           pairLabel(row.member_a, row.member_b), row.cleared ? '通关' : '失败', row.state.rows, row.state.cols, row.state.mineTotal, fmt(row.finished_at),
         ]))
+    } else if (tab === 'wufu') {
+      if (!filteredWufu.length) return toast.show('没有可导出的数据', 'err')
+      exportTableCsv(`摆方历史-${date}.csv`, ['情侣对', '结果', '先手', '落子数', '结束时间'], 
+        filteredWufu.map((row) => [
+          pairLabel(row.member_a, row.member_b),
+          row.state.winner === null ? '进行中' : row.state.winner === row.state.firstMover ? `${row.state.log[row.state.log.length - 1]?.text ?? ''}` : '',
+          row.state.firstMover === 0 ? nameOf(row.member_a) : nameOf(row.member_b),
+          row.state.placed, fmt(row.finished_at),
+        ]))
+    } else {
+      if (!filteredGomoku.length) return toast.show('没有可导出的数据', 'err')
+      exportTableCsv(`五子棋历史-${date}.csv`, ['情侣对', '胜者', '落子数', '结束时间'], filteredGomoku.map((row) => [
+        pairLabel(row.member_a, row.member_b), nameOf(row.winner === 0 ? row.member_a : row.member_b), row.state.log.length, fmt(row.finished_at),
+      ]))
     }
     toast.show('导出成功')
   }
@@ -284,9 +328,10 @@ export default function AdminCoupleData() {
           : tab === 'truth' ? filteredTruth
             : tab === 'wishes' ? filteredWishes
               : tab === 'board' ? filteredBoard
-                : filteredMines
+                : tab === 'mines' ? filteredMines
+                  : tab === 'wufu' ? filteredWufu : filteredGomoku
     if (!data.length) return toast.show('没有可导出的数据', 'err')
-    const names: Record<DataTab, string> = { messages: '留言板', quiz: '同步抉择历史', truth: '真心话大冒险', wishes: '秘密心愿', board: '飞行棋历史', mines: '扫雷历史' }
+    const names: Record<DataTab, string> = { messages: '留言板', quiz: '同步抉择历史', truth: '真心话大冒险', wishes: '秘密心愿', board: '飞行棋历史', mines: '扫雷历史', wufu: '摆方历史', gomoku: '五子棋历史' }
     exportTableJson(`${names[tab]}-${date}.json`, data)
     toast.show('导出成功')
   }
@@ -625,6 +670,49 @@ export default function AdminCoupleData() {
                 <div className="text-xs text-slate-500">
                   {row.state.rows}×{row.state.cols} 棋盘 · {row.state.mineTotal} 颗雷 · 完成于 {fmt(row.finished_at)}
                 </div>
+              </div>
+            </article>
+          )
+        })}
+
+        {/* ♟️ 摆方五福棋 */}
+        {tab === 'wufu' && filteredWufu.map((row) => {
+          const checked = selected.has(row.id)
+          const s = row.state
+          const winnerName = s.winner === 0 ? nameOf(row.member_a) : nameOf(row.member_b)
+          const surrendered = s.log.some((item) => item.text.includes('🏳️'))
+          return (
+            <article key={row.id} className={`${rowShell} ${checked ? 'ring-2 ring-brand-300' : ''}`}>
+              {selectMode && checkCell(row.id, checked)}
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1 break-words text-sm font-semibold text-slate-700">
+                    {pairLabel(row.member_a, row.member_b)}
+                  </div>
+                  <span className={`chip shrink-0 ${surrendered ? 'border-slate-300 bg-slate-50 text-slate-600' : 'border-brand-200 bg-brand-50 text-brand-600'}`}>
+                    {surrendered ? `🏳️ ${winnerName} 认输` : `🏆 ${winnerName} 获胜`}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-500">
+                  先手 {nameOf(s.firstMover === 0 ? row.member_a : row.member_b)} · 落子 {s.placed}/25 · 共 {s.log.length} 步 · 完成于 {fmt(row.finished_at)}
+                </div>
+              </div>
+            </article>
+          )
+        })}
+
+        {tab === 'gomoku' && filteredGomoku.map((row) => {
+          const checked = selected.has(row.id)
+          const winnerName = nameOf(row.winner === 0 ? row.member_a : row.member_b)
+          return (
+            <article key={row.id} className={`${rowShell} ${checked ? 'ring-2 ring-brand-300' : ''}`}>
+              {selectMode && checkCell(row.id, checked)}
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1 break-words text-sm font-semibold text-slate-700">{pairLabel(row.member_a, row.member_b)}</div>
+                  <span className="chip shrink-0 border-brand-200 bg-brand-50 text-brand-600">🏆 {winnerName} 获胜</span>
+                </div>
+                <div className="text-xs text-slate-500">标准 15×15 · 共 {row.state.log.length} 手 · 完成于 {fmt(row.finished_at)}</div>
               </div>
             </article>
           )
