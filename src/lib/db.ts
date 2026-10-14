@@ -1,5 +1,6 @@
-import { ADMIN_CODE, ADMIN_NAME, configured, supabase } from './supabase'
+import { ADMIN_NAME, configured, supabase } from './supabase'
 import { getProbeState } from './realtime'
+import { deduped, invalidateDedupe } from './net'
 import { compressImage } from './image'
 import { toDayStr } from './date'
 import type {
@@ -211,7 +212,32 @@ export function randomCode(len = 6): string {
   return s
 }
 
-export async function listMembers(): Promise<Member[]> {
+/**
+ * 成员清单（不含邀请码）。
+ * 成员 store、设置 store、在线状态会在同一时刻各读一次，这里做短时去重：
+ * 同一波只真正发 1 次请求；写完成员后会主动失效（见 invalidateDedupe）。
+ */
+export function listMembers(): Promise<Member[]> {
+  return deduped('members:list', 8_000, async () => {
+    const { data, error } = await withTimeout(
+      supabase
+        .from('members')
+        // 只用得到这几列：不取 code（邀请码属于登录凭据，普通页面用不到），响应体也更小
+        .select('id, name, my_name, avatar_url, created_at')
+        .order('created_at', { ascending: true }),
+      15_000,
+      '加载成员'
+    )
+    if (error) fail(error, '加载成员')
+    return (data ?? []) as Member[]
+  })
+}
+
+/**
+ * 管理页专用：带邀请码的成员清单。
+ * 单独开一个函数，是为了让「切换视角 / 在线状态」这类高频读取不再把邀请码带到每个请求里。
+ */
+export async function listMembersWithCodes(): Promise<Member[]> {
   const { data, error } = await withTimeout(
     supabase.from('members').select('*').order('created_at', { ascending: true }),
     15_000,
@@ -221,10 +247,35 @@ export async function listMembers(): Promise<Member[]> {
   return (data ?? []) as Member[]
 }
 
+/** 新增成员：邀请码只在真正用到它时单独查一行，避免登录页之外的请求携带凭据 */
+export async function getMemberCode(id: string): Promise<string> {
+  const { data, error } = await supabase.from('members').select('code').eq('id', id).maybeSingle()
+  if (error) fail(error, '读取邀请码')
+  return ((data?.code as string) ?? '').trim()
+}
+
 /**
  * 校验邀请码。登录第一步，网络不通时要给得出排查方向（见 netHint），
  * 另外加 15s 超时，避免弱网下一直转圈没有任何反馈。
  */
+export type LoginVerifyResult = {
+  ok: boolean
+  role?: 'me' | 'her'
+  member_id?: string
+  member_name?: string
+  member_avatar?: string
+}
+
+/** 服务端口令校验；迁移 0035 未执行时返回 null，让开发环境保留旧流程兜底。 */
+export async function verifyLogin(code: string): Promise<LoginVerifyResult | null> {
+  const { data, error } = await supabase.rpc('login_verify', { p_input: code.trim() })
+  if (error) {
+    if (/function .*login_verify|does not exist|404|PGRST202/i.test(error.message ?? '')) return null
+    fail(error, '校验登录口令')
+  }
+  return (data ?? { ok: false }) as LoginVerifyResult
+}
+
 export async function findMemberByCode(code: string): Promise<Member | null> {
   try {
     const { data, error } = await withTimeout(
@@ -249,9 +300,15 @@ export async function findMemberByName(name: string): Promise<Member | null> {
   return (data as Member | null) ?? null
 }
 
+/** 成员表有任何写入 → 让清单缓存立刻失效，避免「改完看不到变化」 */
+function invalidateMembers() {
+  invalidateDedupe('members:')
+}
+
 export async function createMember(name: string, code: string): Promise<Member> {
   const { data, error } = await supabase.from('members').insert({ name, code }).select().single()
   if (error || !data) fail(error, '新增成员')
+  invalidateMembers()
   return data as Member
 }
 
@@ -261,6 +318,7 @@ export async function updateMember(
 ): Promise<void> {
   const { error } = await supabase.from('members').update(patch).eq('id', id)
   if (error) fail(error, '修改成员')
+  invalidateMembers()
 }
 
 /* ------------------------------ 头像 ------------------------------ */
@@ -330,6 +388,7 @@ export async function getMemberMyName(memberId: string | null): Promise<string> 
 export async function removeMember(id: string): Promise<void> {
   const { error } = await supabase.from('members').delete().eq('id', id)
   if (error) fail(error, '删除成员')
+  invalidateMembers()
 }
 
 /* ------------------------------ 好友 ------------------------------ */
@@ -480,7 +539,6 @@ export async function searchFriendByName(
 
   // 管理员的名字可以匹配全局昵称、专属昵称或默认配置
   if (
-    normalized === ADMIN_CODE ||
     normalized === ADMIN_NAME ||
     (adminDisplayName && normalized === adminDisplayName)
   ) {
@@ -582,17 +640,35 @@ function couplePair(userA: string, userB: string): [string, string] {
   return userA < userB ? [userA, userB] : [userB, userA]
 }
 
+/** 心愿列表需要的列（不含 created_at 之外的冗余字段） */
+const WISH_COLUMNS = 'id, owner_id, member_a, member_b, text, owner_name, created_at'
+
 export async function listCoupleWishes(userA: string, userB: string): Promise<CoupleWish[]> {
   if (!userA || !userB || userA === userB) return []
   const [memberA, memberB] = couplePair(userA, userB)
   const { data, error } = await supabase
     .from('couple_wishes')
-    .select('*')
+    .select(WISH_COLUMNS)
     .eq('member_a', memberA)
     .eq('member_b', memberB)
     .order('created_at', { ascending: true })
+    // 心愿池超过 300 条属于极端情况，截断可避免列表越用越慢
+    .limit(300)
   if (error) fail(error, '加载心愿')
   return (data ?? []) as CoupleWish[]
+}
+
+/** 只取数量：入口卡片显示「N 个心愿」时不必把心愿正文全部下载 */
+export async function countCoupleWishes(userA: string, userB: string): Promise<number> {
+  if (!userA || !userB || userA === userB) return 0
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { count, error } = await supabase
+    .from('couple_wishes')
+    .select('id', { count: 'exact', head: true })
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+  if (error) fail(error, '统计心愿')
+  return count ?? 0
 }
 
 export async function createCoupleWish(input: {
@@ -744,23 +820,44 @@ export async function broadcastCoupleMessage(
   return fallback
 }
 
-export async function listCoupleMessages(
-  userA: string,
-  userB: string
-): Promise<{ id: string; sender_id: string; receiver_id: string; content: string; created_at: string }[]> {
+/**
+ * 最近 100 条甜蜜留言。
+ * 注意要按时间倒序取「最新」100 条再翻正序：之前是正序 + limit(100)，
+ * 留言超过 100 条后就永远只能拿到最早的那 100 条（新留言看不到）。
+ */
+export interface CoupleMessageRow {
+  id: string
+  sender_id: string
+  receiver_id: string
+  content: string
+  created_at: string
+}
+
+export async function listCoupleMessages(userA: string, userB: string): Promise<CoupleMessageRow[]> {
   if (!userA || !userB || userA === userB) return []
   try {
     const { data, error } = await supabase
       .from('couple_messages')
-      .select('*')
+      .select('id, sender_id, receiver_id, content, created_at')
       .or(`and(sender_id.eq.${userA},receiver_id.eq.${userB}),and(sender_id.eq.${userB},receiver_id.eq.${userA})`)
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
       .limit(100)
-    if (!error && data) return data
+    if (!error && data) return [...(data as CoupleMessageRow[])].reverse()
   } catch {
     // 降级返回空
   }
   return []
+}
+
+/** 留言条数（入口卡片用，不下载留言内容） */
+export async function countCoupleMessages(userA: string, userB: string): Promise<number> {
+  if (!userA || !userB || userA === userB) return 0
+  const { count, error } = await supabase
+    .from('couple_messages')
+    .select('id', { count: 'exact', head: true })
+    .or(`and(sender_id.eq.${userA},receiver_id.eq.${userB}),and(sender_id.eq.${userB},receiver_id.eq.${userA})`)
+  if (error) fail(error, '统计留言')
+  return count ?? 0
 }
 
 /* ------------------------ 互动空间双人同步（心愿 / 抉择） ------------------------ */
@@ -1078,6 +1175,53 @@ export async function fetchCoupleQuizHistory(id: string): Promise<CoupleQuizHist
   return (data as CoupleQuizHistoryRow | null) ?? null
 }
 
+/**
+ * 做过的题目 id 清单（「不再重复出题」与进度条用）。
+ * 只取 question_id 一列：以前为了算进度把整条答题记录（含双方答案、题面）全下载，
+ * 做了几百题后一次请求就是几百 KB。
+ */
+export async function listCoupleQuizUsedIds(userA: string, userB: string): Promise<string[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_quiz_history')
+    .select('question_id')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .limit(5000)
+  if (error) fail(error, '加载已做题目')
+  return [...new Set((data ?? []) as { question_id: string }[])]
+    .map((row) => row.question_id)
+    .filter(Boolean)
+}
+
+/** 答过的真心话题面（入口卡片算进度用，不下发答案内容） */
+/** 答题记录条数（入口卡片用，不下载题目与答案） */
+export async function countCoupleQuizHistory(userA: string, userB: string): Promise<number> {
+  if (!userA || !userB || userA === userB) return 0
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { count, error } = await supabase
+    .from('couple_quiz_history')
+    .select('id', { count: 'exact', head: true })
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+  if (error) fail(error, '统计同步抉择进度')
+  return count ?? 0
+}
+
+export async function listCoupleTruthPrompts(userA: string, userB: string): Promise<string[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_truth_dare')
+    .select('prompt')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .limit(500)
+  if (error) fail(error, '加载真心话进度')
+  return [...new Set(((data ?? []) as { prompt: string }[]).map((row) => row.prompt).filter(Boolean))]
+}
+
 export async function listCoupleQuizHistory(userA: string, userB: string, limit = 200): Promise<CoupleQuizHistoryRow[]> {
   if (!userA || !userB || userA === userB) return []
   const [memberA, memberB] = couplePair(userA, userB)
@@ -1233,6 +1377,17 @@ export async function notifyCoupleMealNudge(recipient: string, senderName: strin
     post_id: null,
     title: '💌 催你打卡啦',
     body: `${senderName} 已完成今日三餐打卡，就差你啦，打卡完就解锁今日情话～`,
+  })
+}
+
+/** 双方三餐打卡齐、专属情话解锁：给两人的铃铛各落一条提醒，点击直达「今日专属情话」 */
+export async function notifyLoveUnlocked(recipients: [string, string], senderName: string): Promise<void> {
+  await insertFeedNotices(recipients.filter(Boolean), {
+    sender_name: senderName,
+    type: 'love-unlocked',
+    post_id: null,
+    title: '💖 今日专属情话已解锁',
+    body: `${senderName} 和你今天的三餐打卡都齐啦，专属情话已经揭晓，快去看看吧～`,
   })
 }
 
@@ -2486,6 +2641,7 @@ export type FeedNoticeType =
   | 'watermelon'
   | 'dice'
   | 'love'
+  | 'love-unlocked'
 
 export interface FeedNotificationRow {
   id: string
@@ -2735,11 +2891,27 @@ export async function getSetting(key: string, fallback = ''): Promise<string> {
   return (data.value as string) || fallback
 }
 
+/**
+ * 一次取回多个设置项：多个 key 合成 1 次请求，
+ * 并在短时间内复用同一结果（各处轮询同一份配置时不再重复打网络）。
+ */
+export function getSettings(keys: string[]): Promise<Record<string, string>> {
+  if (!keys.length) return Promise.resolve({})
+  return deduped(`settings:${keys.join(',')}`, 60_000, async () => {
+    const { data, error } = await supabase.from('app_settings').select('key, value').in('key', keys)
+    if (error) fail(error, '加载设置')
+    const map: Record<string, string> = {}
+    for (const row of (data ?? []) as { key: string; value: string }[]) map[row.key] = String(row.value ?? '')
+    return map
+  })
+}
+
 export async function setSetting(key: string, value: string): Promise<void> {
   const { error } = await supabase
     .from('app_settings')
     .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
   if (error) fail(error, '保存设置')
+  invalidateDedupe('settings:')
 }
 
 /* ------------------------------ 模块开关（管理员控制） ------------------------------ */
@@ -2753,13 +2925,15 @@ export interface ModuleFlagRow {
 }
 
 /** 读取全部模块开关（表未建时静默返回空数组，前端按「全部开放」回落） */
-export async function listModuleFlags(): Promise<ModuleFlagRow[]> {
-  const { data, error } = await supabase.from('app_module_flags').select('key, member_id, enabled, updated_at')
-  if (error) {
-    if (isMissingTable(error)) return []
-    fail(error, '加载模块开关')
-  }
-  return (data ?? []) as ModuleFlagRow[]
+export function listModuleFlags(): Promise<ModuleFlagRow[]> {
+  return deduped('moduleFlags', 8_000, async () => {
+    const { data, error } = await supabase.from('app_module_flags').select('key, member_id, enabled, updated_at')
+    if (error) {
+      if (isMissingTable(error)) return []
+      fail(error, '加载模块开关')
+    }
+    return (data ?? []) as ModuleFlagRow[]
+  })
 }
 
 /** 写入一个模块开关：memberId 传 null 表示改全局默认（表用偏索引，改走「先更新、没命中再插入」） */
@@ -2769,11 +2943,15 @@ export async function saveModuleFlag(key: string, enabled: boolean, memberId: st
   const target = memberId ? base().eq('member_id', memberId) : base().is('member_id', null)
   const { data: updated, error: updateError } = await target.select('id')
   if (updateError && !isMissingTable(updateError)) fail(updateError, '保存模块开关')
-  if ((updated ?? []).length) return
+  if ((updated ?? []).length) {
+    invalidateDedupe('moduleFlags')
+    return
+  }
   const { error } = await supabase
     .from('app_module_flags')
     .insert({ key, member_id: memberId, enabled, updated_at: stamped })
   if (error) fail(error, '保存模块开关')
+  invalidateDedupe('moduleFlags')
 }
 
 /** 删除某个成员的单独配置，让它回落到全局默认 */
@@ -2784,6 +2962,7 @@ export async function deleteModuleFlag(key: string, memberId: string): Promise<v
     .eq('key', key)
     .eq('member_id', memberId)
   if (error) fail(error, '恢复模块默认配置')
+  invalidateDedupe('moduleFlags')
 }
 
 /* ------------------------------ 未读 ------------------------------ */

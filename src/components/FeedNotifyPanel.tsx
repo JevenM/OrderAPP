@@ -4,7 +4,7 @@ import { listFeedNotifications, markFeedNotificationRead, markFeedNotificationsR
 import { timeCn } from '../lib/date'
 import { useUnread, useUnreadBellCount } from '../store/unread'
 
-const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️', quiz: '💞', truth: '🎲', together: '💕', chat: '💌', board: '🎯', mines: '💣', wufu: '♟️', love: '💌' }
+const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️', quiz: '💞', truth: '🎲', together: '💕', chat: '💌', board: '🎯', mines: '💣', wufu: '♟️', love: '💌', 'love-unlocked': '💖' }
 const PAGE_SIZE = 10
 const PREVIEW_SIZE = 5
 
@@ -100,7 +100,7 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
       navigate('/couple?module=watermelon&focus=1')
     } else if (notice.type === 'dice') {
       navigate('/couple?module=dice&focus=1')
-    } else if (notice.type === 'love') {
+    } else if (notice.type === 'love' || notice.type === 'love-unlocked') {
       navigate('/couple?module=love&focus=1')
     } else if (notice.type === 'together') {
       // 同在检测的入口 💕 就在顶栏，任何页面都有，留在当前页即可

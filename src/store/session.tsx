@@ -1,6 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ADMIN_CODE, INVITE_CODE } from '../lib/supabase'
-import { createMember, findMemberByCode, listMembers } from '../lib/db'
+import { verifyLogin } from '../lib/db'
 import type { Role } from '../lib/types'
 
 const KEY = 'order-app-session-v2'
@@ -63,34 +62,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [state])
 
-  // 真实身份：用管理口令进入的始终是「我」；切换查看某个她只改 role，不改身份
-  const isAdmin = state?.code === ADMIN_CODE
+  // 真实身份来自数据库端校验结果；不再通过前端 bundle 中的管理口令判断。
+  const isAdmin = state?.role === 'me'
 
   const enter = useCallback(async (code: string) => {
     const c = code.trim()
     if (!c) return false
 
-    if (c === ADMIN_CODE) {
-      setState({ code: c, role: 'me', memberId: null, memberName: '', memberAvatar: '' })
+    const verified = await verifyLogin(c)
+    if (!verified) {
+      throw new Error('登录校验服务尚未部署：请先执行 supabase/migrations/0035_login_verify.sql')
+    }
+    if (!verified.ok) return false
+
+    if (verified.role === 'me') {
+      setState({ code: '', role: 'me', memberId: null, memberName: '', memberAvatar: '' })
       return true
     }
-
-    // 她的专属邀请码（唯一登录方式，不接受昵称，避免误登/串号）
-    let member = await findMemberByCode(c)
-
-    // 兼容主邀请码：映射到第一个成员；成员表为空时自动建一个
-    if (!member && c === INVITE_CODE) {
-      const all = await listMembers()
-      member = all[0] ?? (await createMember('她', c))
-    }
-    if (!member) return false
+    if (!verified.member_id) return false
 
     setState({
       code: c,
       role: 'her',
-      memberId: member.id,
-      memberName: member.name,
-      memberAvatar: member.avatar_url ?? '',
+      memberId: verified.member_id,
+      memberName: verified.member_name ?? '',
+      memberAvatar: verified.member_avatar ?? '',
     })
     return true
   }, [])
@@ -120,7 +116,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setState((s) => (s ? { ...s, memberName: name } : s))
   }, [])
 
-  const logout = useCallback(() => setState(null), [])
+  const logout = useCallback(() => {
+    // 登出时清除互动缓存（留言、心愿、题库草稿、棋局快照等）；账号私密内容不跨会话留存
+    for (const storage of [localStorage, sessionStorage]) {
+      try {
+        for (let i = 0; i < storage.length; ) {
+          const k = storage.key(i)
+          if (k?.startsWith('couple-')) storage.removeItem(k)
+          else i += 1
+        }
+      } catch {
+        // Safari 隐私模式可能禁用 Storage；不影响退出登录
+      }
+    }
+    setState(null)
+  }, [])
 
   const value = useMemo<SessionValue>(
     () => ({

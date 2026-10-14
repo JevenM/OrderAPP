@@ -43,7 +43,7 @@ export const MODULE_DEFS: ModuleDef[] = [
   { key: 'watermelon', icon: '🍉', title: '情侣西瓜分', desc: '给 TA 加减分', group: 'game' },
   { key: 'dice', icon: '🎲', title: '骰子比大小', desc: '3 个骰子押大小', group: 'game' },
   { key: 'changelog', icon: '📋', title: '更新日志', desc: '右上角「更多」里的更新日志入口与自动弹窗', group: 'app' },
-  { key: 'about', icon: '💕', title: '关于我们 & 赞赏', desc: '右上角「更多」里的关于我们页面入口', group: 'app' },
+  { key: 'about', icon: '💕', title: '关于我们', desc: '右上角「更多」里的关于我们页面入口', group: 'app' },
 ]
 
 export const MODULE_GROUPS: { key: ModuleDef['group']; title: string; hint: string }[] = [

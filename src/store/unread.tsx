@@ -16,6 +16,7 @@ import {
 } from '../lib/db'
 import { useLocation } from 'react-router-dom'
 import { useRealtime } from '../lib/realtime'
+import { scheduleSync } from '../lib/net'
 import { browserNotify, ding } from '../lib/notify'
 import { useSession } from './session'
 import { useToast } from '../components/Toast'
@@ -85,10 +86,8 @@ export function UnreadProvider({ enabled, children }: { enabled: boolean; childr
   useEffect(() => {
     if (!enabled || !feedIdentity) return
     void refreshFeed()
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void refreshFeed()
-    }, 10_000)
-    return () => window.clearInterval(timer)
+    // 交给统一调度器：后台标签页不打扰、回到前台自动补拉
+    return scheduleSync('unread-feed', 30_000, () => void refreshFeed())
   }, [enabled, feedIdentity, refreshFeed])
 
   /** 打开消息面板：本地立即清零，服务端全部标记已读 */

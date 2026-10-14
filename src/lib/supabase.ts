@@ -6,8 +6,6 @@ export const anonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY ?? '') as string
 /** 实时通道的 WebSocket 地址（由 REST 地址推导），供轻量探测使用，避免牵动 supabase-js 的 socket 重连 */
 const realtimeHost = url.replace(/^https?:\/\//, url.startsWith('https') ? 'wss://' : 'ws://').replace(/\/+$/, '')
 export const realtimeUrl = url ? `${realtimeHost}/realtime/v1/websocket` : ''
-export const INVITE_CODE = (import.meta.env.VITE_INVITE_CODE ?? '520') as string
-export const ADMIN_CODE = (import.meta.env.VITE_ADMIN_CODE ?? 'adminMao') as string
 export const APP_TITLE = (import.meta.env.VITE_APP_TITLE ?? '今天吃什么') as string
 /** 我的昵称默认值（可在「成员」页里改，存在 app_settings 表） */
 export const ADMIN_NAME = (import.meta.env.VITE_ADMIN_NAME ?? '我') as string

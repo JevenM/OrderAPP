@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { createMember, randomCode, removeMember, updateMember } from '../lib/db'
+import { createMember, listMembersWithCodes, randomCode, removeMember, updateMember } from '../lib/db'
 import { useToast } from '../components/Toast'
 import Avatar from '../components/Avatar'
 import AvatarSheet, { saveMemberAvatar } from '../components/AvatarSheet'
@@ -11,7 +11,22 @@ import type { Member } from '../lib/types'
 export default function AdminMembers() {
   const toast = useToast()
   const navigate = useNavigate()
-  const { members, reload, loading } = useMembers()
+  // 这一页要显示并编辑邀请码，所以单独取「带 code 的成员清单」；
+  // 全局 members store 不再携带邀请码，避免每个轮询周期都把它传到前端
+  const { reload: reloadStore } = useMembers()
+  const [members, setMembers] = useState<Member[]>([])
+  const [loading, setLoading] = useState(true)
+  const reload = async () => {
+    setLoading(true)
+    try {
+      setMembers(await listMembersWithCodes())
+      void reloadStore()
+    } catch (e) {
+      toast.show((e as Error).message, 'err')
+    } finally {
+      setLoading(false)
+    }
+  }
   const { adminName, saveAdminName, adminAvatar, saveAdminAvatar } = useSettings()
   const [avatarFor, setAvatarFor] = useState<string | null>(null)
   const [myName, setMyName] = useState(adminName)

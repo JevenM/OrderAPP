@@ -56,6 +56,10 @@ export default function AboutPage() {
             src={`${import.meta.env.BASE_URL}alipay-qr.jpg`}
             alt="支付宝赞赏二维码"
             className="aspect-square w-full object-contain"
+            loading="lazy"
+            decoding="async"
+            width={520}
+            height={520}
             onError={(event) => {
               // 兜底：jpg 不在时退回内置的 svg 占位码
               const img = event.currentTarget

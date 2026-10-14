@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { listMembers } from '../lib/db'
-import { useRealtime } from '../lib/realtime'
+import { POLL, useRealtime } from '../lib/realtime'
 import type { Member } from '../lib/types'
 
 type MembersValue = {
@@ -38,6 +38,8 @@ export function MembersProvider({ children, enabled }: { children: ReactNode; en
 
   useRealtime('members', [{ table: 'members', on: () => reload(true) }], {
     enabled,
+    // 成员增删改都由管理员手动触发，实时推送足以覆盖；轮询只是离线兜底
+    pollMs: POLL.cool,
     onPoll: () => reload(true),
   })
 

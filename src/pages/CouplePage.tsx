@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useToast } from '../components/Toast'
+import CoupleModuleGrid from '../components/couple/CoupleModuleGrid'
 import {
   appendCoupleEvent,
   broadcastCoupleMessage,
@@ -38,6 +39,7 @@ import {
   type DiceBetChoice,
   notifyCoupleChatMessage,
   notifyCoupleMealNudge,
+  notifyLoveUnlocked,
   createCoupleWish,
   deleteCoupleBoardGame,
   deleteCoupleMines,
@@ -55,8 +57,13 @@ import {
   listCoupleEvents,
   listCoupleMessages,
   listCoupleQuizHistory,
+  listCoupleQuizUsedIds,
   listCoupleTruthDare,
+  listCoupleTruthPrompts,
   listCoupleWishes,
+  countCoupleWishes,
+  countCoupleMessages,
+  countCoupleQuizHistory,
   listMealsRange,
   MINES_CELL,
   resetCoupleQuiz,
@@ -941,7 +948,8 @@ function applyBoardRoll(
 
 function readCache<T>(cacheKey: string, fallback: T): T {
   try {
-    return JSON.parse(localStorage.getItem(cacheKey) ?? '') as T
+    // 私密互动内容只保留在当前标签页会话，避免长期驻留共享设备的 localStorage
+    return JSON.parse(sessionStorage.getItem(cacheKey) ?? '') as T
   } catch {
     return fallback
   }
@@ -1027,7 +1035,7 @@ export default function CouplePage() {
       ids.add(eventId)
       if (memberId && friendId) {
         try {
-          localStorage.setItem(key('draw-closed', memberId, friendId), JSON.stringify([...ids].slice(-20)))
+          sessionStorage.setItem(key('draw-closed', memberId, friendId), JSON.stringify([...ids].slice(-20)))
         } catch {
           // 存储失败不影响本次关闭
         }
@@ -1205,14 +1213,25 @@ export default function CouplePage() {
     }
   }
 
-  // 双方三餐打卡齐的那一刻同时揭晓：本方打完最后一餐、或对方实时打完，解锁从 false 变 true 时播放
+  // 双方三餐打卡齐的那一刻同时揭晓：本方打完最后一餐、或对方实时打完，解锁从 false 变 true 时播放；
+  // 同时给两人的铃铛各落一条「情话已解锁」提醒（每天每人只发一次，避免重复打扰）
   useEffect(() => {
     const prev = lovePrevRef.current
     lovePrevRef.current = loveUnlocked
     if (prev !== null && loveUnlocked && !prev && loveSeenKey && readCache<string | null>(loveSeenKey, null) !== todayStr()) {
       setLoveReveal(true)
+      if (memberId && friendId) {
+        const notifyKey = `love-unlocked-sent-${todayStr()}`
+        try {
+          if (sessionStorage.getItem(notifyKey)) return
+          sessionStorage.setItem(notifyKey, '1')
+        } catch {
+          // 存储不可用时仍允许发送，最坏情况是多一条提醒
+        }
+        void notifyLoveUnlocked([memberId, friendId], memberName || '我')
+      }
     }
-  }, [loveUnlocked, loveSeenKey])
+  }, [loveUnlocked, loveSeenKey, memberId, friendId, memberName])
 
   // 彩带粒子参数固定在一次会话内，避免每次渲染跳动
   const confettiBits = useMemo(
@@ -1242,9 +1261,8 @@ export default function CouplePage() {
       if (!changed) return prev
       next.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
       try {
-        // 只缓存最近 100 条，避免聊天记录无限增长把 localStorage 撑满，
-        // 进而挤掉登录会话等关键数据（表现为用一段时间后登录异常）
-        localStorage.setItem(cacheKey, JSON.stringify(next.slice(-100)))
+        // 聊天内容只在当前标签页存最近 100 条；标签页关闭或退出登录即清除
+        sessionStorage.setItem(cacheKey, JSON.stringify(next.slice(-100)))
       } catch {
         // 存储失败不影响展示
       }
@@ -1264,7 +1282,8 @@ export default function CouplePage() {
       }
       if (!changed) return prev
       try {
-        localStorage.setItem(cacheKey, JSON.stringify(next))
+        // 心愿正文是私密内容，只保留到当前标签页会话结束
+        sessionStorage.setItem(cacheKey, JSON.stringify(next.slice(-300)))
       } catch {
         // 存储失败不影响展示
       }
@@ -1280,6 +1299,26 @@ export default function CouplePage() {
       setTruthHistory(await listCoupleTruthDare(memberId, friendId, 100))
     } catch (error) {
       console.warn('加载真心话记录失败', error)
+    }
+  }, [memberId, friendId])
+
+  /*
+   * 入口卡片计数：只问「有多少条」，不下载心愿 / 留言 / 答题 / 真心话的正文。
+   * 之前停在入口页也要把四张表的内容拉回来只为拼卡片上的数字，是最大的一块无用流量。
+   */
+  const [gridCounts, setGridCounts] = useState({ wishes: 0, messages: 0, quizDone: 0, truthDone: 0 })
+  const reloadGridCounts = useCallback(async () => {
+    if (!memberId || !friendId) return
+    try {
+      const [wishes, messages, quizDone, truthPrompts] = await Promise.all([
+        countCoupleWishes(memberId, friendId),
+        countCoupleMessages(memberId, friendId),
+        countCoupleQuizHistory(memberId, friendId),
+        listCoupleTruthPrompts(memberId, friendId),
+      ])
+      setGridCounts({ wishes, messages, quizDone, truthDone: truthPrompts.length })
+    } catch (error) {
+      console.warn('加载入口计数失败', error)
     }
   }, [memberId, friendId])
 
@@ -1640,13 +1679,14 @@ export default function CouplePage() {
     [memberId, closedDrawIds]
   )
 
-  /* 轮询兜底带 60 秒内存缓存：对局中的快速刷（2 秒一次）也不会重复打网络，
-     实时连通时由事件即时刷新，不走这里；放宽后各模块轮询最多 1 次/分钟 */
+  /* 轮询兜底带 TTL 内存缓存：实时连通时由事件即时刷新，不走这里。
+     普通数据放宽到 1 次/分钟；正在玩的回合制游戏改用短 TTL 强制拉取，
+     避免 realtime 降级时「对方已行动，本端要等很久或手动刷新才看到」 */
   const FETCH_TTL = 60_000
   const fetchStamp: Record<string, number> = {}
-  const throttled = (key: string, fn: () => void | Promise<void>) => {
+  const throttled = (key: string, fn: () => void | Promise<void>, ttl = FETCH_TTL) => {
     const t = fetchStamp[key]
-    if (t && Date.now() - t < FETCH_TTL) return
+    if (t && Date.now() - t < ttl) return
     fetchStamp[key] = Date.now()
     void fn()
   }
@@ -1661,33 +1701,38 @@ export default function CouplePage() {
     else if (m === 'quiz') throttled('quiz', reloadQuiz)
     else if (m === 'truth') throttled('truth', reloadTruthHistory)
     else if (m === 'board') {
-      throttled('board', reloadBoard)
+      // 回合制对局：强制刷新 + 短 TTL（服务端状态是权威的，覆盖本地不会丢操作）
+      throttled('board', () => reloadBoard(true), 15_000)
       // 对局历史一并兜底刷新：实时推送偶发丢失时不至于「打完一局要手动刷新才看到」
       throttled('boardHistory', reloadBoardHistory)
     } else if (m === 'mines') {
-      throttled('mines', reloadMines)
+      throttled('mines', () => reloadMines(true), 15_000)
       throttled('minesHistory', reloadMinesHistory)
     } else if (m === 'wufu') {
-      throttled('wufu', reloadWufu)
+      throttled('wufu', () => reloadWufu(true), 15_000)
       throttled('wufuHistory', reloadWufuHistory)
     } else if (m === 'gomoku') {
-      throttled('gomoku', reloadGomoku)
+      throttled('gomoku', () => reloadGomoku(true), 15_000)
       throttled('gomokuHistory', reloadGomokuHistory)
     } else if (m === 'watermelon') {
       throttled('watermelon', reloadWatermelon)
       throttled('watermelonLogs', reloadWatermelonLogs)
     } else if (m === 'dice') {
-      throttled('dice', reloadDice)
+      // 骰子是押注 → 开骰的强同步流程，对方押注必须尽快可见：4 秒强制刷新
+      throttled('dice', () => reloadDice(true), 4_000)
       throttled('diceHistory', reloadDiceHistory)
     } else if (m === 'love') throttled('meals', reloadMeals)
-  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadMeals])
+    // 停在入口页：只刷新卡片计数（4 个 count 请求，正文一概不下载）
+    else throttled('gridCounts', reloadGridCounts)
+  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadMeals, reloadGridCounts])
 
   /* 切到某个模块时立即拉一次；棋局类（飞行棋/扫雷/摆方）走各自动作里的缓存，
      只在本地还没有该模块数据时补拉一次，来回切 Tab 不再重复打网络 */
   useEffect(() => {
     if (!ready) return
     const m = activeModule
-    if (m === 'wish') void reloadWishes()
+    if (!m) void reloadGridCounts() // 从模块退回入口页：刷新卡片上的计数
+    else if (m === 'wish') void reloadWishes()
     else if (m === 'chat') void reloadMessages()
     else if (m === 'quiz') void reloadQuiz()
     else if (m === 'truth') void reloadTruthHistory()
@@ -1762,6 +1807,9 @@ export default function CouplePage() {
           if (!memberId || !n || n.recipient !== memberId) return
           if (n.type === 'truth') void reloadTruthHistory()
           else if (n.type === 'quiz') void reloadQuiz()
+          // 骰子比大小：对方离线开骰时会落一条 dice 通知，借实时通道即时刷新本端对局，
+          // 避免「对方已开骰、本端还停留在旧状态要等轮询」
+          else if (n.type === 'dice') void reloadDice(true)
         },
       },
       {
@@ -1827,13 +1875,11 @@ export default function CouplePage() {
     } else if (activeModuleRef.current === 'love') {
       void reloadMeals()
     } else {
-      // 无模块参数（停留在模块网格页）：只拉入口卡片计数用到的轻量数据
-      void reloadWishes()
-      void reloadMessages()
-      void reloadQuiz()
-      void reloadTruthHistory()
+      // 无模块参数（停留在模块网格页）：只拉入口卡片要的计数，
+      // 心愿 / 留言 / 答题 / 真心话的正文留到真正打开那个模块时再下载
+      void reloadGridCounts()
     }
-  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory])
+  }, [ready, reloadGridCounts, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory])
 
   useEffect(() => {
     try {
@@ -1849,8 +1895,10 @@ export default function CouplePage() {
   const [moduleFocus, setModuleFocus] = useState(false)
   useEffect(() => {
     const module = searchParams.get('module')
-    if (!module) return
+    const quizId = searchParams.get('quiz')
     const focus = searchParams.get('focus') === '1'
+    // 同步抉择揭晓深链只有 ?quiz=<id>，没有 module 参数，也要能进来
+    if (!module && !quizId) return
     setSearchParams(
       (params) => {
         params.delete('module')
@@ -1859,12 +1907,19 @@ export default function CouplePage() {
       },
       { replace: true }
     )
-    if (noticeQuizId) return
+    // 同步抉择揭晓通知：点铃铛直达时，先打开同步抉择模块并高亮，再弹出揭晓弹窗（quiz 参数由关闭弹窗时清理）
+    if (quizId) {
+      if (isEnabled('quiz')) {
+        setActiveModule('quiz')
+        if (focus) setModuleFocus(true)
+      }
+      return
+    }
     // 只允许进入「存在的模块」且管理员没有关掉的模块（通知深链也受模块开关约束）
     if (!COUPLE_MODULE_KEYS.includes(module as ModuleKey) || !isEnabled(module as ModuleKey)) return
     setActiveModule(module)
     if (focus) setModuleFocus(true)
-  }, [searchParams, noticeQuizId, setSearchParams, isEnabled])
+  }, [searchParams, setSearchParams, isEnabled])
 
   // 正在看某个模块时被管理员关掉 → 立刻退回互动入口页，避免留下不可用的界面
   useEffect(() => {
@@ -1906,6 +1961,8 @@ export default function CouplePage() {
     return () => { active = false }
   }, [])
 
+  // 同步抉择的数据（本题单 + 已做清单）只在进入该模块、或从铃铛深链回看某题时才拉
+  const quizDataNeeded = activeModule === 'quiz' || !!noticeQuizId
   useEffect(() => {
     if (!memberId || !friendId) {
       setUsedQuestionIds(new Set())
@@ -1913,6 +1970,7 @@ export default function CouplePage() {
       setPairQuestionsLoaded(true)
       return
     }
+    if (!quizDataNeeded) return
     let active = true
     void listCoupleQuizPairQuestions(memberId, friendId)
       .then((rows) => {
@@ -1926,21 +1984,23 @@ export default function CouplePage() {
         setPairQuestionsLoaded(true)
       })
     return () => { active = false }
-  }, [memberId, friendId])
+  }, [memberId, friendId, quizDataNeeded])
 
+  // 已做题目清单：只取 question_id 一列（以前把整条答题记录含题面与双方答案全下载）
   useEffect(() => {
     if (!memberId || !friendId) {
       setUsedQuestionIds(new Set())
       return
     }
+    if (!quizDataNeeded) return
     let active = true
-    void listCoupleQuizHistory(memberId, friendId, 5000)
-      .then((history) => {
-        if (active) setUsedQuestionIds(new Set(history.map((row) => row.question_id)))
+    void listCoupleQuizUsedIds(memberId, friendId)
+      .then((ids) => {
+        if (active) setUsedQuestionIds(new Set(ids))
       })
       .catch((error) => console.warn('加载已做题目失败', error))
     return () => { active = false }
-  }, [memberId, friendId])
+  }, [memberId, friendId, quizDataNeeded])
 
   // 双方都答完（揭晓）的那一刻，把这道题计入「已做」，让进度数字在两边实时 +1
   useEffect(() => {
@@ -1991,7 +2051,7 @@ export default function CouplePage() {
   useEffect(() => {
     if (!myId || !friendId) return
     try {
-      localStorage.setItem(key('questions', myId, friendId), JSON.stringify(customQuestions))
+      sessionStorage.setItem(key('questions', myId, friendId), JSON.stringify(customQuestions))
     } catch {
       // 存储失败不影响使用
     }
@@ -2006,7 +2066,7 @@ export default function CouplePage() {
   useEffect(() => {
     if (!myId || !friendId) return
     try {
-      localStorage.setItem(key('board-custom', myId, friendId), JSON.stringify(parseCustomCells(boardCustomText)))
+      sessionStorage.setItem(key('board-custom', myId, friendId), JSON.stringify(parseCustomCells(boardCustomText)))
     } catch {
       // 存储失败不影响使用
     }
@@ -2273,7 +2333,8 @@ export default function CouplePage() {
     const stepMinInput = boardStepMinCustom ? clampInt(Number(boardStepMinCustomValue) || 1, 1, 20) : boardStepMin
     const stepMaxInput = boardStepMaxCustom ? clampInt(Number(boardStepMaxCustomValue) || 1, 1, 20) : boardStepMax
     const stepMin = Math.min(stepMinInput, stepMaxInput)
-    const stepMax = stepMinInput
+    // 修复：之前误写成 stepMinInput，导致默认最少步数为 1 时骰子区间恒为 [1,1]，两人永远掷出 1 点
+    const stepMax = Math.max(stepMinInput, stepMaxInput)
     if (boardStepMinCustom && !boardStepMinCustomValue.trim()) return toast.show('请填写自定义最少步数（1～20）', 'err')
     if (boardStepMaxCustom && !boardStepMaxCustomValue.trim()) return toast.show('请填写自定义最多步数（1～20）', 'err')
     const myName = memberName || '我'
@@ -2954,6 +3015,23 @@ export default function CouplePage() {
     }
   }
 
+  /** 胜局归档后收尾：删除当前棋局，回到「开始新棋局」入口（历史已在获胜/投降时写入） */
+  const finishGomoku = async () => {
+    if (!memberId || !friendId || gomokuSaving) return
+    if (!window.confirm('结束并清理当前棋盘？本局结果已保存在历史里。')) return
+    setGomokuSaving(true)
+    try {
+      await deleteCoupleGomoku(memberId, friendId)
+      setGomokuGame(null)
+      void reloadGomokuHistory()
+      toast.show('🏁 本局已结束，可以开新一局啦')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setGomokuSaving(false)
+    }
+  }
+
   const placeGomoku = async (index: number) => {
     if (!gomokuState || !gomokuGame || !memberId || !friendId || gomokuSaving) return
     if (gomokuState.paused) return toast.show('⏸️ 棋局已暂停，请先继续游戏')
@@ -3154,10 +3232,28 @@ export default function CouplePage() {
     setDiceSaving(true)
     try {
       await upsertCoupleDice(memberId, friendId, nextState)
-      await createCoupleDiceHistory(memberId, friendId, nextState)
       const [a, b] = orderedPair(memberId, friendId)
       setDiceGame({ member_a: a, member_b: b, state: nextState, updated_at: new Date().toISOString() })
       setMyDiceBet(null)
+
+      // 一方筹码耗尽 → 本局结束：只在此时把整局过程归档一次，普通每轮摇骰不写历史
+      if (nextState.chips[0] === 0 || nextState.chips[1] === 0) {
+        const loser = nextState.chips[0] === 0 ? 0 : 1
+        const finalState: CoupleDiceState = {
+          ...nextState,
+          log: [
+            ...nextState.log,
+            {
+              at: new Date().toISOString(),
+              text: `🏁 本局结束：${diceNames?.[loser] ?? (loser === 0 ? '红方' : '蓝方')} 筹码耗尽，共进行 ${nextState.round - 1} 轮`,
+            },
+          ],
+        }
+        await createCoupleDiceHistory(memberId, friendId, finalState)
+        await deleteCoupleDice(memberId, friendId)
+        setDiceGame(null)
+        toast.show('🏁 一方筹码耗尽，本局已归档到历史，可以开新一局啦')
+      }
       void reloadDiceHistory()
 
       if (peerOnline) {
@@ -3173,15 +3269,28 @@ export default function CouplePage() {
     }
   }
 
-  const resetDiceGame = async () => {
-    if (!memberId || !friendId || diceSaving) return
-    if (!window.confirm('确定重新开局并重置筹码到 100 吗？')) return
+  /** 手动结束本局：先把整局过程归档一条历史，再销毁当前对局（筹码未耗尽也可以收局） */
+  const endDiceGame = async () => {
+    if (!diceState || !memberId || !friendId || diceSaving) return
+    if (!window.confirm('结束本局并把整局过程归档到历史？之后可以重新开局。')) return
     setDiceSaving(true)
     try {
+      const finalState: CoupleDiceState = {
+        ...diceState,
+        log: [
+          ...diceState.log,
+          {
+            at: new Date().toISOString(),
+            text: `🏁 手动结束本局：共进行 ${Math.max(0, diceState.round - 1)} 轮，最终筹码 ❤️ ${diceState.chips[0]} / 💙 ${diceState.chips[1]}`,
+          },
+        ],
+      }
+      await createCoupleDiceHistory(memberId, friendId, finalState)
       await deleteCoupleDice(memberId, friendId)
       setDiceGame(null)
       setMyDiceBet(null)
-      toast.show('已重置骰子比大小')
+      void reloadDiceHistory()
+      toast.show('🏁 本局已结束并归档到历史')
     } catch (error) {
       toast.show((error as Error).message, 'err')
     } finally {
@@ -3378,7 +3487,7 @@ export default function CouplePage() {
 
   const clearMessages = () => {
     setMessages([])
-    localStorage.removeItem(key('chat', myId, friendId))
+    sessionStorage.removeItem(key('chat', myId, friendId))
     toast.show('已清空本地聊天记录')
   }
 
@@ -3397,32 +3506,23 @@ export default function CouplePage() {
       )}
 
       {!activeModule ? (
-        <div className="grid grid-cols-2 gap-3">
-          {[
+        <CoupleModuleGrid
+          modules={[
             { id: 'love', icon: '💌', title: '今日情话', detail: loveUnlocked ? '今日已解锁' : '完成三餐打卡解锁' },
-            { id: 'wish', icon: '🎁', title: '秘密心愿', detail: `${wishesList.length} 个心愿` },
-            { id: 'chat', icon: '💬', title: '甜蜜留言', detail: `${messages.length} 条留言` },
-            { id: 'quiz', icon: '💞', title: '同步抉择', detail: `已做 ${quizDoneCount}/${quizTotalQuestions.length} 题` },
-            { id: 'truth', icon: '🎲', title: '真心话大冒险', detail: `已答 ${truthDoneCount}/${TRUTH_PROMPTS.length} 题` },
+            { id: 'wish', icon: '🎁', title: '秘密心愿', detail: `${gridCounts.wishes} 个心愿` },
+            { id: 'chat', icon: '💬', title: '甜蜜留言', detail: `${gridCounts.messages} 条留言` },
+            { id: 'quiz', icon: '💞', title: '同步抉择', detail: `已做 ${gridCounts.quizDone}/${quizTotalQuestions.length} 题` },
+            { id: 'truth', icon: '🎲', title: '真心话大冒险', detail: `已答 ${gridCounts.truthDone}/${TRUTH_PROMPTS.length} 题` },
             { id: 'board', icon: '🎯', title: '情侣飞行棋', detail: '联网轮流掷骰对战' },
             { id: 'mines', icon: '💣', title: '情侣扫雷', detail: '轮流拆雷，踩雷做任务' },
             { id: 'wufu', icon: '♟️', title: '摆方五福棋', detail: '摆子提子走子，吃到剩2子' },
             { id: 'gomoku', icon: '⚫', title: '情侣五子棋', detail: '联网轮流落子，五连获胜' },
             { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分，看专属甜蜜分变化' },
             { id: 'dice', icon: '🎲', title: '骰子比大小', detail: '3个骰子押大小，围骰庄家通吃' },
-          ]
-            // 管理员在「模块管理」里关掉的模块，普通用户这里直接不出现
-            .filter((module) => isEnabled(module.id as ModuleKey))
-            .map((module) => (
-            <button key={module.id} type="button" className="card flex min-h-28 flex-col items-start justify-between gap-3 text-left transition hover:border-brand-200" onClick={() => setActiveModule(module.id)}>
-              <span className="text-2xl">{module.icon}</span>
-              <span>
-                <span className="block text-sm font-semibold text-slate-700">{module.title}</span>
-                <span className="mt-1 block text-[11px] text-slate-400">{module.detail}</span>
-              </span>
-            </button>
-          ))}
-        </div>
+          ]}
+          isEnabled={isEnabled}
+          onSelect={setActiveModule}
+        />
       ) : (
         <>
           <button type="button" className="btn-ghost w-full" onClick={() => setActiveModule(null)}>← 返回互动入口</button>
@@ -4380,9 +4480,7 @@ export default function CouplePage() {
                 </div>
                 <span className="chip shrink-0 border-slate-200 bg-slate-50 text-slate-600">{gomokuHistory.length} 局历史</span>
               </div>
-              <div className="rounded-xl border border-slate-200 bg-amber-50 p-3 text-xs leading-relaxed text-slate-600">
-                <strong>游戏规则：</strong>双方轮流在交叉点落子，黑棋先手；先在横竖斜任意方向连成连续五子者获胜。棋局可暂停，暂停期间不进行网络同步；投降会结束并保存历史。
-              </div>
+              
               {!gomokuGame ? (
                 <button type="button" className="btn-primary w-full" disabled={gomokuSaving || !ready} onClick={() => void startGomokuGame()}>
                   {gomokuSaving ? '创建中…' : '⚫ 开始新棋局'}
@@ -4405,13 +4503,24 @@ export default function CouplePage() {
                     {gomokuState.winner === null && (
                       <button type="button" className="btn-ghost text-xs text-rose-600" disabled={gomokuSaving} onClick={() => void surrenderGomoku()}>🏳️ 投降</button>
                     )}
+                    {/* 分出胜负后：直接开新一局，或先收掉棋盘回到入口 */}
+                    {gomokuState.winner !== null && (
+                      <>
+                        <button type="button" className="btn-primary ml-auto px-3 py-1 text-xs" disabled={gomokuSaving || !ready} onClick={() => void startGomokuGame()}>
+                          🔄 再来一局
+                        </button>
+                        <button type="button" className="btn-ghost text-xs" disabled={gomokuSaving} onClick={() => void finishGomoku()}>
+                          🏁 结束本局
+                        </button>
+                      </>
+                    )}
                   </div>
                   <div className="mx-auto w-full max-w-[min(92vw,560px)] rounded-xl border border-amber-900/30 bg-[#e7bf7d] p-3 shadow-inner">
                     <div className="relative aspect-square w-full select-none overflow-hidden rounded bg-[#deb887]">
-                      {/* 15x15 网格线（14x14 个方格），线条与落子点精确对齐 */}
+                      {/* 15x15 网格线：线交叉点对齐到每个交互格的中心（(i+0.5)/15），保证棋子中心精确落在交叉点上 */}
                       <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
                         {Array.from({ length: 15 }, (_, i) => {
-                          const p = (i / 14) * 100
+                          const p = ((i + 0.5) / 15) * 100
                           return (
                             <g key={i}>
                               <line x1="0" y1={p} x2="100" y2={p} stroke="#8c5828" strokeWidth="0.75" />
@@ -4427,7 +4536,7 @@ export default function CouplePage() {
                           [11, 3],
                           [11, 11],
                         ].map(([r, c], starIndex) => (
-                          <circle key={starIndex} cx={(c / 14) * 100} cy={(r / 14) * 100} r="1.1" fill="#6d3f1a" />
+                          <circle key={starIndex} cx={((c + 0.5) / 15) * 100} cy={((r + 0.5) / 15) * 100} r="1.1" fill="#6d3f1a" />
                         ))}
                       </svg>
 
@@ -4479,6 +4588,9 @@ export default function CouplePage() {
                   </div>
                 </>
               ) : null}
+              <div className="rounded-xl border border-slate-200 bg-amber-50 p-3 text-xs leading-relaxed text-slate-600">
+                <strong>游戏规则：</strong>双方轮流在交叉点落子，黑棋先手；先在横竖斜任意方向连成连续五子者获胜。棋局可暂停，暂停期间不进行网络同步；投降会结束并保存历史。
+              </div>
               <div className="space-y-2 border-t border-slate-100 pt-3">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-semibold text-slate-600">对局历史</h4>
@@ -4486,13 +4598,19 @@ export default function CouplePage() {
                 </div>
                 {gomokuHistory.length === 0 ? <p className="text-xs text-slate-400">还没有已结束的对局</p> : gomokuHistory.map((row) => (
                   <div key={row.id} className="rounded-lg border border-slate-200 p-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span>{row.state.log.some((item) => item.text.includes('🏳️')) ? '🏳️ 投降结束' : '🏆 对局结束'}</span>
+                    <div className="flex flex-wrap items-center justify-between gap-1 text-xs">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span>{row.state.log.some((item) => item.text.includes('🏳️')) ? '🏳️ 投降结束' : '🏆 对局结束'}</span>
+                        {/* member_a 固定执黑先手、member_b 执白 */}
+                        <span className="text-slate-500">⚫ {row.member_a === memberId ? (memberName || '我') : friendName}</span>
+                        <span className="text-slate-500">⚪ {row.member_b === memberId ? (memberName || '我') : friendName}</span>
+                      </span>
                       <span className="text-slate-400">
                         {(() => {
-                          const winnerMemberId = row.winner === 0 ? row.member_a : row.member_b
+                          const winnerIndex: 0 | 1 = row.winner === 0 ? 0 : 1
+                          const winnerMemberId = winnerIndex === 0 ? row.member_a : row.member_b
                           const winnerDisplayName = winnerMemberId === memberId ? (memberName || '我') : friendName
-                          return `获胜方：${winnerDisplayName}`
+                          return `获胜方：${winnerIndex === 0 ? '⚫' : '⚪'} ${winnerDisplayName}`
                         })()} · {new Date(row.finished_at).toLocaleString('zh-CN')}
                       </span>
                     </div>
@@ -4711,21 +4829,13 @@ export default function CouplePage() {
             <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h3 className="font-semibold">🎲 骰子比大小（3个骰子）</h3>
+                  <h3 className="font-semibold">🎲3个骰子比大小</h3>
                   {/* <p className="mt-1 text-xs text-slate-500">4~10点为“小”，11~17点为“大”；围骰庄家通吃，预测正确获双倍（1:1）。</p> */}
                 </div>
                 <span className="chip shrink-0 border-amber-200 bg-amber-50 text-amber-700">第 {diceState?.round ?? 1} 轮</span>
               </div>
 
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-slate-700">
-                <p className="font-semibold">📜 玩法规则：</p>
-                <ul className="mt-1 list-inside list-disc space-y-0.5 text-[11px] text-slate-600">
-                  <li>使用 3 个骰子，点数和 <strong>4~10 点为小</strong>，<strong>11~17 点为大</strong>。</li>
-                  <li>闲家预测正确可获 1:1 赔率奖励（赢取 10 筹码），预测错误筹码归庄家。</li>
-                  <li><strong>特别注意：</strong>若 3 个骰子点数相同（如 1-1-1、6-6-6，即<strong>“围骰/全骰”</strong>），无论押大押小均判输，<strong>庄家通吃</strong>！</li>
-                  <li>双方初始各有 100 筹码，每轮开骰后自动轮换庄家。</li>
-                </ul>
-              </div>
+              
 
               {!diceGame ? (
                 <button
@@ -4744,9 +4854,9 @@ export default function CouplePage() {
                       <div className="flex items-center justify-center gap-1.5">
                         <span className="text-xs font-semibold text-slate-700">{memberName || '我'}</span>
                         {diceState.banker === myDiceIndex ? (
-                          <span className="chip border-amber-300 bg-amber-100 text-[10px] text-amber-800">👑 当前庄家</span>
+                          <span className="chip border-amber-300 bg-amber-100 text-[10px] text-amber-800">👑庄家</span>
                         ) : (
-                          <span className="chip border-slate-200 bg-white text-[10px] text-slate-500">🎯 闲家</span>
+                          <span className="chip border-slate-200 bg-white text-[10px] text-slate-500">🎯闲家</span>
                         )}
                       </div>
                       <p className="mt-1 text-2xl font-bold text-amber-700">{diceState.chips[myDiceIndex]} <span className="text-xs font-normal text-slate-400">筹码</span></p>
@@ -4761,9 +4871,9 @@ export default function CouplePage() {
                       <div className="flex items-center justify-center gap-1.5">
                         <span className="text-xs font-semibold text-slate-700">{friendName}</span>
                         {diceState.banker === (1 - myDiceIndex) ? (
-                          <span className="chip border-amber-300 bg-amber-100 text-[10px] text-amber-800">👑 当前庄家</span>
+                          <span className="chip border-amber-300 bg-amber-100 text-[10px] text-amber-800">👑庄家</span>
                         ) : (
-                          <span className="chip border-slate-200 bg-white text-[10px] text-slate-500">🎯 闲家</span>
+                          <span className="chip border-slate-200 bg-white text-[10px] text-slate-500">🎯闲家</span>
                         )}
                       </div>
                       <p className="mt-1 text-2xl font-bold text-amber-700">{diceState.chips[1 - myDiceIndex]} <span className="text-xs font-normal text-slate-400">筹码</span></p>
@@ -4844,31 +4954,45 @@ export default function CouplePage() {
                       <p className="text-center text-[10px] text-slate-400">下注后由庄家开盅；遇围骰庄家通吃，预测正确获 1:1 双倍筹码</p>
                     </div>
                   )}
-
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-slate-700">
+                    <p className="font-semibold">📜 玩法规则：</p>
+                    <ul className="mt-1 list-inside list-disc space-y-0.5 text-[11px] text-slate-600">
+                      <li>使用 3 个骰子，点数和 <strong>4~10 点为小</strong>，<strong>11~17 点为大</strong>。</li>
+                      <li>闲家预测正确可获 1:1 赔率奖励（赢取 10 筹码），预测错误筹码归庄家。</li>
+                      <li><strong>特别注意：</strong>若 3 个骰子点数相同（如 1-1-1、6-6-6，即<strong>“围骰/全骰”</strong>），无论押大押小均判输，<strong>庄家通吃</strong>！</li>
+                      <li>双方初始各有 100 筹码，每轮开骰后自动轮换庄家。</li>
+                    </ul>
+                  </div>
                   {/* 对局历史与重置 */}
                   <div className="space-y-2 border-t border-slate-100 pt-3">
                     <div className="flex items-center justify-between">
-                      <h4 className="text-xs font-semibold text-slate-600">📜 骰子记录（{diceHistory.length} 轮）</h4>
+                      <h4 className="text-xs font-semibold text-slate-600">📜 骰子记录（{diceHistory.length} 局）</h4>
                       <div className="flex gap-2">
-                        <button type="button" className="btn-ghost text-xs text-rose-500" disabled={diceSaving} onClick={() => void resetDiceGame()}>重置对局</button>
+                        <button type="button" className="btn-ghost text-xs text-rose-500" disabled={diceSaving} onClick={() => void endDiceGame()}>🏁 结束本局</button>
                         <button type="button" className="btn-ghost text-xs" onClick={() => void reloadDiceHistory()}>刷新</button>
                       </div>
                     </div>
                     {diceHistory.length === 0 ? (
-                      <p className="text-xs text-slate-400">暂无开骰记录</p>
+                      <p className="text-xs text-slate-400">暂无对局记录（一局结束才归档一条）</p>
                     ) : (
                       <div className="max-h-48 space-y-1 overflow-y-auto text-xs">
                         {diceHistory.map((row) => {
-                          const res = row.state.lastResult
+                          const s = row.state
+                          const rounds = Math.max(0, s.round - 1)
+                          const loser = s.chips[0] === 0 ? 0 : s.chips[1] === 0 ? 1 : null
+                          const res = s.lastResult
                           return (
-                            <div key={row.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-2 text-[11px]">
-                              <div>
+                            <div key={row.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-2 text-[11px]">
+                              <div className="min-w-0">
                                 <span className="font-semibold text-slate-700">
-                                  {res ? `${res.dices.join('+')}=${res.sum}点（${res.isTriple ? '围骰' : res.outcome === 'small' ? '小' : '大'}）` : '未知'}
+                                  {loser !== null ? `${diceNames?.[1 - loser] ?? (loser === 1 ? '红方' : '蓝方')} 获胜` : '手动收局'} · {rounds} 轮
                                 </span>
-                                <span className="ml-2 text-slate-400">{res?.winnerDesc || ''}</span>
+                                <span className="ml-2 text-slate-400">
+                                  最终 ❤️ {s.chips[0]} / 💙 {s.chips[1]}
+                                  {res ? ` · 末局 ${res.dices.join('+')}=${res.sum}点（${res.isTriple ? '围骰' : res.outcome === 'small' ? '小' : '大'}）` : ''}
+                                </span>
                               </div>
-                              <span className="text-slate-400">{new Date(row.finished_at).toLocaleTimeString('zh-CN')}</span>
+                              <span className="shrink-0 text-slate-400">{new Date(row.finished_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                             </div>
                           )
                         })}

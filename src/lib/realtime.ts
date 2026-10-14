@@ -1,6 +1,7 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js'
 import { supabase, realtimeUrl, anonKey } from './supabase'
+import { scheduleSync } from './net'
 
 export type ChangeEvent = '*' | 'INSERT' | 'UPDATE' | 'DELETE'
 export type ChangePayload = RealtimePostgresChangesPayload<{ [key: string]: any }>
@@ -13,11 +14,25 @@ export interface Watch {
 
 interface Options {
   enabled?: boolean
-  /** 实时连不上时的轮询间隔（毫秒） */
+  /**
+   * 实时连不上时的轮询间隔（毫秒）。
+   * 不传则用 POLL.warm（30 秒）：绝大多数数据 30 秒到位完全够，
+   * 只有「对局进行中」这类需要即时反馈的场景才显式传 POLL.hot。
+   */
   pollMs?: number
   /** 轮询时执行的操作，一般是重新拉列表 */
   onPoll?: () => void
 }
+
+/** 轮询频率档位：把「多久能看到对方的动作」这件事收敛成三个明确的选择 */
+export const POLL = {
+  /** 对局进行中，双方要即时看到彼此动作 */
+  hot: 10_000,
+  /** 常规业务数据（列表、消息角标） */
+  warm: 30_000,
+  /** 几乎不变的配置（成员、设置、模块开关）：靠实时推送，轮询只是兜底 */
+  cool: 120_000,
+} as const
 
 /** 被拦截后多久复测一次（让网络恢复后能自动切回实时通道） */
 const RETRY_MS = 300_000
@@ -105,7 +120,7 @@ if (typeof window !== 'undefined') {
  * 关键：探测未通过（pending / broken）时一律只轮询，绝不打开 supabase-js 的 socket。
  */
 export function useRealtime(channelName: string, watches: Watch[], options: Options = {}): void {
-  const { enabled = true, pollMs = 10_000, onPoll } = options
+  const { enabled = true, pollMs = POLL.warm, onPoll } = options
   const state = useSyncExternalStore(onProbeState, getProbeState)
 
   const watchesRef = useRef(watches)
@@ -117,12 +132,12 @@ export function useRealtime(channelName: string, watches: Watch[], options: Opti
     if (!enabled) return
 
     let channel: RealtimeChannel | null = null
-    let pollTimer: number | undefined
+    let cancelSync: (() => void) | undefined
 
     const stopPolling = () => {
-      if (pollTimer) {
-        window.clearInterval(pollTimer)
-        pollTimer = undefined
+      if (cancelSync) {
+        cancelSync()
+        cancelSync = undefined
       }
     }
 
@@ -153,29 +168,18 @@ export function useRealtime(channelName: string, watches: Watch[], options: Opti
       })
     }
 
+    // 轮询交给全站统一的调度器：后台标签页不跑、回到前台自动错峰补拉，
+    // 也避免了「每个订阅各开一个 setInterval」带来的请求堆积
     const startPolling = () => {
-      if (pollTimer) return
-      pollTimer = window.setInterval(() => {
-        if (document.visibilityState === 'visible') pollRef.current?.()
-      }, pollMs)
+      if (cancelSync) return
+      cancelSync = scheduleSync(channelName, pollMs, () => pollRef.current?.())
     }
 
     // 探测未通过（pending 或 broken）一律先轮询：绝不主动打开 supabase-js 的 socket
     if (state === 'ok') subscribe()
     else startPolling()
 
-    // 页面从后台切换回前台时，主动触发一次轮询/刷新，避免从桌面切回来时数据还是旧的
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        pollRef.current?.()
-      }
-    }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    window.addEventListener('focus', onVisibilityChange)
-
     return () => {
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-      window.removeEventListener('focus', onVisibilityChange)
       stopPolling()
       const c = channel
       channel = null

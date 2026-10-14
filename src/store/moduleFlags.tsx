@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { listModuleFlags, saveModuleFlag, deleteModuleFlag, type ModuleFlagRow } from '../lib/db'
 import { type ModuleKey } from '../lib/modules'
-import { useRealtime } from '../lib/realtime'
+import { POLL, useRealtime } from '../lib/realtime'
 import { useSession } from './session'
 
 type FlagsValue = {
@@ -50,6 +50,8 @@ export function ModuleFlagsProvider({ children }: { children: ReactNode }) {
   }, [reload])
 
   useRealtime('module-flags', [{ table: 'app_module_flags', on: () => void reload() }], {
+    // 开关只有管理员会改：实时推送到位即可，轮询仅作离线兜底
+    pollMs: POLL.cool,
     onPoll: () => void reload(),
   })
 

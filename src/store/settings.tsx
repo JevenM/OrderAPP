@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { getMemberMyName, getSetting, setSetting } from '../lib/db'
-import { useRealtime } from '../lib/realtime'
+import { getMemberMyName, getSettings, setSetting } from '../lib/db'
+import { invalidateDedupe } from '../lib/net'
+import { POLL, useRealtime } from '../lib/realtime'
 import { ADMIN_NAME } from '../lib/supabase'
 import { useSession } from './session'
 
@@ -40,14 +41,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const load = useCallback(async () => {
     try {
-      setAdminName(await getSetting(ADMIN_NAME_KEY, ADMIN_NAME))
+      // 一次请求取回两个设置项，避免每个轮询周期打两次 REST
+      const map = await getSettings([ADMIN_NAME_KEY, ADMIN_AVATAR_KEY])
+      setAdminName((map[ADMIN_NAME_KEY] ?? '').trim() || ADMIN_NAME)
+      setAdminAvatar(map[ADMIN_AVATAR_KEY] ?? '')
     } catch {
       // 没跑 0006_settings.sql 时保持默认值
-    }
-    try {
-      setAdminAvatar(await getSetting(ADMIN_AVATAR_KEY, ''))
-    } catch {
-      // 头像可选，读不到就不显示
     }
   }, [])
 
@@ -75,6 +74,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       { table: 'members', on: () => void loadPrivateName() },
     ],
     {
+      // 昵称 / 头像属于「改一次用很久」的配置：实时推送为主，轮询只作兜底
+      pollMs: POLL.cool,
       onPoll: () => {
         void load()
         void loadPrivateName()
@@ -85,6 +86,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const saveAdminName = useCallback(
     async (name: string) => {
       await setSetting(ADMIN_NAME_KEY, name.trim())
+      invalidateDedupe('settings:')
       setAdminName(name.trim() || ADMIN_NAME)
     },
     []
@@ -92,6 +94,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const saveAdminAvatar = useCallback(async (url: string | null) => {
     await setSetting(ADMIN_AVATAR_KEY, url ?? '')
+    invalidateDedupe('settings:')
     setAdminAvatar(url ?? '')
   }, [])
 
