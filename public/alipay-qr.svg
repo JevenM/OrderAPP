@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="100%" height="100%">
+  <rect width="100%" height="100%" fill="#ffffff" rx="20"/>
+  <!-- 支付宝蓝边框与标题区 -->
+  <rect x="20" y="20" width="360" height="360" rx="16" fill="#f4f8fe" stroke="#1677ff" stroke-width="3"/>
+  <rect x="20" y="20" width="360" height="60" rx="16" fill="#1677ff"/>
+  <text x="200" y="58" fill="#ffffff" font-size="20" font-family="sans-serif" font-weight="bold" text-anchor="middle">支付宝扫一扫 · 支持作者</text>
+
+  <!-- 二维码模拟区域与定位角标 -->
+  <g fill="#1677ff">
+    <!-- 左上角定位框 -->
+    <rect x="70" y="110" width="60" height="60" rx="8" fill="none" stroke="#1677ff" stroke-width="8"/>
+    <rect x="85" y="125" width="30" height="30" rx="4" fill="#1677ff"/>
+    <!-- 右上角定位框 -->
+    <rect x="270" y="110" width="60" height="60" rx="8" fill="none" stroke="#1677ff" stroke-width="8"/>
+    <rect x="285" y="125" width="30" height="30" rx="4" fill="#1677ff"/>
+    <!-- 左下角定位框 -->
+    <rect x="70" y="250" width="60" height="60" rx="8" fill="none" stroke="#1677ff" stroke-width="8"/>
+    <rect x="85" y="265" width="30" height="30" rx="4" fill="#1677ff"/>
+  </g>
+
+  <!-- 模拟数据块与点阵 -->
+  <g fill="#2b3648" opacity="0.85">
+    <rect x="150" y="115" width="16" height="16" rx="3"/>
+    <rect x="180" y="125" width="20" height="14" rx="3"/>
+    <rect x="220" y="115" width="24" height="16" rx="3"/>
+    
+    <rect x="150" y="150" width="32" height="16" rx="3"/>
+    <rect x="200" y="150" width="16" height="28" rx="3"/>
+    <rect x="235" y="155" width="18" height="18" rx="3"/>
+
+    <rect x="145" y="190" width="20" height="20" rx="3"/>
+    <rect x="185" y="200" width="30" height="15" rx="3"/>
+    <rect x="230" y="195" width="25" height="25" rx="3"/>
+
+    <rect x="155" y="240" width="18" height="26" rx="3"/>
+    <rect x="190" y="235" width="28" height="16" rx="3"/>
+    <rect x="235" y="245" width="18" height="18" rx="3"/>
+
+    <rect x="150" y="280" width="40" height="16" rx="3"/>
+    <rect x="210" y="280" width="24" height="20" rx="3"/>
+    <rect x="250" y="275" width="20" height="25" rx="3"/>
+    <rect x="285" y="210" width="30" height="20" rx="3"/>
+    <rect x="80" y="195" width="45" height="16" rx="3"/>
+  </g>
+
+  <!-- 中心支付图标 -->
+  <circle cx="200" cy="210" r="28" fill="#ffffff" stroke="#1677ff" stroke-width="3"/>
+  <text x="200" y="219" fill="#1677ff" font-size="24" font-family="sans-serif" font-weight="900" text-anchor="middle">支</text>
+
+  <text x="200" y="345" fill="#667085" font-size="13" font-family="sans-serif" text-anchor="middle">感谢你的支持与打赏 ☕</text>
+</svg>

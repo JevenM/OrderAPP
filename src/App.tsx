@@ -22,6 +22,7 @@ import OrderPage from './pages/OrderPage'
 import MealLogPage from './pages/MealLogPage'
 import FeedPage from './pages/FeedPage'
 import CouplePage from './pages/CouplePage'
+import AboutPage from './pages/AboutPage'
 import AdminFriendships from './pages/AdminFriendships'
 import AdminCoupleHistory from './pages/AdminCoupleHistory'
 import AdminCoupleWishes from './pages/AdminCoupleWishes'
@@ -80,6 +81,7 @@ function Shell() {
               <Route path="/meals" element={<MealLogPage />} />
               <Route path="/feed" element={<FeedPage />} />
               {ENABLE_FRIENDS && <Route path="/couple" element={<CouplePage />} />}
+              <Route path="/about" element={<AboutPage />} />
               {isAdmin && <Route path="/admin" element={<AdminHome />} />}
               {isAdmin && <Route path="/admin/friendships" element={<AdminFriendships />} />}
               {isAdmin && <Route path="/admin/couple-data" element={<AdminCoupleData />} />}
@@ -297,6 +299,7 @@ function Layout() {
                   )}
                   <MenuItem onClick={() => run(() => setProfileOpen(true))}>个人资料</MenuItem>
                   <MenuItem onClick={() => run(openChangelog)}>更新日志</MenuItem>
+                  <MenuItem onClick={() => run(() => navigate('/about'))}>💕 关于我们 & 赞赏</MenuItem>
                   <MenuItem danger onClick={() => run(doLogout)}>
                     退出登录
                   </MenuItem>

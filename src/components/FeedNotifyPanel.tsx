@@ -98,6 +98,8 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
       navigate('/couple?module=gomoku&focus=1')
     } else if (notice.type === 'watermelon') {
       navigate('/couple?module=watermelon&focus=1')
+    } else if (notice.type === 'dice') {
+      navigate('/couple?module=dice&focus=1')
     } else if (notice.type === 'love') {
       navigate('/couple?module=love&focus=1')
     } else if (notice.type === 'together') {

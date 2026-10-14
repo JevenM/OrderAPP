@@ -1777,6 +1777,117 @@ export async function notifyGomokuNew(recipient: string, senderName: string): Pr
   await insertFeedNotices([recipient], { sender_name: senderName, type: 'gomoku', post_id: null, title: '⚫ 五子棋新棋局开好啦', body: `${senderName} 创建了五子棋棋局，快去互动空间看看吧～` })
 }
 
+/* ------------------------------ 情侣骰子比大小 ------------------------------ */
+
+export type DiceBetChoice = 'small' | 'big' | null
+
+export interface CoupleDiceState {
+  banker: 0 | 1
+  dices: [number, number, number] | null
+  bets: [DiceBetChoice, DiceBetChoice]
+  chips: [number, number]
+  round: number
+  rolling: boolean
+  lastResult: {
+    dices: [number, number, number]
+    sum: number
+    isTriple: boolean
+    outcome: 'small' | 'big' | 'triple'
+    winnerDesc: string
+  } | null
+  log: Array<{ at: string; text: string }>
+}
+
+export interface CoupleDiceRow {
+  member_a: string
+  member_b: string
+  state: CoupleDiceState
+  updated_at: string
+}
+
+export interface CoupleDiceHistoryRow {
+  id: string
+  member_a: string
+  member_b: string
+  state: CoupleDiceState
+  finished_at: string
+}
+
+export async function fetchCoupleDice(userA: string, userB: string): Promise<CoupleDiceRow | null> {
+  if (!userA || !userB || userA === userB) return null
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase.from('couple_dice_games').select('*').eq('member_a', memberA).eq('member_b', memberB).maybeSingle()
+  if (error) {
+    if (isMissingTable(error)) return null
+    fail(error, '加载骰子比大小对局')
+  }
+  return (data as CoupleDiceRow | null) ?? null
+}
+
+export async function upsertCoupleDice(userA: string, userB: string, state: CoupleDiceState): Promise<void> {
+  if (!userA || !userB || userA === userB) throw new Error('请先添加好友再玩骰子')
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_dice_games').upsert({
+    member_a: memberA,
+    member_b: memberB,
+    state,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'member_a,member_b' })
+  if (error) fail(error, '同步骰子对局')
+}
+
+export async function deleteCoupleDice(userA: string, userB: string): Promise<void> {
+  if (!userA || !userB || userA === userB) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_dice_games').delete().eq('member_a', memberA).eq('member_b', memberB)
+  if (error) fail(error, '重置骰子对局')
+}
+
+export async function createCoupleDiceHistory(userA: string, userB: string, state: CoupleDiceState): Promise<void> {
+  if (!userA || !userB || userA === userB) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_dice_history').insert({
+    member_a: memberA,
+    member_b: memberB,
+    state,
+  })
+  if (error && !isMissingTable(error)) fail(error, '保存骰子对局历史')
+}
+
+export async function listCoupleDiceHistory(userA: string, userB: string, limit = 20): Promise<CoupleDiceHistoryRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase.from('couple_dice_history').select('*').eq('member_a', memberA).eq('member_b', memberB).order('finished_at', { ascending: false }).limit(limit)
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载骰子对局历史')
+  }
+  return (data ?? []) as CoupleDiceHistoryRow[]
+}
+
+export async function listAllCoupleDiceHistory(limit = 200): Promise<CoupleDiceHistoryRow[]> {
+  const { data, error } = await supabase.from('couple_dice_history').select('*').order('finished_at', { ascending: false }).limit(limit)
+  if (error && !isMissingTable(error)) fail(error, '加载全部骰子对局历史')
+  return (data ?? []) as CoupleDiceHistoryRow[]
+}
+
+export async function deleteCoupleDiceHistory(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { error } = await supabase.from('couple_dice_history').delete().in('id', ids)
+  if (error && !isMissingTable(error)) fail(error, '删除骰子历史')
+}
+
+export async function notifyDiceRoll(recipient: string, senderName: string): Promise<void> {
+  if (!recipient) return
+  await insertFeedNotices([recipient], {
+    sender_name: senderName,
+    type: 'dice',
+    post_id: null,
+    title: '🎲 骰子比大小开骰啦',
+    body: `${senderName} 开骰揭晓了结果，快去互动空间看看筹码输赢吧～`,
+  })
+}
+
 /* ------------------------------ 情侣西瓜分 ------------------------------ */
 
 export interface CoupleWatermelonScoreRow {
@@ -1854,7 +1965,7 @@ export async function createCoupleWatermelonLog(input: {
   return data as CoupleWatermelonLogRow
 }
 
-export async function listCoupleWatermelonLogs(userA: string, userB: string, limit = 30): Promise<CoupleWatermelonLogRow[]> {
+export async function listCoupleWatermelonLogs(userA: string, userB: string, limit = 500): Promise<CoupleWatermelonLogRow[]> {
   if (!userA || !userB || userA === userB) return []
   const [memberA, memberB] = couplePair(userA, userB)
   const { data, error } = await supabase.from('couple_watermelon_logs').select('*').eq('member_a', memberA).eq('member_b', memberB).order('created_at', { ascending: false }).limit(limit)
@@ -2315,6 +2426,7 @@ export type FeedNoticeType =
   | 'wufu'
   | 'gomoku'
   | 'watermelon'
+  | 'dice'
   | 'love'
 
 export interface FeedNotificationRow {
@@ -2369,8 +2481,8 @@ async function insertFeedNotices(
 ): Promise<void> {
   const unique = [...new Set(recipients.filter(Boolean))]
   if (!unique.length) return
-  // 游戏类（board / mines / wufu / gomoku）通知：在线用户跳过写铃铛（前端弹窗已提示）
-  const gameTypes: ReadonlySet<string> = new Set(['board', 'mines', 'wufu', 'gomoku', 'watermelon'])
+  // 游戏类（board / mines / wufu / gomoku / dice）通知：在线用户跳过写铃铛（前端弹窗已提示）
+  const gameTypes: ReadonlySet<string> = new Set(['board', 'mines', 'wufu', 'gomoku', 'watermelon', 'dice'])
   const filtered = gameTypes.has(notice.type)
     ? await Promise.all(
         unique.map(async (id) => {

@@ -26,6 +26,16 @@ import {
   fetchCoupleWatermelon,
   listCoupleWatermelonLogs,
   upsertCoupleWatermelon,
+  fetchCoupleDice,
+  upsertCoupleDice,
+  deleteCoupleDice,
+  createCoupleDiceHistory,
+  listCoupleDiceHistory,
+  notifyDiceRoll,
+  type CoupleDiceRow,
+  type CoupleDiceState,
+  type CoupleDiceHistoryRow,
+  type DiceBetChoice,
   notifyCoupleChatMessage,
   notifyCoupleMealNudge,
   createCoupleWish,
@@ -1078,6 +1088,11 @@ export default function CouplePage() {
   const [boardSizeCustom, setBoardSizeCustom] = useState(false)
   const [boardStepMin, setBoardStepMin] = useState(1)
   const [boardStepMax, setBoardStepMax] = useState(6)
+  /* 每次步数是否用自定义数值（1～20）：自定义时从输入框取值，开局时做范围与大小校验 */
+  const [boardStepMinCustom, setBoardStepMinCustom] = useState(false)
+  const [boardStepMaxCustom, setBoardStepMaxCustom] = useState(false)
+  const [boardStepMinCustomValue, setBoardStepMinCustomValue] = useState('')
+  const [boardStepMaxCustomValue, setBoardStepMaxCustomValue] = useState('')
   const [boardTruthAnswer, setBoardTruthAnswer] = useState('')
   /* 自定义格子内容池（每行一条，私密内容由你们自己添加，按互动对象本地保存） */
   const [boardCustomText, setBoardCustomText] = useState('')
@@ -1117,7 +1132,15 @@ export default function CouplePage() {
   const [watermelonLoading, setWatermelonLoading] = useState(false)
   const [watermelonSaving, setWatermelonSaving] = useState(false)
   const [watermelonDelta, setWatermelonDelta] = useState(0)
+  const [watermelonCustomValue, setWatermelonCustomValue] = useState('')
   const [watermelonReason, setWatermelonReason] = useState('')
+
+  /* ------------------------------ 骰子比大小 ------------------------------ */
+  const [diceGame, setDiceGame] = useState<CoupleDiceRow | null>(null)
+  const [diceLoaded, setDiceLoaded] = useState(false)
+  const [diceSaving, setDiceSaving] = useState(false)
+  const [diceHistory, setDiceHistory] = useState<CoupleDiceHistoryRow[]>([])
+  const [myDiceBet, setMyDiceBet] = useState<DiceBetChoice>(null)
 
   /* ------------------------------ 联网扫雷 ------------------------------ */
   const [minesGame, setMinesGame] = useState<CoupleMinesRow | null>(null)
@@ -1439,9 +1462,50 @@ export default function CouplePage() {
   const reloadWatermelonLogs = useCallback(async () => {
     if (!memberId || !friendId) return
     try {
-      setWatermelonLogs(await listCoupleWatermelonLogs(memberId, friendId, 20))
+      setWatermelonLogs(await listCoupleWatermelonLogs(memberId, friendId, 500))
     } catch (error) {
       console.warn('加载西瓜分明细失败', error)
+    }
+  }, [memberId, friendId])
+
+  const applyDiceRow = useCallback(
+    (row: CoupleDiceRow | null) => {
+      if (!row) {
+        setDiceGame(null)
+        return
+      }
+      if (!memberId || !friendId) return
+      const [a, b] = orderedPair(memberId, friendId)
+      if (row.member_a === a && row.member_b === b) {
+        setDiceGame(row)
+        const myIndex = memberId === row.member_a ? 0 : 1
+        setMyDiceBet(row.state.bets[myIndex])
+      }
+    },
+    [memberId, friendId]
+  )
+
+  const reloadDice = useCallback(
+    async (force = false) => {
+      if (!memberId || !friendId) return
+      if (!force && diceLoaded) return
+      try {
+        applyDiceRow(await fetchCoupleDice(memberId, friendId))
+      } catch (error) {
+        console.warn('加载骰子比大小失败', error)
+      } finally {
+        setDiceLoaded(true)
+      }
+    },
+    [memberId, friendId, applyDiceRow, diceLoaded]
+  )
+
+  const reloadDiceHistory = useCallback(async () => {
+    if (!memberId || !friendId) return
+    try {
+      setDiceHistory(await listCoupleDiceHistory(memberId, friendId, 20))
+    } catch (error) {
+      console.warn('加载骰子比大小历史失败', error)
     }
   }, [memberId, friendId])
 
@@ -1600,15 +1664,20 @@ export default function CouplePage() {
     } else if (m === 'mines') {
       throttled('mines', reloadMines)
       throttled('minesHistory', reloadMinesHistory)
-    } else if (m === 'wufu') throttled('wufu', reloadWufu)
-    else if (m === 'gomoku') {
+    } else if (m === 'wufu') {
+      throttled('wufu', reloadWufu)
+      throttled('wufuHistory', reloadWufuHistory)
+    } else if (m === 'gomoku') {
       throttled('gomoku', reloadGomoku)
       throttled('gomokuHistory', reloadGomokuHistory)
     } else if (m === 'watermelon') {
       throttled('watermelon', reloadWatermelon)
       throttled('watermelonLogs', reloadWatermelonLogs)
+    } else if (m === 'dice') {
+      throttled('dice', reloadDice)
+      throttled('diceHistory', reloadDiceHistory)
     } else if (m === 'love') throttled('meals', reloadMeals)
-  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadMeals])
+  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadMeals])
 
   /* 切到某个模块时立即拉一次；棋局类（飞行棋/扫雷/摆方）走各自动作里的缓存，
      只在本地还没有该模块数据时补拉一次，来回切 Tab 不再重复打网络 */
@@ -1619,17 +1688,26 @@ export default function CouplePage() {
     else if (m === 'chat') void reloadMessages()
     else if (m === 'quiz') void reloadQuiz()
     else if (m === 'truth') void reloadTruthHistory()
-    else if (m === 'board') void reloadBoard(boardLoaded ? undefined : true)
-    else if (m === 'mines') void reloadMines(minesLoaded ? undefined : true)
-    else if (m === 'wufu') void reloadWufu(wufuLoaded ? undefined : true)
-    else if (m === 'gomoku') {
+    else if (m === 'board') {
+      void reloadBoard(boardLoaded ? undefined : true)
+      void reloadBoardHistory()
+    } else if (m === 'mines') {
+      void reloadMines(minesLoaded ? undefined : true)
+      void reloadMinesHistory()
+    } else if (m === 'wufu') {
+      void reloadWufu(wufuLoaded ? undefined : true)
+      void reloadWufuHistory()
+    } else if (m === 'gomoku') {
       void reloadGomoku(gomokuLoaded ? undefined : true)
       void reloadGomokuHistory()
     } else if (m === 'watermelon') {
       void reloadWatermelon()
       void reloadWatermelonLogs()
+    } else if (m === 'dice') {
+      void reloadDice(diceLoaded ? undefined : true)
+      void reloadDiceHistory()
     } else if (m === 'love') void reloadMeals()
-  }, [activeModule, ready, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadMines, reloadWufu, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadMeals, boardLoaded, minesLoaded, wufuLoaded, gomokuLoaded])
+  }, [activeModule, ready, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadMeals, boardLoaded, minesLoaded, wufuLoaded, gomokuLoaded, diceLoaded])
 
   useRealtime(
     channelKey,
@@ -1658,11 +1736,14 @@ export default function CouplePage() {
           applyWufuRow(row)
         },
       },
+      { table: 'couple_wufu_history', event: 'INSERT', on: () => void reloadWufuHistory() },
       { table: 'couple_gomoku', event: 'INSERT', on: (p) => applyGomokuRow(p.new as CoupleGomokuRow) },
       { table: 'couple_gomoku', event: 'UPDATE', on: (p) => applyGomokuRow(p.new as CoupleGomokuRow) },
       { table: 'couple_gomoku_history', event: 'INSERT', on: () => void reloadGomokuHistory() },
       { table: 'couple_watermelon_scores', on: () => void reloadWatermelon(true) },
       { table: 'couple_watermelon_logs', event: 'INSERT', on: () => void reloadWatermelonLogs() },
+      { table: 'couple_dice_games', on: () => void reloadDice(true) },
+      { table: 'couple_dice_history', event: 'INSERT', on: () => void reloadDiceHistory() },
       // 飞行棋对局历史：一局结束落库后即时刷新
       { table: 'couple_board_game_history', event: 'INSERT', on: () => void reloadBoardHistory() },
       // 扫雷对局历史：一局通关落库后即时刷新
@@ -1721,12 +1802,16 @@ export default function CouplePage() {
       void reloadMinesHistory()
     } else if (activeModuleRef.current === 'wufu') {
       void reloadWufu()
+      void reloadWufuHistory()
     } else if (activeModuleRef.current === 'gomoku') {
       void reloadGomoku()
       void reloadGomokuHistory()
     } else if (activeModuleRef.current === 'watermelon') {
       void reloadWatermelon()
       void reloadWatermelonLogs()
+    } else if (activeModuleRef.current === 'dice') {
+      void reloadDice()
+      void reloadDiceHistory()
     } else if (activeModuleRef.current === 'wish') {
       void reloadWishes()
       void reloadEvents()
@@ -1745,7 +1830,7 @@ export default function CouplePage() {
       void reloadQuiz()
       void reloadTruthHistory()
     }
-  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs])
+  }, [ready, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory])
 
   useEffect(() => {
     try {
@@ -1772,7 +1857,7 @@ export default function CouplePage() {
       { replace: true }
     )
     if (noticeQuizId) return
-    if (['love', 'wish', 'chat', 'quiz', 'truth', 'board', 'mines', 'wufu', 'gomoku', 'watermelon'].includes(module)) {
+    if (['love', 'wish', 'chat', 'quiz', 'truth', 'board', 'mines', 'wufu', 'gomoku', 'watermelon', 'dice'].includes(module)) {
       setActiveModule(module)
       if (focus) setModuleFocus(true)
     }
@@ -2145,6 +2230,15 @@ export default function CouplePage() {
       ]
     : null
 
+  const myDiceIndex: 0 | 1 = diceGame && memberId === diceGame.member_b ? 1 : 0
+  const diceState = diceGame?.state ?? null
+  const diceNames: [string, string] | null = diceGame
+    ? [
+        diceGame.member_a === memberId ? memberName || '我' : friendName,
+        diceGame.member_b === memberId ? memberName || '我' : friendName,
+      ]
+    : null
+
   const minesNames: [string, string] | null = minesGame
     ? [
         minesGame.member_a === memberId ? memberName || '我' : friendName,
@@ -2161,7 +2255,13 @@ export default function CouplePage() {
 
   const startBoardGame = async () => {
     if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
-    const stepMax = Math.max(boardStepMin, boardStepMax)
+    // 自定义步数：从输入框取值并收敛到 1～20；预设定：直接用下拉值
+    const stepMinInput = boardStepMinCustom ? clampInt(Number(boardStepMinCustomValue) || 1, 1, 20) : boardStepMin
+    const stepMaxInput = boardStepMaxCustom ? clampInt(Number(boardStepMaxCustomValue) || 1, 1, 20) : boardStepMax
+    const stepMin = Math.min(stepMinInput, stepMaxInput)
+    const stepMax = stepMinInput
+    if (boardStepMinCustom && !boardStepMinCustomValue.trim()) return toast.show('请填写自定义最少步数（1～20）', 'err')
+    if (boardStepMaxCustom && !boardStepMaxCustomValue.trim()) return toast.show('请填写自定义最多步数（1～20）', 'err')
     const myName = memberName || '我'
     // 下标与 member_a / member_b 对齐：member_a（红棋）= 较小的 id
     const names: [string, string] = memberId < friendId ? [myName, friendName] : [friendName, myName]
@@ -2170,7 +2270,7 @@ export default function CouplePage() {
     const state: CoupleBoardState = {
       // 自定义格数收敛到 10～100，防止误输入过大/过小
       size: clampInt(boardSize, 10, 100),
-      stepMin: boardStepMin,
+      stepMin,
       stepMax,
       cells: buildBoardCells(boardSize, parseCustomCells(boardCustomText)),
       positions: [0, 0],
@@ -2813,7 +2913,19 @@ export default function CouplePage() {
   const surrenderGomoku = async () => {
     if (!gomokuState || gomokuState.winner !== null || !memberId || !friendId || gomokuSaving) return
     if (!window.confirm('确定投降并保存本局五子棋历史吗？')) return
-    const next: CoupleGomokuState = { ...gomokuState, winner: (1 - myGomokuIndex) as 0 | 1, paused: false, log: [...gomokuState.log, { at: new Date().toISOString(), text: `🏳️${memberName || '我'} 投降，${friendName} 获胜` }] }
+    const surrenderWinnerIndex = (1 - myGomokuIndex) as 0 | 1
+    const next: CoupleGomokuState = {
+      ...gomokuState,
+      winner: surrenderWinnerIndex,
+      paused: false,
+      log: [
+        ...gomokuState.log,
+        {
+          at: new Date().toISOString(),
+          text: `🏳️ ${memberName || '我'} 主动投降，${friendName} 获胜`,
+        },
+      ],
+    }
     setGomokuSaving(true)
     try {
       await createCoupleGomokuHistory(memberId, friendId, next)
@@ -2890,11 +3002,176 @@ export default function CouplePage() {
         toast.show('🍉 西瓜分已记录，对方上线后会在铃铛看到')
       }
       setWatermelonDelta(0)
+      setWatermelonCustomValue('')
       setWatermelonReason('')
     } catch (error) {
       toast.show((error as Error).message, 'err')
     } finally {
       setWatermelonSaving(false)
+    }
+  }
+
+  /* ------------------------------ 骰子比大小操作 ------------------------------ */
+  const startDiceGame = async () => {
+    if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+    const myName = memberName || '我'
+    const names: [string, string] = memberId < friendId ? [myName, friendName] : [friendName, myName]
+    const state: CoupleDiceState = {
+      banker: 0,
+      dices: null,
+      bets: [null, null],
+      chips: [100, 100],
+      round: 1,
+      rolling: false,
+      lastResult: null,
+      log: [
+        {
+          at: new Date().toISOString(),
+          text: `🎲 骰子比大小开局：初始各 100 筹码，${names[0]} 担任第一轮庄家`,
+        },
+      ],
+    }
+    setDiceSaving(true)
+    try {
+      await upsertCoupleDice(memberId, friendId, state)
+      const [a, b] = orderedPair(memberId, friendId)
+      setDiceGame({ member_a: a, member_b: b, state, updated_at: new Date().toISOString() })
+      toast.show('🎲 骰子比大小已开局，闲家请押大或押小')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setDiceSaving(false)
+    }
+  }
+
+  const placeDiceBet = async (choice: 'small' | 'big') => {
+    if (!diceGame || !diceState || !memberId || !friendId || diceSaving) return
+    const isBanker = diceState.banker === myDiceIndex
+    if (isBanker) return toast.show('你是当前庄家，由对方（闲家）押注大小～', 'err')
+    const bets = [...diceState.bets] as [DiceBetChoice, DiceBetChoice]
+    bets[myDiceIndex] = choice
+    const state: CoupleDiceState = {
+      ...diceState,
+      bets,
+      log: [
+        ...diceState.log,
+        {
+          at: new Date().toISOString(),
+          text: `🎯 ${memberName || '我'} 押了【${choice === 'small' ? '小（4~10点）' : '大（11~17点）'}】（底注 10 筹码）`,
+        },
+      ],
+    }
+    setDiceSaving(true)
+    try {
+      await upsertCoupleDice(memberId, friendId, state)
+      const [a, b] = orderedPair(memberId, friendId)
+      setDiceGame({ member_a: a, member_b: b, state, updated_at: new Date().toISOString() })
+      setMyDiceBet(choice)
+      toast.show(`已押【${choice === 'small' ? '小' : '大'}】，请等待庄家摇骰开盅`)
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setDiceSaving(false)
+    }
+  }
+
+  const rollDiceAction = async () => {
+    if (!diceGame || !diceState || !memberId || !friendId || diceSaving) return
+    const isBanker = diceState.banker === myDiceIndex
+    if (!isBanker) return toast.show('只有庄家可以摇骰开盅哦～', 'err')
+    const playerIndex = (1 - diceState.banker) as 0 | 1
+    const playerBet = diceState.bets[playerIndex]
+    if (!playerBet) return toast.show(`请等待 ${friendName}（闲家）先押大或押小～`)
+
+    // 生成 3 个随机骰子 (1~6)
+    const d1 = Math.floor(Math.random() * 6) + 1
+    const d2 = Math.floor(Math.random() * 6) + 1
+    const d3 = Math.floor(Math.random() * 6) + 1
+    const sum = d1 + d2 + d3
+    const isTriple = d1 === d2 && d2 === d3
+    const outcome: 'small' | 'big' | 'triple' = isTriple ? 'triple' : sum <= 10 ? 'small' : 'big'
+
+    const chips = [...diceState.chips] as [number, number]
+    const BET_AMOUNT = 10
+    let winnerDesc = ''
+
+    if (isTriple) {
+      // 围骰 / 全骰：庄家通吃，无论闲家押大押小均判输
+      chips[playerIndex] = Math.max(0, chips[playerIndex] - BET_AMOUNT)
+      chips[diceState.banker] += BET_AMOUNT
+      winnerDesc = `🎲 围骰（${d1}-${d2}-${d3}，${sum}点）！庄家通吃，闲家 -${BET_AMOUNT} 筹码`
+    } else if (outcome === playerBet) {
+      // 预测正确：1:1 赔率，闲家获双倍返还（净赚 10 筹码）
+      chips[playerIndex] += BET_AMOUNT
+      chips[diceState.banker] = Math.max(0, chips[diceState.banker] - BET_AMOUNT)
+      winnerDesc = `🎉 开出 ${outcome === 'small' ? '小' : '大'}（${d1}+${d2}+${d3}=${sum}点），闲家预测正确净赢 +${BET_AMOUNT} 筹码`
+    } else {
+      // 预测错误：筹码归庄家
+      chips[playerIndex] = Math.max(0, chips[playerIndex] - BET_AMOUNT)
+      chips[diceState.banker] += BET_AMOUNT
+      winnerDesc = `❌ 开出 ${outcome === 'small' ? '小' : '大'}（${d1}+${d2}+${d3}=${sum}点），闲家猜错筹码归庄家`
+    }
+
+    // 庄家轮换
+    const nextBanker = (1 - diceState.banker) as 0 | 1
+    const nextState: CoupleDiceState = {
+      banker: nextBanker,
+      dices: [d1, d2, d3],
+      bets: [null, null],
+      chips,
+      round: diceState.round + 1,
+      rolling: false,
+      lastResult: {
+        dices: [d1, d2, d3],
+        sum,
+        isTriple,
+        outcome,
+        winnerDesc,
+      },
+      log: [
+        ...diceState.log,
+        {
+          at: new Date().toISOString(),
+          text: `第${diceState.round}轮：${d1}, ${d2}, ${d3}（${sum}点 ${isTriple ? '围骰' : outcome === 'small' ? '小' : '大'}）-> ${winnerDesc}`,
+        },
+      ],
+    }
+
+    setDiceSaving(true)
+    try {
+      await upsertCoupleDice(memberId, friendId, nextState)
+      await createCoupleDiceHistory(memberId, friendId, nextState)
+      const [a, b] = orderedPair(memberId, friendId)
+      setDiceGame({ member_a: a, member_b: b, state: nextState, updated_at: new Date().toISOString() })
+      setMyDiceBet(null)
+      void reloadDiceHistory()
+
+      if (peerOnline) {
+        toast.show(`🎲 开出 ${sum}点（${d1}-${d2}-${d3}）！${winnerDesc}`)
+      } else {
+        await notifyDiceRoll(friendId, memberName || '我')
+        toast.show(`🎲 已摇出 ${sum}点！对方上线后会收到提醒`)
+      }
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setDiceSaving(false)
+    }
+  }
+
+  const resetDiceGame = async () => {
+    if (!memberId || !friendId || diceSaving) return
+    if (!window.confirm('确定重新开局并重置筹码到 100 吗？')) return
+    setDiceSaving(true)
+    try {
+      await deleteCoupleDice(memberId, friendId)
+      setDiceGame(null)
+      setMyDiceBet(null)
+      toast.show('已重置骰子比大小')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setDiceSaving(false)
     }
   }
 
@@ -3118,6 +3395,7 @@ export default function CouplePage() {
             { id: 'wufu', icon: '♟️', title: '摆方五福棋', detail: '摆子提子走子，吃到剩2子' },
             { id: 'gomoku', icon: '⚫', title: '情侣五子棋', detail: '联网轮流落子，五连获胜' },
             { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分，看专属甜蜜分变化' },
+            { id: 'dice', icon: '🎲', title: '骰子比大小', detail: '3个骰子押大小，围骰庄家通吃' },
           ].map((module) => (
             <button key={module.id} type="button" className="card flex min-h-28 flex-col items-start justify-between gap-3 text-left transition hover:border-brand-200" onClick={() => setActiveModule(module.id)}>
               <span className="text-2xl">{module.icon}</span>
@@ -3264,8 +3542,74 @@ export default function CouplePage() {
                       )}
                       {boardSizeCustom && <span className="mt-0.5 block text-[10px] text-slate-400">格数范围 10～100</span>}
                     </label>
-                    <label className="text-xs text-slate-500">每次最少步数<select className="input mt-1" value={boardStepMin} onChange={(event) => setBoardStepMin(Number(event.target.value))}>{[1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value} 步</option>)}</select></label>
-                    <label className="text-xs text-slate-500">每次最多步数<select className="input mt-1" value={boardStepMax} onChange={(event) => setBoardStepMax(Math.max(boardStepMin, Number(event.target.value)))}>{[2, 3, 4, 5, 6, 8, 10].map((value) => <option key={value} value={value}>{value} 步</option>)}</select></label>
+                    <label className="text-xs text-slate-500">
+                      每次最少步数
+                      <select
+                        className="input mt-1"
+                        value={boardStepMinCustom ? 'custom' : String(boardStepMin)}
+                        onChange={(event) => {
+                          if (event.target.value === 'custom') {
+                            setBoardStepMinCustom(true)
+                            if (!boardStepMinCustomValue) setBoardStepMinCustomValue(String(boardStepMin))
+                          } else {
+                            setBoardStepMinCustom(false)
+                            setBoardStepMin(Number(event.target.value))
+                          }
+                        }}
+                      >
+                        {[1, 2, 3, 4, 5, 6].map((value) => (
+                          <option key={value} value={value}>{value} 步</option>
+                        ))}
+                        <option value="custom">自定义…</option>
+                      </select>
+                      {boardStepMinCustom && (
+                        <>
+                          <input
+                            type="number"
+                            min={1}
+                            max={20}
+                            className="input mt-1"
+                            value={boardStepMinCustomValue}
+                            onChange={(event) => setBoardStepMinCustomValue(event.target.value)}
+                          />
+                          <span className="mt-0.5 block text-[10px] text-slate-400">步数范围 1～20，且不能大于最多步数</span>
+                        </>
+                      )}
+                    </label>
+                    <label className="text-xs text-slate-500">
+                      每次最多步数
+                      <select
+                        className="input mt-1"
+                        value={boardStepMaxCustom ? 'custom' : String(boardStepMax)}
+                        onChange={(event) => {
+                          if (event.target.value === 'custom') {
+                            setBoardStepMaxCustom(true)
+                            if (!boardStepMaxCustomValue) setBoardStepMaxCustomValue(String(boardStepMax))
+                          } else {
+                            setBoardStepMaxCustom(false)
+                            setBoardStepMax(Number(event.target.value))
+                          }
+                        }}
+                      >
+                        {[2, 3, 4, 5, 6, 8, 10].map((value) => (
+                          <option key={value} value={value}>{value} 步</option>
+                        ))}
+                        <option value="custom">自定义…</option>
+                      </select>
+                      {boardStepMaxCustom && (
+                        <>
+                          <input
+                            type="number"
+                            min={1}
+                            max={20}
+                            className="input mt-1"
+                            value={boardStepMaxCustomValue}
+                            onChange={(event) => setBoardStepMaxCustomValue(event.target.value)}
+                          />
+                          <span className="mt-0.5 block text-[10px] text-slate-400">步数范围 1～20，且不能小于最少步数</span>
+                        </>
+                      )}
+                    </label>
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs text-slate-500">✨自定义格子内容（每行一条，私密内容由你们自己定）</label>
@@ -3686,6 +4030,83 @@ export default function CouplePage() {
                   >
                     {wufuSaving ? '生成中…' : wufuGame ? '再来一局' : '掷骰开一局'}
                   </button>
+
+                  {/* 摆方对局历史提前到开始之前/未对局页面，随时可查 */}
+                  <div className="space-y-2 border-t border-slate-100 pt-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-semibold text-slate-500">🏛️ 对局历史（{wufuHistory.length}）</h4>
+                      {wufuHistory.length > 0 && (
+                        <button
+                          type="button"
+                          className="btn-ghost text-xs text-slate-400"
+                          onClick={() => void reloadWufuHistory()}
+                        >
+                          刷新
+                        </button>
+                      )}
+                    </div>
+                    {wufuHistory.length === 0 ? (
+                      <p className="rounded-xl bg-slate-50 py-2 text-center text-[11px] text-slate-400">还没有历史对局</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {wufuHistory.map((row) => {
+                          const s = row.state
+                          const winnerName = s.winner === null ? '—' : (wufuNames && s.winner === 0 ? wufuNames[0] : wufuNames ? wufuNames[1] : '')
+                          const surrendered = s.log.some((item) => item.text.includes('🏳️'))
+                          const open = wufuHistoryOpenId === row.id
+                          return (
+                            <div key={row.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className={`font-semibold ${surrendered ? 'text-slate-500' : 'text-brand-600'}`}>
+                                  {surrendered ? '🏳️ 认输' : '🏆 获胜'}
+                                </span>
+                                <span className="text-slate-400">{winnerName} · {new Date(row.finished_at).toLocaleString('zh-CN')}</span>
+                              </div>
+                              <button
+                                type="button"
+                                className="mt-1 text-[11px] text-brand-500 active:text-brand-600"
+                                onClick={() => setWufuHistoryOpenId(open ? null : row.id)}
+                              >
+                                {open ? '收起棋局快照 ▴' : `展开棋局快照 ▾（共 ${s.log.length} 步）`}
+                              </button>
+                              {open && (
+                                <div className="mt-2 space-y-2">
+                                  <div className="mx-auto w-full max-w-[260px]">
+                                    <div className="grid grid-cols-5 gap-0 rounded-lg border border-slate-200 bg-white p-1.5">
+                                      {s.board.map((cell, i) => {
+                                        const r = Math.floor(i / 5)
+                                        const c = i % 5
+                                        return (
+                                          <div
+                                            key={i}
+                                            className={`flex aspect-square items-center justify-center
+                                              ${r > 0 ? 'border-t' : ''} ${c > 0 ? 'border-l' : ''} border-slate-100`}
+                                          >
+                                            {cell === 1 ? (
+                                              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-rose-400 to-rose-600 text-[10px] font-bold text-white">❤️</span>
+                                            ) : cell === 2 ? (
+                                              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-sky-600 text-[10px] font-bold text-white">💙</span>
+                                            ) : (
+                                              <span className="h-1 w-1 rounded-full bg-slate-300" />
+                                            )}
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                  </div>
+                                  <div className="max-h-40 overflow-y-auto rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
+                                    {s.log.map((item, i) => (
+                                      <p key={i} className="break-words">{item.text}</p>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </>
               ) : wufuState && wufuNames ? (
                 <>
@@ -3968,22 +4389,72 @@ export default function CouplePage() {
                       <button type="button" className="btn-ghost text-xs text-rose-600" disabled={gomokuSaving} onClick={() => void surrenderGomoku()}>🏳️ 投降</button>
                     )}
                   </div>
-                  <div className="mx-auto w-full max-w-[min(92vw,560px)] overflow-auto rounded-lg border border-amber-800/30 bg-amber-100 p-2">
-                    <div className="grid aspect-square grid-cols-15 grid-rows-15">
-                      {gomokuState.board.map((cell, index) => (
-                        <button
-                          key={index}
-                          type="button"
-                          aria-label={`第${Math.floor(index / 15) + 1}行第${index % 15 + 1}列${cell ? '已有棋子' : '落子'}`}
-                          className="relative flex min-h-0 min-w-0 items-center justify-center"
-                          disabled={gomokuSaving || gomokuState.paused || gomokuState.winner !== null || gomokuState.turn !== myGomokuIndex || cell !== 0}
-                          onClick={() => void placeGomoku(index)}
-                        >
-                          <span className="absolute inset-1/2 h-px w-full -translate-y-1/2 bg-amber-800/50" />
-                          <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-amber-800/50" />
-                          {cell !== 0 && <span className={`relative z-10 h-[72%] w-[72%] rounded-full shadow ${cell === 1 ? 'bg-slate-900' : 'border border-slate-300 bg-white'}`} />}
-                        </button>
-                      ))}
+                  <div className="mx-auto w-full max-w-[min(92vw,560px)] rounded-xl border border-amber-900/30 bg-[#e7bf7d] p-3 shadow-inner">
+                    <div className="relative aspect-square w-full select-none overflow-hidden rounded bg-[#deb887]">
+                      {/* 15x15 网格线（14x14 个方格），线条与落子点精确对齐 */}
+                      <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                        {Array.from({ length: 15 }, (_, i) => {
+                          const p = (i / 14) * 100
+                          return (
+                            <g key={i}>
+                              <line x1="0" y1={p} x2="100" y2={p} stroke="#8c5828" strokeWidth="0.75" />
+                              <line x1={p} y1="0" x2={p} y2="100" stroke="#8c5828" strokeWidth="0.75" />
+                            </g>
+                          )
+                        })}
+                        {/* 星位与天元点 */}
+                        {[
+                          [3, 3],
+                          [3, 11],
+                          [7, 7],
+                          [11, 3],
+                          [11, 11],
+                        ].map(([r, c], starIndex) => (
+                          <circle key={starIndex} cx={(c / 14) * 100} cy={(r / 14) * 100} r="1.1" fill="#6d3f1a" />
+                        ))}
+                      </svg>
+
+                      {/* 15x15 落子交互网格 */}
+                      <div
+                        className="relative z-10 grid h-full w-full"
+                        style={{
+                          gridTemplateColumns: 'repeat(15, minmax(0, 1fr))',
+                          gridTemplateRows: 'repeat(15, minmax(0, 1fr))',
+                        }}
+                      >
+                        {gomokuState.board.map((cell, index) => {
+                          const row = Math.floor(index / 15)
+                          const col = index % 15
+                          const canPlace =
+                            !gomokuSaving &&
+                            !gomokuState.paused &&
+                            gomokuState.winner === null &&
+                            gomokuState.turn === myGomokuIndex &&
+                            cell === 0
+                          return (
+                            <button
+                              key={index}
+                              type="button"
+                              aria-label={`第${row + 1}行第${col + 1}列${cell === 1 ? '已有黑棋' : cell === 2 ? '已有白棋' : '落子点'}`}
+                              className={`group relative flex items-center justify-center p-0 ${canPlace ? 'cursor-pointer hover:bg-black/5' : ''}`}
+                              disabled={!canPlace}
+                              onClick={() => void placeGomoku(index)}
+                            >
+                              {cell !== 0 ? (
+                                <span
+                                  className={`block aspect-square w-[78%] rounded-full shadow-md transition-transform ${
+                                    cell === 1
+                                      ? 'bg-gradient-to-br from-slate-700 via-slate-900 to-black ring-1 ring-slate-800'
+                                      : 'border border-slate-300 bg-gradient-to-br from-white via-slate-100 to-slate-200 ring-1 ring-black/10'
+                                  }`}
+                                />
+                              ) : canPlace ? (
+                                <span className="block aspect-square w-[45%] rounded-full bg-black/20 opacity-0 transition-opacity group-hover:opacity-100" />
+                              ) : null}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
                   </div>
                   <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
@@ -4000,12 +4471,41 @@ export default function CouplePage() {
                   <div key={row.id} className="rounded-lg border border-slate-200 p-2">
                     <div className="flex items-center justify-between text-xs">
                       <span>{row.state.log.some((item) => item.text.includes('🏳️')) ? '🏳️ 投降结束' : '🏆 对局结束'}</span>
-                      <span className="text-slate-400">{gomokuGame && row.winner === myGomokuIndex ? memberName : friendName} · {new Date(row.finished_at).toLocaleString('zh-CN')}</span>
+                      <span className="text-slate-400">
+                        {(() => {
+                          const winnerMemberId = row.winner === 0 ? row.member_a : row.member_b
+                          const winnerDisplayName = winnerMemberId === memberId ? (memberName || '我') : friendName
+                          return `获胜方：${winnerDisplayName}`
+                        })()} · {new Date(row.finished_at).toLocaleString('zh-CN')}
+                      </span>
                     </div>
                     <button type="button" className="mt-1 text-xs text-brand-600" onClick={() => setGomokuHistoryOpenId(gomokuHistoryOpenId === row.id ? null : row.id)}>
                       {gomokuHistoryOpenId === row.id ? '收起棋谱' : `查看棋谱（${row.state.log.length} 手）`}
                     </button>
-                    {gomokuHistoryOpenId === row.id && <div className="mt-2 grid grid-cols-15 overflow-hidden rounded border border-amber-800/30 bg-amber-100">{row.state.board.map((cell, i) => <span key={i} className="flex aspect-square items-center justify-center border border-amber-800/10">{cell === 1 ? '●' : cell === 2 ? '○' : ''}</span>)}</div>}
+                    {gomokuHistoryOpenId === row.id && (
+                      <div className="mt-2 rounded-lg border border-amber-900/30 bg-[#deb887] p-2">
+                        <div
+                          className="grid aspect-square w-full gap-0 overflow-hidden rounded bg-[#deb887]"
+                          style={{
+                            gridTemplateColumns: 'repeat(15, minmax(0, 1fr))',
+                            gridTemplateRows: 'repeat(15, minmax(0, 1fr))',
+                          }}
+                        >
+                          {row.state.board.map((cell, i) => (
+                            <span
+                              key={i}
+                              className="flex aspect-square items-center justify-center border-b border-r border-[#8c5828]/25 p-0"
+                            >
+                              {cell === 1 ? (
+                                <span className="block aspect-square w-[75%] rounded-full bg-slate-900 shadow-sm" />
+                              ) : cell === 2 ? (
+                                <span className="block aspect-square w-[75%] rounded-full border border-slate-300 bg-white shadow-sm" />
+                              ) : null}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -4056,61 +4556,310 @@ export default function CouplePage() {
               <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-semibold text-slate-700">给 {friendName} 调整西瓜分</h4>
-                  <span className="text-[11px] text-slate-400">{watermelonSaving ? '保存中…' : '可加减'}</span>
+                  <span className="text-[11px] text-slate-400">{watermelonSaving ? '保存中…' : '可加减任意分值'}</span>
                 </div>
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  {[
-                    { label: '-1', value: -1 },
-                    { label: '+1', value: 1 },
-                    { label: '+10', value: 10 },
-                  ].map((option) => (
-                    <button
-                      key={option.label}
-                      type="button"
-                      className={`btn-ghost text-sm ${watermelonDelta === option.value ? 'ring-2 ring-emerald-400' : ''}`}
-                      onClick={() => setWatermelonDelta(option.value)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
+
+                <div className="space-y-1">
+                  <label className="text-[11px] text-slate-500">快捷预设：</label>
+                  <div className="grid grid-cols-4 gap-2 text-center">
+                    {[
+                      { label: '-5', value: -5 },
+                      { label: '-1', value: -1 },
+                      { label: '+1', value: 1 },
+                      { label: '+5', value: 5 },
+                    ].map((option) => (
+                      <button
+                        key={option.label}
+                        type="button"
+                        className={`btn-ghost text-xs ${watermelonDelta === option.value && !watermelonCustomValue ? 'ring-2 ring-emerald-500 font-semibold text-emerald-700' : ''}`}
+                        onClick={() => {
+                          setWatermelonDelta(option.value)
+                          setWatermelonCustomValue('')
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  placeholder="原因备注（可选）"
-                  value={watermelonReason}
-                  onChange={(event) => setWatermelonReason(event.target.value)}
-                />
+
+                <div className="space-y-1">
+                  <label className="text-[11px] text-slate-500">自定义分值（可填负数如 -3，或正数如 8）：</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="1"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                      placeholder="输入任意自定义数值（如 3、-2、20）"
+                      value={watermelonCustomValue}
+                      onChange={(event) => {
+                        const raw = event.target.value
+                        setWatermelonCustomValue(raw)
+                        const parsed = parseInt(raw, 10)
+                        if (!Number.isNaN(parsed)) {
+                          setWatermelonDelta(parsed)
+                        } else {
+                          setWatermelonDelta(0)
+                        }
+                      }}
+                    />
+                    <div className="flex shrink-0 gap-1">
+                      <button
+                        type="button"
+                        className="btn-soft px-2.5 py-1 text-xs"
+                        onClick={() => {
+                          const val = Math.abs(watermelonDelta) || 1
+                          setWatermelonDelta(val)
+                          setWatermelonCustomValue(String(val))
+                        }}
+                      >
+                        设为+
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-soft px-2.5 py-1 text-xs"
+                        onClick={() => {
+                          const val = -Math.abs(watermelonDelta || 1)
+                          setWatermelonDelta(val)
+                          setWatermelonCustomValue(String(val))
+                        }}
+                      >
+                        设为-
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] text-slate-500">备注原因（必填或选填）：</label>
+                  <input
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    placeholder="输入原因备注（如：陪我吃夜宵 +5、爽约 -2）"
+                    value={watermelonReason}
+                    onChange={(event) => setWatermelonReason(event.target.value)}
+                  />
+                </div>
+
                 <button
                   type="button"
                   className="btn-primary w-full"
                   disabled={watermelonSaving || watermelonDelta === 0}
                   onClick={() => void adjustWatermelonScore()}
                 >
-                  {watermelonDelta === 0 ? '先选择加减分数' : watermelonDelta > 0 ? `确认给 ${friendName} 加 ${watermelonDelta} 分` : `确认给 ${friendName} 减 ${Math.abs(watermelonDelta)} 分`}
+                  {watermelonDelta === 0
+                    ? '请先选择或输入有效分值'
+                    : watermelonDelta > 0
+                      ? `确认给 ${friendName} 加 ${watermelonDelta} 分`
+                      : `确认给 ${friendName} 减 ${Math.abs(watermelonDelta)} 分`}
                 </button>
               </div>
 
               <div className="space-y-2 border-t border-slate-100 pt-3">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-semibold text-slate-600">最近西瓜分明细</h4>
+                  <div>
+                    <h4 className="text-xs font-semibold text-slate-700">全部西瓜分历史记录</h4>
+                    <p className="text-[10px] text-slate-400">已完整保存所有加减分与备注</p>
+                  </div>
                   <button type="button" className="btn-ghost text-xs" onClick={() => void reloadWatermelonLogs()}>刷新</button>
                 </div>
                 {watermelonLogs.length === 0 ? (
                   <p className="text-xs text-slate-400">还没有西瓜分记录，快给 TA 来第一分吧～</p>
                 ) : (
-                  watermelonLogs.map((log) => (
-                    <div key={log.id} className="flex items-center justify-between rounded-lg border border-slate-200 p-2 text-xs">
-                      <div>
-                        <p className="font-medium text-slate-700">{log.sender_name} 给 {log.target_member === friendId ? friendName : memberName || '我'} {log.delta > 0 ? '加了' : '减了'} {Math.abs(log.delta)} 分</p>
-                        <p className="mt-1 text-slate-400">{log.reason || (log.delta > 0 ? '加分' : '减分')} · {new Date(log.created_at).toLocaleString('zh-CN')}</p>
+                  <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+                    {watermelonLogs.map((log) => (
+                      <div key={log.id} className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white p-2.5 text-xs shadow-sm">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-slate-800">
+                            {log.sender_name} 给 {log.target_member === friendId ? friendName : memberName || '我'} {log.delta > 0 ? '加了' : '减了'} {Math.abs(log.delta)} 分
+                          </p>
+                          <p className="mt-1 break-words rounded bg-slate-50 px-2 py-1 text-slate-600">
+                            💬 备注：{log.reason || (log.delta > 0 ? '加分' : '减分')}
+                          </p>
+                          <p className="mt-1 text-[10px] text-slate-400">
+                            {new Date(log.created_at).toLocaleString('zh-CN')}
+                          </p>
+                        </div>
+                        <span className={`chip shrink-0 font-bold ${log.delta > 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
+                          {log.delta > 0 ? `+${log.delta}` : log.delta}
+                        </span>
                       </div>
-                      <span className={`chip ${log.delta > 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
-                        {log.delta > 0 ? `+${log.delta}` : log.delta}
-                      </span>
-                    </div>
-                  ))
+                    ))}
+                  </div>
                 )}
               </div>
+            </section>
+          )}
+
+          {activeModule === 'dice' && (
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold">🎲 骰子比大小（3个骰子）</h3>
+                  {/* <p className="mt-1 text-xs text-slate-500">4~10点为“小”，11~17点为“大”；围骰庄家通吃，预测正确获双倍（1:1）。</p> */}
+                </div>
+                <span className="chip shrink-0 border-amber-200 bg-amber-50 text-amber-700">第 {diceState?.round ?? 1} 轮</span>
+              </div>
+
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-slate-700">
+                <p className="font-semibold">📜 玩法规则：</p>
+                <ul className="mt-1 list-inside list-disc space-y-0.5 text-[11px] text-slate-600">
+                  <li>使用 3 个骰子，点数和 <strong>4~10 点为小</strong>，<strong>11~17 点为大</strong>。</li>
+                  <li>闲家预测正确可获 1:1 赔率奖励（赢取 10 筹码），预测错误筹码归庄家。</li>
+                  <li><strong>特别注意：</strong>若 3 个骰子点数相同（如 1-1-1、6-6-6，即<strong>“围骰/全骰”</strong>），无论押大押小均判输，<strong>庄家通吃</strong>！</li>
+                  <li>双方初始各有 100 筹码，每轮开骰后自动轮换庄家。</li>
+                </ul>
+              </div>
+
+              {!diceGame ? (
+                <button
+                  type="button"
+                  className="btn-primary w-full"
+                  disabled={diceSaving || !ready}
+                  onClick={() => void startDiceGame()}
+                >
+                  {diceSaving ? '正在开局…' : '🎲 开始骰子对决（双方初始 100 筹码）'}
+                </button>
+              ) : diceState && diceNames ? (
+                <>
+                  {/* 双方筹码 & 身份 */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className={`rounded-xl border p-3 text-center ${diceState.banker === myDiceIndex ? 'border-amber-300 bg-amber-50/80' : 'border-slate-200 bg-slate-50'}`}>
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span className="text-xs font-semibold text-slate-700">{memberName || '我'}</span>
+                        {diceState.banker === myDiceIndex ? (
+                          <span className="chip border-amber-300 bg-amber-100 text-[10px] text-amber-800">👑 当前庄家</span>
+                        ) : (
+                          <span className="chip border-slate-200 bg-white text-[10px] text-slate-500">🎯 闲家</span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-2xl font-bold text-amber-700">{diceState.chips[myDiceIndex]} <span className="text-xs font-normal text-slate-400">筹码</span></p>
+                      {diceState.banker !== myDiceIndex && (
+                        <p className="mt-0.5 text-[10px] text-slate-400">
+                          已押：{diceState.bets[myDiceIndex] ? (diceState.bets[myDiceIndex] === 'small' ? '🔹 小' : '🔸 大') : '未押注'}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className={`rounded-xl border p-3 text-center ${diceState.banker === (1 - myDiceIndex) ? 'border-amber-300 bg-amber-50/80' : 'border-slate-200 bg-slate-50'}`}>
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span className="text-xs font-semibold text-slate-700">{friendName}</span>
+                        {diceState.banker === (1 - myDiceIndex) ? (
+                          <span className="chip border-amber-300 bg-amber-100 text-[10px] text-amber-800">👑 当前庄家</span>
+                        ) : (
+                          <span className="chip border-slate-200 bg-white text-[10px] text-slate-500">🎯 闲家</span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-2xl font-bold text-amber-700">{diceState.chips[1 - myDiceIndex]} <span className="text-xs font-normal text-slate-400">筹码</span></p>
+                      {diceState.banker !== (1 - myDiceIndex) && (
+                        <p className="mt-0.5 text-[10px] text-slate-400">
+                          已押：{diceState.bets[1 - myDiceIndex] ? (diceState.bets[1 - myDiceIndex] === 'small' ? '🔹 小' : '🔸 大') : '等待押注'}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 骰盅区域 */}
+                  <div className="rounded-2xl border border-amber-900/20 bg-gradient-to-b from-amber-700 via-amber-800 to-amber-900 p-5 text-center text-white shadow-lg">
+                    <p className="text-xs tracking-wider text-amber-200">
+                      {diceState.lastResult ? `上轮点数：${diceState.lastResult.dices.join(' + ')} = ${diceState.lastResult.sum}点` : '骰盅待开启'}
+                    </p>
+                    <div className="my-4 flex items-center justify-center gap-3">
+                      {(diceState.dices || [1, 2, 3]).map((dot, idx) => (
+                        <div
+                          key={idx}
+                          className="flex h-14 w-14 items-center justify-center rounded-2xl border-2 border-amber-200/50 bg-white text-3xl font-black text-slate-900 shadow-xl"
+                        >
+                          {['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'][dot - 1] || '🎲'}
+                        </div>
+                      ))}
+                    </div>
+                    {diceState.lastResult && (
+                      <div className="inline-block rounded-full bg-black/30 px-3 py-1 text-xs text-amber-200">
+                        {diceState.lastResult.isTriple
+                          ? `⚠️ 围骰（${diceState.lastResult.dices[0]}同号）· 庄家通吃！`
+                          : `点数和：${diceState.lastResult.sum}点（${diceState.lastResult.outcome === 'small' ? '小 4~10' : '大 11~17'}）`}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 操作区 */}
+                  {diceState.banker === myDiceIndex ? (
+                    <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-center">
+                      <p className="text-xs text-amber-800">
+                        你是本轮庄家 👑！
+                        {diceState.bets[1 - myDiceIndex]
+                          ? `对方已押【${diceState.bets[1 - myDiceIndex] === 'small' ? '小' : '大'}】，你可以开盅摇骰了`
+                          : `正在等待 ${friendName}（闲家）押注大小…`}
+                      </p>
+                      <button
+                        type="button"
+                        className="btn-primary w-full text-base font-semibold"
+                        disabled={diceSaving || !diceState.bets[1 - myDiceIndex]}
+                        onClick={() => void rollDiceAction()}
+                      >
+                        {diceSaving ? '摇骰中…' : '🎲 摇骰开盅！'}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-700">你是闲家，请预测大小（下注 10 筹码）：</span>
+                        <span className="text-slate-400">{myDiceBet ? `已选: ${myDiceBet === 'small' ? '小' : '大'}` : '未选择'}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          type="button"
+                          className={`btn-soft py-3 text-sm font-bold ${myDiceBet === 'small' ? 'ring-2 ring-emerald-500 bg-emerald-50 text-emerald-700' : ''}`}
+                          disabled={diceSaving}
+                          onClick={() => void placeDiceBet('small')}
+                        >
+                          🔹 押 小（4~10点）
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn-soft py-3 text-sm font-bold ${myDiceBet === 'big' ? 'ring-2 ring-amber-500 bg-amber-50 text-amber-700' : ''}`}
+                          disabled={diceSaving}
+                          onClick={() => void placeDiceBet('big')}
+                        >
+                          🔸 押 大（11~17点）
+                        </button>
+                      </div>
+                      <p className="text-center text-[10px] text-slate-400">下注后由庄家开盅；遇围骰庄家通吃，预测正确获 1:1 双倍筹码</p>
+                    </div>
+                  )}
+
+                  {/* 对局历史与重置 */}
+                  <div className="space-y-2 border-t border-slate-100 pt-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-semibold text-slate-600">📜 骰子记录（{diceHistory.length} 轮）</h4>
+                      <div className="flex gap-2">
+                        <button type="button" className="btn-ghost text-xs text-rose-500" disabled={diceSaving} onClick={() => void resetDiceGame()}>重置对局</button>
+                        <button type="button" className="btn-ghost text-xs" onClick={() => void reloadDiceHistory()}>刷新</button>
+                      </div>
+                    </div>
+                    {diceHistory.length === 0 ? (
+                      <p className="text-xs text-slate-400">暂无开骰记录</p>
+                    ) : (
+                      <div className="max-h-48 space-y-1 overflow-y-auto text-xs">
+                        {diceHistory.map((row) => {
+                          const res = row.state.lastResult
+                          return (
+                            <div key={row.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-2 text-[11px]">
+                              <div>
+                                <span className="font-semibold text-slate-700">
+                                  {res ? `${res.dices.join('+')}=${res.sum}点（${res.isTriple ? '围骰' : res.outcome === 'small' ? '小' : '大'}）` : '未知'}
+                                </span>
+                                <span className="ml-2 text-slate-400">{res?.winnerDesc || ''}</span>
+                              </div>
+                              <span className="text-slate-400">{new Date(row.finished_at).toLocaleTimeString('zh-CN')}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : null}
             </section>
           )}
 
