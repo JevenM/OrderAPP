@@ -2366,6 +2366,64 @@ export async function removePost(id: string): Promise<void> {
   if (error) fail(error, '删除动态')
 }
 
+/**
+ * 管理员全量拉取饭圈动态（不做可见性过滤）。
+ * @param filter.from / filter.to 日期范围（含当天），按 posts.day 或 created_at 当天匹配；留空即不限
+ * @param filter.memberId 只看某个成员；null/undefined = 所有人；'me' 代表管理员自己发的（member_id 为空）
+ * @param filter.keyword 按内容关键词过滤
+ */
+export async function listPostsAdmin(filter: {
+  from?: string
+  to?: string
+  memberId?: string | null
+  keyword?: string
+  limit?: number
+} = {}): Promise<PostWithMeta[]> {
+  let query = supabase.from('posts').select('*')
+  if (filter.from) query = query.gte('created_at', `${filter.from}T00:00:00`)
+  if (filter.to) query = query.lte('created_at', `${filter.to}T23:59:59.999`)
+  if (filter.memberId) {
+    query = filter.memberId === ME_KEY ? query.is('member_id', null).eq('author', 'me') : query.eq('member_id', filter.memberId)
+  }
+  const keyword = (filter.keyword ?? '').trim()
+  if (keyword) query = query.ilike('content', `%${keyword}%`)
+  const { data, error } = await query.order('created_at', { ascending: false }).limit(filter.limit ?? 1000)
+  if (error) fail(error, '加载饭圈动态（管理员）')
+
+  const list = (data ?? []) as Post[]
+  if (!list.length) return []
+
+  const ids = list.map((p) => p.id)
+  const [likes, comments] = await Promise.all([
+    supabase.from('post_likes').select('*').in('post_id', ids),
+    supabase.from('post_comments').select('*').in('post_id', ids).order('created_at', { ascending: true }),
+  ])
+  if (likes.error) fail(likes.error, '加载点赞')
+  if (comments.error) fail(comments.error, '加载评论')
+
+  const likesBy = new Map<string, PostLike[]>()
+  for (const l of (likes.data ?? []) as PostLike[]) likesBy.set(l.post_id, [...(likesBy.get(l.post_id) ?? []), l])
+  const commentsBy = new Map<string, PostComment[]>()
+  for (const c of (comments.data ?? []) as PostComment[]) commentsBy.set(c.post_id, [...(commentsBy.get(c.post_id) ?? []), c])
+
+  return list.map((p) => ({ ...p, likes: likesBy.get(p.id) ?? [], comments: commentsBy.get(p.id) ?? [] }))
+}
+
+/** 管理员批量删除动态（点赞 / 评论随外键 on delete cascade 一并带走） */
+export async function deletePosts(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { error } = await supabase.from('posts').delete().in('id', ids)
+  if (error) fail(error, '批量删除动态')
+}
+
+/** 管理员修改某条动态的文字内容 */
+export async function updatePostContent(id: string, content: string): Promise<void> {
+  const clean = content.trim()
+  if (!clean) throw new Error('动态内容不能为空')
+  const { error } = await supabase.from('posts').update({ content: clean }).eq('id', id)
+  if (error) fail(error, '更新动态内容')
+}
+
 /** 点赞 / 取消赞，返回点赞后的状态 */
 export async function toggleLike(postId: string, memberId: string | null): Promise<boolean> {
   let find = supabase.from('post_likes').select('id').eq('post_id', postId)
@@ -2682,6 +2740,50 @@ export async function setSetting(key: string, value: string): Promise<void> {
     .from('app_settings')
     .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
   if (error) fail(error, '保存设置')
+}
+
+/* ------------------------------ 模块开关（管理员控制） ------------------------------ */
+
+export interface ModuleFlagRow {
+  key: string
+  /** null = 全局默认；填成员 id = 该成员的单独配置（优先于全局） */
+  member_id: string | null
+  enabled: boolean
+  updated_at: string
+}
+
+/** 读取全部模块开关（表未建时静默返回空数组，前端按「全部开放」回落） */
+export async function listModuleFlags(): Promise<ModuleFlagRow[]> {
+  const { data, error } = await supabase.from('app_module_flags').select('key, member_id, enabled, updated_at')
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载模块开关')
+  }
+  return (data ?? []) as ModuleFlagRow[]
+}
+
+/** 写入一个模块开关：memberId 传 null 表示改全局默认（表用偏索引，改走「先更新、没命中再插入」） */
+export async function saveModuleFlag(key: string, enabled: boolean, memberId: string | null = null): Promise<void> {
+  const stamped = new Date().toISOString()
+  const base = () => supabase.from('app_module_flags').update({ enabled, updated_at: stamped }).eq('key', key)
+  const target = memberId ? base().eq('member_id', memberId) : base().is('member_id', null)
+  const { data: updated, error: updateError } = await target.select('id')
+  if (updateError && !isMissingTable(updateError)) fail(updateError, '保存模块开关')
+  if ((updated ?? []).length) return
+  const { error } = await supabase
+    .from('app_module_flags')
+    .insert({ key, member_id: memberId, enabled, updated_at: stamped })
+  if (error) fail(error, '保存模块开关')
+}
+
+/** 删除某个成员的单独配置，让它回落到全局默认 */
+export async function deleteModuleFlag(key: string, memberId: string): Promise<void> {
+  const { error } = await supabase
+    .from('app_module_flags')
+    .delete()
+    .eq('key', key)
+    .eq('member_id', memberId)
+  if (error) fail(error, '恢复模块默认配置')
 }
 
 /* ------------------------------ 未读 ------------------------------ */

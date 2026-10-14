@@ -92,7 +92,9 @@ import { todayStr } from '../lib/date'
 import { DEEP_COUPLE_QUESTIONS, EXTRA_COUPLE_QUESTIONS, TRUTH_PROMPTS } from '../lib/coupleQuestions'
 import { useRealtime } from '../lib/realtime'
 import { SLOT_LABEL, type Meal, type MealSlot } from '../lib/types'
+import { COUPLE_MODULE_KEYS, type ModuleKey } from '../lib/modules'
 import { useFriends } from '../store/friends'
+import { useModuleFlags } from '../store/moduleFlags'
 import { useSession } from '../store/session'
 
 type Wish = { id: string; text: string; owner: string }
@@ -977,6 +979,7 @@ export default function CouplePage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const noticeQuizId = searchParams.get('quiz')
   const { memberId, memberName, isAdmin } = useSession()
+  const { isEnabled } = useModuleFlags()
   const { friends } = useFriends()
   // 选「另一个」成员作对方：排除自己，避免管理员切到某成员视角时 friendId 取到自己（自己配自己 → 数据为空）
   const selectedFriend = friends.find((f) => f.memberId !== '__admin__' && f.memberId !== memberId)
@@ -1857,11 +1860,16 @@ export default function CouplePage() {
       { replace: true }
     )
     if (noticeQuizId) return
-    if (['love', 'wish', 'chat', 'quiz', 'truth', 'board', 'mines', 'wufu', 'gomoku', 'watermelon', 'dice'].includes(module)) {
-      setActiveModule(module)
-      if (focus) setModuleFocus(true)
-    }
-  }, [searchParams, noticeQuizId, setSearchParams])
+    // 只允许进入「存在的模块」且管理员没有关掉的模块（通知深链也受模块开关约束）
+    if (!COUPLE_MODULE_KEYS.includes(module as ModuleKey) || !isEnabled(module as ModuleKey)) return
+    setActiveModule(module)
+    if (focus) setModuleFocus(true)
+  }, [searchParams, noticeQuizId, setSearchParams, isEnabled])
+
+  // 正在看某个模块时被管理员关掉 → 立刻退回互动入口页，避免留下不可用的界面
+  useEffect(() => {
+    if (activeModule && !isEnabled(activeModule as ModuleKey)) setActiveModule(null)
+  }, [activeModule, isEnabled])
 
   // 高亮几秒后自动消退 + 滚动把模块带到视野内
   useEffect(() => {
@@ -2013,6 +2021,12 @@ export default function CouplePage() {
   const pickQuestion = async (kind: QuestionKind = questionKind) => {
     // 一方已作答、另一方还没答完时，题目被锁定，不允许换题/切换分类
     if (quiz.question && !quiz.revealed) return
+    // 先切分类：点「自定义」要能立刻看到出题表单（哪怕还没有自定义题）
+    setQuestionKind(kind)
+    if (kind === '自定义' && !customQuestions.length) {
+      toast.show('还没有自定义题目，先在下方添加一道吧～')
+      return
+    }
     if (kind !== '自定义' && (!managedQuestions || !pairQuestionsLoaded)) {
       return toast.show('题库或情侣题目配置仍在加载，请稍后重试', 'err')
     }
@@ -3396,7 +3410,10 @@ export default function CouplePage() {
             { id: 'gomoku', icon: '⚫', title: '情侣五子棋', detail: '联网轮流落子，五连获胜' },
             { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分，看专属甜蜜分变化' },
             { id: 'dice', icon: '🎲', title: '骰子比大小', detail: '3个骰子押大小，围骰庄家通吃' },
-          ].map((module) => (
+          ]
+            // 管理员在「模块管理」里关掉的模块，普通用户这里直接不出现
+            .filter((module) => isEnabled(module.id as ModuleKey))
+            .map((module) => (
             <button key={module.id} type="button" className="card flex min-h-28 flex-col items-start justify-between gap-3 text-left transition hover:border-brand-200" onClick={() => setActiveModule(module.id)}>
               <span className="text-2xl">{module.icon}</span>
               <span>

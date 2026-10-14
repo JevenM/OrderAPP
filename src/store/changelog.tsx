@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
 import { CHANGELOG, CURRENT_VERSION, loadSeen, saveSeen, type ChangelogEntry } from '../lib/changelog'
 import { useSession } from './session'
+import { useModuleFlags } from './moduleFlags'
 
 type ChangelogValue = {
   /** 最新一条更新日志 */
@@ -24,6 +25,7 @@ const ChangelogContext = createContext<ChangelogValue>({
 
 export function ChangelogProvider({ children }: { children: ReactNode }) {
   const { entered, isAdmin, memberId } = useSession()
+  const { isEnabled } = useModuleFlags()
 
   // 按登录身份分开记：同一个设备上「我」和「她」各自弹一次
   const identity = isAdmin ? 'me' : memberId ?? 'her'
@@ -31,7 +33,9 @@ export function ChangelogProvider({ children }: { children: ReactNode }) {
   const [seen, setSeen] = useState<Record<string, string>>(() => loadSeen())
   const [manual, setManual] = useState(false)
 
-  const shouldShow = entered && !!CURRENT_VERSION && seen[identity] !== CURRENT_VERSION
+  // 管理员把「更新日志」模块关掉后，既不再自动弹窗，也不给手动打开
+  const changelogOn = isEnabled('changelog')
+  const shouldShow = entered && changelogOn && !!CURRENT_VERSION && seen[identity] !== CURRENT_VERSION
 
   const dismiss = useCallback(() => {
     setSeen((prev) => {
@@ -42,7 +46,10 @@ export function ChangelogProvider({ children }: { children: ReactNode }) {
     setManual(false)
   }, [identity])
 
-  const open = useCallback(() => setManual(true), [])
+  const open = useCallback(() => {
+    if (!changelogOn) return
+    setManual(true)
+  }, [changelogOn])
 
   const value = useMemo<ChangelogValue>(
     () => ({ latest: CHANGELOG[0] ?? null, shouldShow, manual, open, dismiss }),

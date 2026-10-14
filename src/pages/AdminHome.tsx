@@ -8,6 +8,7 @@ const DAILY_LINKS: AdminLink[] = [
   { to: '/admin/meals', emoji: '🍚', title: '饮食记录', desc: '查看大家的每日打卡' },
   { to: '/admin/dishes', emoji: '📖', title: '菜单管理', desc: '增删菜品、审核新菜申请' },
   { to: '/admin/members', emoji: '👭', title: '成员管理', desc: '成员账号与邀请码' },
+  { to: '/admin/feed', emoji: '📸', title: '饭圈动态管理', desc: '按日期 / 成员筛选查看、编辑与删除', badge: '批量删除 · 导出' },
 ]
 
 /** 互动空间：情侣互动模块的数据管理 */
@@ -15,6 +16,7 @@ const COUPLE_LINKS: AdminLink[] = [
   { to: '/admin/couple-data', emoji: '💞', title: '互动数据管理', desc: '留言板 / 同步抉择 / 真心话 / 心愿 / 飞行棋 / 扫雷', badge: '查看 · 编辑 · 导出 · 删除' },
   { to: '/admin/couple-questions', emoji: '❓', title: '同步抉择题库', desc: '维护轻松版 / 走心版 / 深度版题目' },
   { to: '/admin/friendships', emoji: '🤝', title: '好友关系管理', desc: '配对与解除成员好友关系' },
+  { to: '/admin/modules', emoji: '🧩', title: '模块管理', desc: '控制普通用户可见可用的互动模块与入口', badge: '全局 · 按成员' },
 ]
 
 function LinkCard({ link }: { link: AdminLink }) {

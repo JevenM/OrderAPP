@@ -53,9 +53,17 @@ export default function AboutPage() {
 
         <div className="mx-auto max-w-[260px] overflow-hidden rounded-2xl border-2 border-slate-100 bg-white p-3 shadow-md">
           <img
-            src="/alipay-qr.jpg"
+            src={`${import.meta.env.BASE_URL}alipay-qr.jpg`}
             alt="支付宝赞赏二维码"
             className="aspect-square w-full object-contain"
+            onError={(event) => {
+              // 兜底：jpg 不在时退回内置的 svg 占位码
+              const img = event.currentTarget
+              if (!img.dataset.fallback) {
+                img.dataset.fallback = '1'
+                img.src = `${import.meta.env.BASE_URL}alipay-qr.svg`
+              }
+            }}
           />
         </div>
 
@@ -72,7 +80,7 @@ export default function AboutPage() {
             {copied ? '✓ 已复制寄语' : '📋 复制打赏寄语'}
           </button>
           <a
-            href="/alipay-qr.jpg"
+            href={`${import.meta.env.BASE_URL}alipay-qr.jpg`}
             download="alipay-qr.jpg"
             className="btn-primary text-xs"
           >

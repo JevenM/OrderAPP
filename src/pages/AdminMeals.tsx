@@ -320,7 +320,7 @@ export default function AdminMeals() {
               <span className="block truncate">{o.day.slice(8)}</span>
               <span className="mt-1 grid grid-cols-3 gap-px text-center text-[10px] leading-4" title={`✅ ${o.eaten} · 🫤 ${o.little} · ❌ ${o.skipped}`}>
                 <span className="min-w-0">✅</span>
-                <span className="min-w-0">🫤</span>
+                <span className="min-w-0">😐</span>
                 <span className="min-w-0">❌</span>
                 <span className="min-w-0 truncate">{o.eaten}</span>
                 <span className="min-w-0 truncate">{o.little}</span>

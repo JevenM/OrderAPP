@@ -68,7 +68,7 @@ export default function Login() {
 
       <div className="card space-y-4">
         <div>
-          <label className="mb-1 block text-xs text-slate-500">邀请码</label>
+          {/* <label className="mb-1 block text-xs text-slate-500">邀请码</label> */}
           <input
             className="input"
             value={code}

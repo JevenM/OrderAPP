@@ -10,6 +10,7 @@ import { configured } from './lib/supabase'
 import { requestNotifyPermission } from './lib/notify'
 import { SessionProvider, useSession } from './store/session'
 import { SettingsProvider, useSettings } from './store/settings'
+import { ModuleFlagsProvider, useModuleFlags } from './store/moduleFlags'
 import { UnreadProvider, useUnread } from './store/unread'
 import { MembersProvider, useMembers } from './store/members'
 import { FriendsProvider } from './store/friends'
@@ -29,6 +30,8 @@ import AdminCoupleWishes from './pages/AdminCoupleWishes'
 import AdminCoupleQuestions from './pages/AdminCoupleQuestions'
 import AdminCoupleTruthDare from './pages/AdminCoupleTruthDare'
 import AdminCoupleData from './pages/AdminCoupleData'
+import AdminFeed from './pages/AdminFeed'
+import AdminModuleFlags from './pages/AdminModuleFlags'
 import AdminHome from './pages/AdminHome'
 import AdminOrders from './pages/AdminOrders'
 import AdminMeals from './pages/AdminMeals'
@@ -48,10 +51,12 @@ export default function App() {
       <SessionProvider>
         <ToastProvider>
           <SettingsProvider>
-            <ChangelogProvider>
-              <Shell />
-              <ChangelogModal />
-            </ChangelogProvider>
+            <ModuleFlagsProvider>
+              <ChangelogProvider>
+                <Shell />
+                <ChangelogModal />
+              </ChangelogProvider>
+            </ModuleFlagsProvider>
           </SettingsProvider>
         </ToastProvider>
       </SessionProvider>
@@ -61,6 +66,7 @@ export default function App() {
 
 function Shell() {
   const { entered, role, isAdmin } = useSession()
+  const { isEnabled } = useModuleFlags()
 
   if (!entered) {
     return (
@@ -81,10 +87,12 @@ function Shell() {
               <Route path="/meals" element={<MealLogPage />} />
               <Route path="/feed" element={<FeedPage />} />
               {ENABLE_FRIENDS && <Route path="/couple" element={<CouplePage />} />}
-              <Route path="/about" element={<AboutPage />} />
+              {isEnabled('about') && <Route path="/about" element={<AboutPage />} />}
               {isAdmin && <Route path="/admin" element={<AdminHome />} />}
               {isAdmin && <Route path="/admin/friendships" element={<AdminFriendships />} />}
               {isAdmin && <Route path="/admin/couple-data" element={<AdminCoupleData />} />}
+              {isAdmin && <Route path="/admin/feed" element={<AdminFeed />} />}
+              {isAdmin && <Route path="/admin/modules" element={<AdminModuleFlags />} />}
               {isAdmin && <Route path="/admin/couple-history" element={<AdminCoupleHistory />} />}
               {isAdmin && <Route path="/admin/couple-wishes" element={<AdminCoupleWishes />} />}
               {isAdmin && <Route path="/admin/couple-questions" element={<AdminCoupleQuestions />} />}
@@ -139,6 +147,7 @@ function Layout() {
   const { pathname } = useLocation()
   const unread = useUnread()
   const { open: openChangelog } = useChangelog()
+  const { isEnabled } = useModuleFlags()
   const toast = useToast()
   const [menu, setMenu] = useState<'member' | 'more' | 'feed' | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
@@ -292,14 +301,18 @@ function Layout() {
                   {isAdmin && role === 'me' && (
                     <>
                       <MenuItem onClick={() => run(() => navigate('/admin'))}>🗂 管理总览</MenuItem>
+                      <MenuItem onClick={() => run(() => navigate('/admin/feed'))}>📸 饭圈动态管理</MenuItem>
                       <MenuItem onClick={() => run(() => navigate('/admin/couple-data'))}>💞 互动数据管理</MenuItem>
                       <MenuItem onClick={() => run(() => navigate('/admin/couple-questions'))}>❓ 同步抉择题库</MenuItem>
+                      <MenuItem onClick={() => run(() => navigate('/admin/modules'))}>🧩 模块管理</MenuItem>
                       <MenuItem onClick={() => run(() => navigate('/admin/friendships'))}>🤝 好友关系管理</MenuItem>
                     </>
                   )}
                   <MenuItem onClick={() => run(() => setProfileOpen(true))}>个人资料</MenuItem>
-                  <MenuItem onClick={() => run(openChangelog)}>更新日志</MenuItem>
-                  <MenuItem onClick={() => run(() => navigate('/about'))}>💕 关于我们 & 赞赏</MenuItem>
+                  {isEnabled('changelog') && <MenuItem onClick={() => run(openChangelog)}>更新日志</MenuItem>}
+                  {isEnabled('about') && (
+                    <MenuItem onClick={() => run(() => navigate('/about'))}>💕 关于我们 & 赞赏</MenuItem>
+                  )}
                   <MenuItem danger onClick={() => run(doLogout)}>
                     退出登录
                   </MenuItem>
