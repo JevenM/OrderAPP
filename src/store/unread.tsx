@@ -152,9 +152,11 @@ export function UnreadProvider({ enabled, children }: { enabled: boolean; childr
           if (!n || n.recipient !== feedIdentity) return
           if (known.current.has(n.id)) return
           known.current.add(n.id)
-          // 留言板 / 飞行棋 / 扫雷的提醒：正停留在互动空间页面且页面可见时，
-          // 页面内已有对应的轻量 toast，这里只刷角标，避免一次动作弹两条提醒
-          const couplePageTypes = n.type === 'chat' || n.type === 'board' || n.type === 'mines'
+          // 留言板提醒：正停留在互动空间页面且页面可见时，页面内已有对应的轻量 toast，
+          // 这里只刷角标，避免一次动作弹两条提醒。
+          // 注意：游戏类（mines/board/gomoku 等）不在抑制列表里——只要登录进入应用，
+          // 无论停在哪个页面都要弹「轮到你了」的提醒
+          const couplePageTypes = n.type === 'chat'
           if (couplePageTypes && location.pathname.startsWith('/couple') && document.visibilityState === 'visible') {
             void refreshFeed()
             return

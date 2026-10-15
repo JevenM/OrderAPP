@@ -93,6 +93,17 @@ import {
   type CoupleGomokuState,
   type CoupleWatermelonLogRow,
   type CoupleWatermelonScoreRow,
+  fetchCoupleCountdown,
+  fetchCoupleScratch,
+  upsertCoupleCountdown,
+  upsertCoupleScratch,
+  notifyScratchRevealed,
+  type CoupleCountdownItem,
+  type CoupleCountdownRow,
+  type CoupleCountdownState,
+  type CoupleScratchCard,
+  type CoupleScratchRow,
+  type CoupleScratchState,
 } from '../lib/db'
 import { markActive, useIsPeerOnline } from '../lib/presence'
 import { todayStr } from '../lib/date'
@@ -768,6 +779,176 @@ function minesAroundOf(state: CoupleMinesState, index: number): number {
   return count
 }
 
+/** 扫雷专属惩罚任务池：踩雷时随机抽取（抽取时对本局已触发过的去重） */
+const MINES_TASK_POOL: string[] = [
+  '夸对方10句不重样的彩虹屁',
+  '模仿对方的口头禅和语气说3句话',
+  '用一句诗或歌词向对方表白',
+  '给对方唱一首完整的儿歌',
+  '跳15秒搞怪舞蹈并录下来',
+  '用屁股写自己的名字',
+  '面无表情念「utation绕口令」2遍',
+  '给对方当1分钟人肉靠枕',
+  '说出你们第一次约会吃的什么',
+  '模仿一种动物叫声直到对方猜出来',
+  '用鼻子蹭对方脸颊3下',
+  '帮对方做一件今晚的家务',
+  '给对方画一幅简笔画肖像',
+  '用左手喂对方吃一口零食',
+  '对着窗外大喊一声「我最爱XX」',
+  '给对方发一条20字以上的肉麻短信',
+  '猜拳输给对方后再来一轮，连输两轮做10个深蹲',
+  '说出对方身上你最喜欢的3个地方',
+  '给对方拍一张最满意的照片并设为聊天背景',
+  '讲一个冷笑话，对方笑了就再来一个',
+  '用3种不同的声音说「我爱你」',
+  '让对方在你手心写一个字并猜出来',
+  '闭眼被对方喂一口东西并猜是什么',
+  '给对方起3个可爱的外号并当场叫一次',
+  '陪对方看他/她最爱的剧一集不许玩手机',
+  '给对方唱两句对方手机铃声同款旋律',
+  '用最温柔的语气念一段说明书',
+  '扶着墙倒立或者平板支撑30秒',
+  '复述对方最近一次生气的原因并道歉',
+  '给对方做10秒肩部按摩',
+  '学对方走路的样子走5步',
+  '把「对方名字+我爱你」发到自己朋友圈（10分钟后可删）',
+  '让对方在你脸上画一笔（可擦）',
+  '和对方十指相扣唱完一句歌',
+  '两人额头贴额头坚持20秒',
+  '给对方许一个明天就能兑现的小承诺',
+  '深情朗读对方最近一条朋友圈',
+  '给对方剥一个橘子或切一块水果',
+  '连续说5句押韵的土味情话',
+  '被对方点额头一下并说「我错了」',
+  '用膝盖学企鹅走路绕房间一圈',
+  '给对方讲你们之间最尴尬的一件事',
+]
+
+/** 刮刮乐奖池：前段是甜蜜奖励，后段是「谢谢惠顾」（抽取时约 1/3 概率落空，模拟真实彩票） */
+const SCRATCH_PRIZES: string[] = [
+  '亲吻一个',
+  '拥抱一分钟',
+  '对方陪你看一集想看的剧',
+  '一杯奶茶兑换券',
+  '按摩肩膀五分钟',
+  '今晚家务全包',
+  '许一个对方必须答应的小愿望',
+  '一个爱心早餐',
+  '晚安吻一个',
+  '看电影选片权一次',
+  '抱抱举高高十秒',
+  '对方夸你三句',
+  '财政小金库加 10 元',
+  '免吵小金牌（下次小矛盾可豁免）',
+  '一起散散步半小时',
+  '对方亲手做一道菜',
+  '谢谢惠顾，再接再厉～',
+  '谢谢惠顾，刮个寂寞～',
+  '谢谢惠顾，下次一定！',
+]
+
+/**
+ * 刮刮乐涂层：canvas 覆盖层，手指/鼠标刮开；刮开面积超过一半自动揭晓。
+ * 纯前端渲染，仅涂层在本地；卡片与结果状态由父组件同步到数据库。
+ */
+function ScratchCover({ revealed, onReveal }: { revealed: boolean; onReveal: () => void }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const scratchingRef = useRef(false)
+  const firedRef = useRef(false)
+  const lastPosRef = useRef<{ x: number; y: number } | null>(null)
+  const clearedRef = useRef(new Set<number>())
+
+  /* 挂载时铺一层银色涂层 + 提示文字 */
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.fillStyle = '#aeb8c6'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    // 涂层上的细碎「刮痕纹理」小方块，更像真票
+    ctx.fillStyle = '#98a4b4'
+    for (let i = 0; i < 40; i += 1) {
+      ctx.fillRect(Math.random() * canvas.width, Math.random() * canvas.height, 6, 6)
+    }
+    ctx.fillStyle = '#5c6b80'
+    ctx.font = 'bold 17px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('🎫 用手指刮开', canvas.width / 2, canvas.height / 2 + 6)
+  }, [])
+
+  /* 刮开面积 ≥ 55% 时回调揭晓（只触发一次） */
+  const checkCleared = () => {
+    if (firedRef.current) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const cols = 12
+    const rows = 5
+    const cell = new Set<number>()
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    for (let r = 0; r < rows; r += 1) {
+      for (let c = 0; c < cols; c += 1) {
+        const x = Math.round(((c + 0.5) / cols) * canvas.width)
+        const y = Math.round(((r + 0.5) / rows) * canvas.height)
+        const data = ctx.getImageData(x, y, 1, 1).data
+        if (data[3] < 128) cell.add(r * cols + c)
+      }
+    }
+    clearedRef.current = cell
+    if (cell.size >= Math.floor(cols * rows * 0.55)) {
+      firedRef.current = true
+      onReveal()
+    }
+  }
+
+  const erase = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (firedRef.current || revealed) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const rect = canvas.getBoundingClientRect()
+    const x = ((event.clientX - rect.left) / rect.width) * canvas.width
+    const y = ((event.clientY - rect.top) / rect.height) * canvas.height
+    ctx.globalCompositeOperation = 'destination-out'
+    // 从上一次位置到当前位置连一条粗线，快速滑动不断线
+    const last = lastPosRef.current
+    if (last && scratchingRef.current) {
+      ctx.lineWidth = 44
+      ctx.lineCap = 'round'
+      ctx.beginPath()
+      ctx.moveTo(last.x, last.y)
+      ctx.lineTo(x, y)
+      ctx.stroke()
+    }
+    ctx.beginPath()
+    ctx.arc(x, y, 22, 0, Math.PI * 2)
+    ctx.fill()
+    lastPosRef.current = { x, y }
+    checkCleared()
+  }
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={320}
+      height={128}
+      className={`h-32 w-full touch-none select-none rounded-xl ${revealed ? 'hidden' : 'cursor-pointer'}`}
+      onPointerDown={(event) => {
+        scratchingRef.current = true
+        lastPosRef.current = null
+        event.currentTarget.setPointerCapture(event.pointerId)
+        erase(event)
+      }}
+      onPointerMove={(event) => scratchingRef.current && erase(event)}
+      onPointerUp={() => { scratchingRef.current = false; lastPosRef.current = null }}
+      onPointerLeave={() => { scratchingRef.current = false; lastPosRef.current = null }}
+    />
+  )
+}
+
 /**
  * 点开一格的结算（纯函数）：经典扫雷的 0 格自动扩散属于同一次行动；
  * 踩雷不结束游戏，而是触发一条互动任务并记入日志；所有安全格点开即通关。
@@ -808,8 +989,12 @@ function applyMinesOpen(
   const at = new Date().toISOString()
   let hitTask: string | null = null
   if (mines.includes(index)) {
-    const tasks = BOARD_CELL_POOL.filter((cell) => cell.kind === 'task')
-    hitTask = tasks[Math.floor(Math.random() * tasks.length)].text
+    // 扫雷专属惩罚任务池 + 本局去重：已触发过的任务放到最后，尽量不重复
+    const used = new Set(hits.map((h) => h.task))
+    const pool = [...MINES_TASK_POOL, ...BOARD_CELL_POOL.filter((cell) => cell.kind === 'task').map((cell) => cell.text)]
+    const fresh = pool.filter((text) => !used.has(text))
+    const candidates = fresh.length ? fresh : pool
+    hitTask = candidates[Math.floor(Math.random() * candidates.length)]
     hits.push({ player, index, task: hitTask, at })
     log.push({ at, text: `💣${names[player]}踩到地雷！触发任务：${hitTask}` })
   } else {
@@ -1152,6 +1337,18 @@ export default function CouplePage() {
   const [diceSaving, setDiceSaving] = useState(false)
   const [diceHistory, setDiceHistory] = useState<CoupleDiceHistoryRow[]>([])
   const [myDiceBet, setMyDiceBet] = useState<DiceBetChoice>(null)
+
+  /* 重要日倒计时 & 刮刮乐 */
+  const [countdownGame, setCountdownGame] = useState<CoupleCountdownRow | null>(null)
+  const [countdownLoaded, setCountdownLoaded] = useState(false)
+  const [countdownSaving, setCountdownSaving] = useState(false)
+  const [countdownTitle, setCountdownTitle] = useState('')
+  const [countdownDate, setCountdownDate] = useState('')
+  const [countdownEmoji, setCountdownEmoji] = useState('')
+
+  const [scratchGame, setScratchGame] = useState<CoupleScratchRow | null>(null)
+  const [scratchLoaded, setScratchLoaded] = useState(false)
+  const [scratchSaving, setScratchSaving] = useState(false)
 
   /* ------------------------------ 联网扫雷 ------------------------------ */
   const [minesGame, setMinesGame] = useState<CoupleMinesRow | null>(null)
@@ -1551,6 +1748,48 @@ export default function CouplePage() {
     }
   }, [memberId, friendId])
 
+  const reloadCountdown = useCallback(
+    async (force = false) => {
+      if (!memberId || !friendId) return
+      if (!force && countdownLoaded) return
+      try {
+        const row = await fetchCoupleCountdown(memberId, friendId)
+        if (!row) {
+          setCountdownGame(null)
+        } else {
+          const [a, b] = orderedPair(memberId, friendId)
+          if (row.member_a === a && row.member_b === b) setCountdownGame(row)
+        }
+      } catch (error) {
+        console.warn('加载重要日倒计时失败', error)
+      } finally {
+        setCountdownLoaded(true)
+      }
+    },
+    [memberId, friendId, countdownLoaded]
+  )
+
+  const reloadScratch = useCallback(
+    async (force = false) => {
+      if (!memberId || !friendId) return
+      if (!force && scratchLoaded) return
+      try {
+        const row = await fetchCoupleScratch(memberId, friendId)
+        if (!row) {
+          setScratchGame(null)
+        } else {
+          const [a, b] = orderedPair(memberId, friendId)
+          if (row.member_a === a && row.member_b === b) setScratchGame(row)
+        }
+      } catch (error) {
+        console.warn('加载刮刮乐失败', error)
+      } finally {
+        setScratchLoaded(true)
+      }
+    },
+    [memberId, friendId, scratchLoaded]
+  )
+
   const reloadWishes = useCallback(async () => {
     if (!memberId || !friendId) return
     try {
@@ -1712,7 +1951,8 @@ export default function CouplePage() {
       throttled('wufu', () => reloadWufu(true), 15_000)
       throttled('wufuHistory', reloadWufuHistory)
     } else if (m === 'gomoku') {
-      throttled('gomoku', () => reloadGomoku(true), 15_000)
+      // 五子棋是快速回合制：对方落子必须尽快可见（realtime 降级时靠这里兜底），4 秒强制刷新
+      throttled('gomoku', () => reloadGomoku(true), 4_000)
       throttled('gomokuHistory', reloadGomokuHistory)
     } else if (m === 'watermelon') {
       throttled('watermelon', reloadWatermelon)
@@ -1721,10 +1961,14 @@ export default function CouplePage() {
       // 骰子是押注 → 开骰的强同步流程，对方押注必须尽快可见：4 秒强制刷新
       throttled('dice', () => reloadDice(true), 4_000)
       throttled('diceHistory', reloadDiceHistory)
+    } else if (m === 'countdown') {
+      throttled('countdown', () => reloadCountdown(true))
+    } else if (m === 'scratch') {
+      throttled('scratch', () => reloadScratch(true))
     } else if (m === 'love') throttled('meals', reloadMeals)
     // 停在入口页：只刷新卡片计数（4 个 count 请求，正文一概不下载）
     else throttled('gridCounts', reloadGridCounts)
-  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadMeals, reloadGridCounts])
+  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadCountdown, reloadScratch, reloadMeals, reloadGridCounts])
 
   /* 切到某个模块时立即拉一次；棋局类（飞行棋/扫雷/摆方）走各自动作里的缓存，
      只在本地还没有该模块数据时补拉一次，来回切 Tab 不再重复打网络 */
@@ -1754,8 +1998,12 @@ export default function CouplePage() {
     } else if (m === 'dice') {
       void reloadDice(diceLoaded ? undefined : true)
       void reloadDiceHistory()
+    } else if (m === 'countdown') {
+      void reloadCountdown(countdownLoaded ? undefined : true)
+    } else if (m === 'scratch') {
+      void reloadScratch(scratchLoaded ? undefined : true)
     } else if (m === 'love') void reloadMeals()
-  }, [activeModule, ready, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadMeals, boardLoaded, minesLoaded, wufuLoaded, gomokuLoaded, diceLoaded])
+  }, [activeModule, ready, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadCountdown, reloadScratch, reloadMeals, boardLoaded, minesLoaded, wufuLoaded, gomokuLoaded, diceLoaded, countdownLoaded, scratchLoaded])
 
   useRealtime(
     channelKey,
@@ -1792,6 +2040,11 @@ export default function CouplePage() {
       { table: 'couple_watermelon_logs', event: 'INSERT', on: () => void reloadWatermelonLogs() },
       { table: 'couple_dice_games', on: () => void reloadDice(true) },
       { table: 'couple_dice_history', event: 'INSERT', on: () => void reloadDiceHistory() },
+      // 重要日倒计时 / 刮刮乐：对方改动时即时同步（DELETE 交由轮询兜底）
+      { table: 'couple_countdown', event: 'INSERT', on: (p) => setCountdownGame(p.new as CoupleCountdownRow) },
+      { table: 'couple_countdown', event: 'UPDATE', on: (p) => setCountdownGame(p.new as CoupleCountdownRow) },
+      { table: 'couple_scratch', event: 'INSERT', on: (p) => setScratchGame(p.new as CoupleScratchRow) },
+      { table: 'couple_scratch', event: 'UPDATE', on: (p) => setScratchGame(p.new as CoupleScratchRow) },
       // 飞行棋对局历史：一局结束落库后即时刷新
       { table: 'couple_board_game_history', event: 'INSERT', on: () => void reloadBoardHistory() },
       // 扫雷对局历史：一局通关落库后即时刷新
@@ -1807,6 +2060,12 @@ export default function CouplePage() {
           if (!memberId || !n || n.recipient !== memberId) return
           if (n.type === 'truth') void reloadTruthHistory()
           else if (n.type === 'quiz') void reloadQuiz()
+          // 回合制游戏：铃铛实时通道可靠，收到「轮到你了 / 新一局」类通知时立刻强刷对应对局，
+          // 弥补 realtime 业务表事件偶发丢失
+          else if (n.type === 'gomoku') void reloadGomoku(true)
+          else if (n.type === 'mines') void reloadMines(true)
+          else if (n.type === 'board') void reloadBoard(true)
+          else if (n.type === 'wufu') void reloadWufu(true)
           // 骰子比大小：对方离线开骰时会落一条 dice 通知，借实时通道即时刷新本端对局，
           // 避免「对方已开骰、本端还停留在旧状态要等轮询」
           else if (n.type === 'dice') void reloadDice(true)
@@ -2368,9 +2627,9 @@ export default function CouplePage() {
       setBoardGame({ member_a: memberA, member_b: memberB, state, updated_at: new Date().toISOString() })
       // 自己新建的棋盘不算「对方生成了新棋盘」，提前对齐 prev 快照避免误弹 toast
       prevBoardRef.current = state
-      // 先手是对方时，给对方落一条铃铛提醒（离线也能看到）
+      // 先手是对方时：对方在线只靠状态同步弹 toast，离线才落铃铛提醒
       const myIndex: 0 | 1 = memberId < friendId ? 0 : 1
-      if (first.turn !== myIndex) void notifyBoardNew(friendId, myName)
+      if (first.turn !== myIndex && !peerOnline) void notifyBoardNew(friendId, myName)
       setBoardSetup(false)
       toast.show('棋盘已生成，先手已定，开掷吧 🎯')
     } catch (error) {
@@ -2437,9 +2696,9 @@ export default function CouplePage() {
       const { state: next, darePrompt, messages, reroll } = applyBoardRoll(latest, myBoardIndex, dice, names)
       await upsertCoupleBoardGame(memberId, friendId, next)
       setBoardGame({ ...fresh, state: next, updated_at: new Date().toISOString() })
-      // 轮到对方行动（无待答真心话、未分胜负、未整局暂停）：给对方落一条铃铛提醒，
-      // 这样对方不在线时，回来登录也能从铃铛看到「轮到你了」
-      if (next.winner === null && !next.pending && next.turn !== myBoardIndex && !next.gamePaused) {
+      // 轮到对方行动（无待答真心话、未分胜负、未整局暂停）：对方在线时不写铃铛（避免刷屏），
+      // 只靠状态同步弹本地 toast；离线才落铃铛，回来登录也能看到「轮到你了」
+      if (next.winner === null && !next.pending && next.turn !== myBoardIndex && !next.gamePaused && !peerOnline) {
         void notifyBoardTurn(friendId, memberName || '我')
       }
       if (darePrompt) {
@@ -2511,8 +2770,8 @@ export default function CouplePage() {
           : fresh.state
       await upsertCoupleBoardGame(memberId, friendId, next)
       setBoardGame({ ...fresh, state: next, updated_at: new Date().toISOString() })
-      // 答完真心话后轮到对方掷骰：给对方落一条铃铛提醒（离线也能看到）
-      if (next.winner === null && !next.pending && next.turn !== myBoardIndex && !next.gamePaused) {
+      // 答完真心话后轮到对方掷骰：对方在线只弹本地 toast，离线才落铃铛
+      if (next.winner === null && !next.pending && next.turn !== myBoardIndex && !next.gamePaused && !peerOnline) {
         void notifyBoardTurn(friendId, memberName || '我')
       }
       setBoardTruthAnswer('')
@@ -2627,9 +2886,9 @@ export default function CouplePage() {
       setMinesGame({ member_a: memberA, member_b: memberB, state, updated_at: new Date().toISOString() })
       // 自己新建的雷区不算对方的动作，提前对齐 prev 快照避免误弹 toast
       prevMinesRef.current = state
-      // 先手是对方时，给对方落一条铃铛提醒（离线也能看到）
+      // 先手是对方时：对方在线只靠状态同步弹 toast，离线才落铃铛提醒
       const myIndex: 0 | 1 = memberId < friendId ? 0 : 1
-      if (first.turn !== myIndex) void notifyMinesNew(friendId, myName)
+      if (first.turn !== myIndex && !peerOnline) void notifyMinesNew(friendId, myName)
       toast.show('扫雷开始，轮流点开格子吧 💣')
     } catch (error) {
       toast.show((error as Error).message, 'err')
@@ -2680,8 +2939,8 @@ export default function CouplePage() {
       const { state: next, hitTask } = applyMinesOpen(latest, myMinesIndex, index, names)
       await upsertCoupleMines(memberId, friendId, next)
       setMinesGame({ ...fresh, state: next, updated_at: new Date().toISOString() })
-      // 点完轮到对方（未通关）：给对方落一条铃铛提醒，对方离线也能在回来后看到「轮到你了」
-      if (!next.cleared && next.turn !== myMinesIndex) {
+      // 点完轮到对方（未通关）：对方在线只弹本地 toast（状态同步效果已有），离线才落铃铛
+      if (!next.cleared && next.turn !== myMinesIndex && !peerOnline) {
         void notifyMinesTurn(friendId, memberName || '我')
       }
       if (hitTask) setMinesTask(hitTask)
@@ -2778,9 +3037,9 @@ export default function CouplePage() {
       setWufuGame({ member_a: memberA, member_b: memberB, state, updated_at: new Date().toISOString() })
       prevWufuRef.current = state
       setWufuSelected(null)
-      // 先手是对方时，给对方落一条铃铛提醒（离线也能看到）
+      // 先手是对方时：对方在线只靠状态同步弹 toast，离线才落铃铛提醒
       const myIndex: 0 | 1 = memberId < friendId ? 0 : 1
-      if (first.turn !== myIndex) void notifyWufuNew(friendId, myName)
+      if (first.turn !== myIndex && !peerOnline) void notifyWufuNew(friendId, myName)
       else toast.show('🎲 点数更大，这局由你先摆子！')
     } catch (error) {
       toast.show((error as Error).message, 'err')
@@ -2939,8 +3198,8 @@ export default function CouplePage() {
       prevWufuRef.current = next
       // 胜利时落库一份历史快照（供对局历史回看）
       if (next.winner !== null) void createCoupleWufuHistory(memberId, friendId, next)
-      // 轮到对方行动时落一条铃铛提醒（对方离线也能看到）
-      if (next.winner === null && next.turn !== myWufuIndex) void notifyWufuTurn(friendId, myName)
+      // 轮到对方行动时：对方在线只弹本地 toast（prev 快照效果已有），离线才落铃铛
+      if (next.winner === null && next.turn !== myWufuIndex && !peerOnline) void notifyWufuTurn(friendId, myName)
     } catch (error) {
       toast.show((error as Error).message, 'err')
     } finally {
@@ -3052,6 +3311,7 @@ export default function CouplePage() {
         await createCoupleGomokuHistory(memberId, friendId, next)
         toast.show('🏆 恭喜，你赢得了五子棋！')
       } else if (next.turn !== myGomokuIndex) {
+        // 对方在线只弹本地 toast，离线才落铃铛（下次登录可见），避免在线时铃铛刷屏
         if (peerOnline) toast.show(`⚫ ${memberName || '我'} 已落子，轮到 ${friendName} 了`)
         else void notifyGomokuTurn(friendId, memberName || '我')
       }
@@ -3298,6 +3558,101 @@ export default function CouplePage() {
     }
   }
 
+  /* ------------------------------ 重要日倒计时 ------------------------------ */
+
+  /** 保存倒计时清单（双方共用一份，谁改都能存） */
+  const saveCountdownItems = async (items: CoupleCountdownItem[]) => {
+    if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+    setCountdownSaving(true)
+    try {
+      const state: CoupleCountdownState = { items }
+      await upsertCoupleCountdown(memberId, friendId, state)
+      const [a, b] = orderedPair(memberId, friendId)
+      setCountdownGame({ member_a: a, member_b: b, state, updated_at: new Date().toISOString() })
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setCountdownSaving(false)
+    }
+  }
+
+  const addCountdown = async () => {
+    const title = countdownTitle.trim()
+    if (!title) return toast.show('请填写重要日名称，比如「领证纪念日」', 'err')
+    if (!countdownDate) return toast.show('请选择目标日期', 'err')
+    if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+    const items = [...(countdownGame?.state.items ?? []), {
+      id: crypto.randomUUID(),
+      title,
+      date: countdownDate,
+      emoji: countdownEmoji.trim() || '📅',
+      created_by: myId,
+    }].sort((x, y) => x.date.localeCompare(y.date))
+    await saveCountdownItems(items)
+    setCountdownTitle('')
+    setCountdownDate('')
+    setCountdownEmoji('')
+    toast.show('⏳ 重要日已添加')
+  }
+
+  const removeCountdown = async (id: string) => {
+    if (!window.confirm('确定删除这个重要日吗？')) return
+    await saveCountdownItems((countdownGame?.state.items ?? []).filter((item) => item.id !== id))
+  }
+
+  /* ------------------------------ 情侣刮刮乐 ------------------------------ */
+
+  /** 抽一张只属于自己的新卡：约 1/3 概率谢谢惠顾，其余随机甜蜜奖励；抽卡动作不进记录 */
+  const drawScratchCard = async () => {
+    if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+    if (scratchSaving) return
+    const mine = scratchGame?.state.cards?.[myId]
+    if (mine && !mine.revealed_at) return toast.show('先把当前这张刮开再抽新的吧～')
+    setScratchSaving(true)
+    try {
+      const miss = SCRATCH_PRIZES.filter((p) => p.startsWith('谢谢惠顾'))
+      const prizes = SCRATCH_PRIZES.filter((p) => !p.startsWith('谢谢惠顾'))
+      const prize = Math.random() < 0.34 ? miss[Math.floor(Math.random() * miss.length)] : prizes[Math.floor(Math.random() * prizes.length)]
+      const at = new Date().toISOString()
+      const card: CoupleScratchCard = { id: crypto.randomUUID(), prize, created_by: myId, created_at: at, revealed_at: null, revealed_by: null }
+      const state: CoupleScratchState = {
+        cards: { ...(scratchGame?.state.cards ?? {}), [myId]: card },
+        log: scratchGame?.state.log ?? [],
+      }
+      await upsertCoupleScratch(memberId, friendId, state)
+      const [a, b] = orderedPair(memberId, friendId)
+      setScratchGame({ member_a: a, member_b: b, state, updated_at: at })
+      toast.show('🎫 新卡已就绪，用手指刮开吧')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setScratchSaving(false)
+    }
+  }
+
+  /** 刮开自己的卡揭晓：刮到一半以上自动触发；记录里写「谁刮的 + 结果」，结果双方可见 */
+  const revealScratch = async () => {
+    const card = scratchGame?.state.cards?.[myId]
+    if (!card || card.revealed_at || !memberId || !friendId || scratchSaving) return
+    setScratchSaving(true)
+    try {
+      const at = new Date().toISOString()
+      const state: CoupleScratchState = {
+        cards: { ...(scratchGame?.state.cards ?? {}), [myId]: { ...card, revealed_at: at, revealed_by: myId } },
+        log: [...(scratchGame?.state.log ?? []), { at, text: `${memberName || '我'} 刮了刮刮乐：${card.prize.startsWith('谢谢惠顾') ? '谢谢惠顾，没刮中～' : `刮中了「${card.prize}」`}` }].slice(-20),
+      }
+      await upsertCoupleScratch(memberId, friendId, state)
+      const [a, b] = orderedPair(memberId, friendId)
+      setScratchGame({ member_a: a, member_b: b, state, updated_at: at })
+      void notifyScratchRevealed(friendId, memberName || '我', card.prize)
+      toast.show(card.prize.startsWith('谢谢惠顾') ? `🎫 ${card.prize}` : `🎉 刮中了「${card.prize}」！`)
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setScratchSaving(false)
+    }
+  }
+
   /** 结束本局摆方：销毁数据库与本地数据，之后可重新开一局 */
   const endWufuGame = async () => {
     if (!wufuGame || !memberId || !friendId) return
@@ -3435,6 +3790,30 @@ export default function CouplePage() {
     }
   }, [minesState, minesGame, myMinesIndex, friendName, toast, activeModule, reloadMinesHistory])
 
+  // 五子棋对方端本地提醒：对方在线时不再写铃铛（行动方已按 peerOnline 分流），
+  // 这里靠棋局状态变化弹轻量 toast——「对方落子轮到你 / 对方获胜」
+  const prevGomokuRef = useRef<CoupleGomokuState | null>(null)
+  useEffect(() => {
+    const prev = prevGomokuRef.current
+    prevGomokuRef.current = gomokuState
+    if (!gomokuState || !prev || !gomokuGame) return
+    if (gomokuState.winner !== null && prev.winner === null) {
+      toast.show(gomokuState.winner === myGomokuIndex ? '🏆 恭喜！你赢得了五子棋！' : `🏳️ ${friendName} 五连获胜，不服再来一局？`)
+      return
+    }
+    if (
+      gomokuState.winner === null &&
+      gomokuState.turn === myGomokuIndex &&
+      prev.turn !== myGomokuIndex
+    ) {
+      toast.show(
+        activeModule === 'gomoku' && document.visibilityState === 'visible'
+          ? `⚫ ${friendName} 落子啦，轮到你！`
+          : `⚫ 轮到你下五子棋了！去互动空间 → 情侣五子棋继续吧～`
+      )
+    }
+  }, [gomokuState, gomokuGame, myGomokuIndex, friendName, toast, activeModule])
+
   const submitChoice = (val: string) => {
     const choice = val.trim()
     if (!quiz.question || quiz.revealed || quiz.myChoice || !choice) return
@@ -3519,6 +3898,8 @@ export default function CouplePage() {
             { id: 'gomoku', icon: '⚫', title: '情侣五子棋', detail: '联网轮流落子，五连获胜' },
             { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分，看专属甜蜜分变化' },
             { id: 'dice', icon: '🎲', title: '骰子比大小', detail: '3个骰子押大小，围骰庄家通吃' },
+            { id: 'countdown', icon: '⏳', title: '重要日倒计时', detail: '纪念日、生日倒数还有多少天' },
+            { id: 'scratch', icon: '🎫', title: '情侣刮刮乐', detail: '刮开卡片赢甜蜜奖励' },
           ]}
           isEnabled={isEnabled}
           onSelect={setActiveModule}
@@ -3748,7 +4129,7 @@ export default function CouplePage() {
                     <button className="btn-ghost w-full" onClick={() => setBoardSetup(false)}>返回当前棋局</button>
                   )}
                   <p className="text-center text-[11px] leading-relaxed text-slate-400">
-                    开局双方各掷一次骰子定先手（大点数先走）；棋盘和步数会同步给对方，格子内容均衡抽取、尽量不重复；格子任务做给对方，🎁福利自己享受，踩到⛓️惩罚格会被锁定，直到踩到🔓解锁格才解除。
+                    开局双方各掷一次骰子定先手（大点数先走）；格子任务做给对方，🎁福利自己享受。
                   </p>
                 </>
               ) : boardState ? (
@@ -5001,6 +5382,126 @@ export default function CouplePage() {
                   </div>
                 </>
               ) : null}
+            </section>
+          )}
+
+          {/* ⏳ 重要日倒计时 */}
+          {activeModule === 'countdown' && (
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
+              <div>
+                <h3 className="font-semibold">⏳ 重要日倒计时</h3>
+                <p className="mt-1 text-xs text-slate-400">纪念日、生日、旅行日……添加多个重要日期，一起倒数还有多少天。</p>
+              </div>
+              <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-[64px_1fr_150px_auto]">
+                <input className="input text-center" placeholder="📅" value={countdownEmoji} onChange={(event) => setCountdownEmoji(event.target.value)} maxLength={4} />
+                <input className="input" placeholder="重要日名称" value={countdownTitle} onChange={(event) => setCountdownTitle(event.target.value)} maxLength={30} />
+                <input className="input" type="date" value={countdownDate} onChange={(event) => setCountdownDate(event.target.value)} />
+                <button type="button" className="btn-primary" disabled={countdownSaving || !memberId || !friendId} onClick={() => void addCountdown()}>添加</button>
+              </div>
+              {(countdownGame?.state.items ?? []).length === 0 ? (
+                <p className="py-4 text-center text-xs text-slate-400">还没有重要日，添加一个吧～</p>
+              ) : (
+                <div className="space-y-2">
+                  {(countdownGame?.state.items ?? []).map((item) => {
+                    const target = new Date(`${item.date}T00:00:00`)
+                    const today = new Date()
+                    today.setHours(0, 0, 0, 0)
+                    const days = Math.ceil((target.getTime() - today.getTime()) / 86_400_000)
+                    const label = days > 0 ? `还有 ${days} 天` : days === 0 ? '🎉 就是今天！' : `已过去 ${-days} 天`
+                    const soon = days >= 0 && days <= 7
+                    return (
+                      <div key={item.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3">
+                        <span className="text-xl">{item.emoji || '📅'}</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-semibold text-slate-700">{item.title}</div>
+                          <div className="text-[11px] text-slate-400">{item.date}</div>
+                        </div>
+                        <span className={`chip shrink-0 ${days === 0 ? 'border-rose-200 bg-rose-50 text-rose-600' : soon ? 'border-amber-200 bg-amber-50 text-amber-600' : 'border-brand-200 bg-brand-50 text-brand-600'}`}>{label}</span>
+                        <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs text-rose-500" disabled={countdownSaving} onClick={() => void removeCountdown(item.id)}>删除</button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* 🎫 情侣刮刮乐 */}
+          {activeModule === 'scratch' && (
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold">🎫 情侣刮刮乐</h3>
+                  <p className="mt-1 text-xs text-slate-400">各抽各的卡、各刮各的，刮开结果两个人都看得到。抽卡后用手指把银色涂层刮开，刮中甜蜜奖励就兑现吧！</p>
+                </div>
+              </div>
+              {/* 我的卡：自己抽、自己刮 */}
+              {(() => {
+                const mine = scratchGame?.state.cards?.[myId]
+                return (
+                  <div className={`space-y-3 rounded-2xl p-4 ${mine?.revealed_at ? 'bg-amber-50' : 'bg-slate-100'}`}>
+                    <div className="text-xs font-semibold text-slate-500">🙋 我的刮刮乐</div>
+                    {mine ? (
+                      mine.revealed_at ? (
+                        <div className="text-center">
+                          <div className={`text-lg font-bold ${mine.prize.startsWith('谢谢惠顾') ? 'text-slate-500' : 'text-rose-600'}`}>
+                            {mine.prize.startsWith('谢谢惠顾') ? '😅' : '🎉'} {mine.prize}
+                          </div>
+                          <div className="mt-1 text-[11px] text-slate-400">刮开于 {new Date(mine.revealed_at).toLocaleString('zh-CN')}</div>
+                          <button type="button" className="btn-primary mt-3" disabled={scratchSaving || !ready} onClick={() => void drawScratchCard()}>🎫 再抽一张</button>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="text-[11px] text-slate-400">抽卡时间 {new Date(mine.created_at).toLocaleString('zh-CN')} · 刮开面积过半自动揭晓</div>
+                          <ScratchCover revealed={false} onReveal={() => void revealScratch()} />
+                        </div>
+                      )
+                    ) : (
+                      <div className="space-y-3 py-2 text-center">
+                        <div className="text-4xl">🎫</div>
+                        <p className="text-xs text-slate-400">还没有属于你的刮刮乐</p>
+                        <button type="button" className="btn-primary" disabled={scratchSaving || !ready} onClick={() => void drawScratchCard()}>🎫 抽一张刮刮乐</button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+              {/* 对方的卡：只展示状态与结果，不能代刮 */}
+              {(() => {
+                const theirs = friendId ? scratchGame?.state.cards?.[friendId] : undefined
+                return (
+                  <div className="space-y-2 rounded-2xl bg-slate-50 p-4">
+                    <div className="text-xs font-semibold text-slate-500">👀 {friendName} 的刮刮乐</div>
+                    {theirs ? (
+                      theirs.revealed_at ? (
+                        <div className="text-center">
+                          <div className={`text-base font-bold ${theirs.prize.startsWith('谢谢惠顾') ? 'text-slate-500' : 'text-rose-600'}`}>
+                            {theirs.prize.startsWith('谢谢惠顾') ? '😅' : '🎉'} {theirs.prize}
+                          </div>
+                          <div className="mt-1 text-[11px] text-slate-400">{friendName} 刮开于 {new Date(theirs.revealed_at).toLocaleString('zh-CN')}</div>
+                        </div>
+                      ) : (
+                        <div className="py-2 text-center text-xs text-slate-400">🎫 已抽卡，等 {friendName} 亲自刮开揭晓～</div>
+                      )
+                    ) : (
+                      <div className="py-2 text-center text-xs text-slate-400">{friendName} 还没抽卡</div>
+                    )}
+                  </div>
+                )
+              })()}
+              {(scratchGame?.state.log ?? []).length > 0 && (
+                <div className="space-y-2 border-t border-slate-100 pt-3">
+                  <h4 className="text-xs font-semibold text-slate-600">🎫 刮刮乐记录</h4>
+                  <div className="max-h-40 space-y-1 overflow-y-auto text-[11px]">
+                    {[...(scratchGame?.state.log ?? [])].reverse().map((entry, i) => (
+                      <div key={`${entry.at}-${i}`} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-2">
+                        <span className="min-w-0 flex-1 break-words text-slate-600">{entry.text}</span>
+                        <span className="shrink-0 text-slate-300">{new Date(entry.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </section>
           )}
 

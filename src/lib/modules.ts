@@ -11,6 +11,8 @@ export type ModuleKey =
   | 'gomoku'
   | 'watermelon'
   | 'dice'
+  | 'countdown'
+  | 'scratch'
   | 'changelog'
   | 'about'
 
@@ -42,6 +44,8 @@ export const MODULE_DEFS: ModuleDef[] = [
   { key: 'gomoku', icon: '⚫', title: '情侣五子棋', desc: '联网轮流落子', group: 'game' },
   { key: 'watermelon', icon: '🍉', title: '情侣西瓜分', desc: '给 TA 加减分', group: 'game' },
   { key: 'dice', icon: '🎲', title: '骰子比大小', desc: '3 个骰子押大小', group: 'game' },
+  { key: 'countdown', icon: '⏳', title: '重要日倒计时', desc: '自定义多个重要日期，倒数还有多少天', group: 'couple' },
+  { key: 'scratch', icon: '🎫', title: '情侣刮刮乐', desc: '手指刮开卡片赢奖励', group: 'game' },
   { key: 'changelog', icon: '📋', title: '更新日志', desc: '右上角「更多」里的更新日志入口与自动弹窗', group: 'app' },
   { key: 'about', icon: '💕', title: '关于我们', desc: '右上角「更多」里的关于我们页面入口', group: 'app' },
 ]

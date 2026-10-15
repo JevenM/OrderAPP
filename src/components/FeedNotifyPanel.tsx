@@ -4,7 +4,10 @@ import { listFeedNotifications, markFeedNotificationRead, markFeedNotificationsR
 import { timeCn } from '../lib/date'
 import { useUnread, useUnreadBellCount } from '../store/unread'
 
-const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️', quiz: '💞', truth: '🎲', together: '💕', chat: '💌', board: '🎯', mines: '💣', wufu: '♟️', love: '💌', 'love-unlocked': '💖' }
+const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️', quiz: '💞', truth: '🎲', together: '💕', chat: '💌', board: '🎯', mines: '💣', wufu: '♟️', love: '💌', 'love-unlocked': '💖', scratch: '🎫' }
+/** 全部消息视图：一次只取最新的 30 条（不查全表总数），在这 30 条内本地分页 */
+const FULL_SIZE = 30
+/** 全部消息视图每页显示条数（30 条最新消息 → 最多 3 页） */
 const PAGE_SIZE = 10
 const PREVIEW_SIZE = 5
 
@@ -21,10 +24,10 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
   const [markingAll, setMarkingAll] = useState(false)
 
   /**
-   * 统一分页加载入口：preview 视图取前 5 条（带 hasMore 用于判断「展开全部」）；
-   * all 视图按 PAGE_SIZE 分页。修复了之前「切换到 all 时仍显示 preview 的 5 条、翻页不生效」的 bug。
+   * 统一加载入口：preview 视图取前 5 条（带 hasMore 用于判断「展开全部」）；
+   * all 视图一次取最新的 30 条，之后翻页纯本地，不再打网络也不查全表总数。
    */
-  const loadPage = useCallback(async (nextPage: number, targetView: View) => {
+  const loadPage = useCallback(async (_nextPage: number, targetView: View) => {
     setItems(null)
     try {
       if (targetView === 'preview') {
@@ -33,9 +36,8 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
         setHasMore(rows.length > PREVIEW_SIZE)
         setItems(rows.slice(0, PREVIEW_SIZE))
       } else {
-        const rows = await listFeedNotifications(identity, PAGE_SIZE + 1, nextPage * PAGE_SIZE)
-        setHasMore(rows.length > PAGE_SIZE)
-        setItems(rows.slice(0, PAGE_SIZE))
+        const rows = await listFeedNotifications(identity, FULL_SIZE, 0)
+        setItems(rows)
       }
     } catch {
       setItems([])
@@ -102,6 +104,8 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
       navigate('/couple?module=dice&focus=1')
     } else if (notice.type === 'love' || notice.type === 'love-unlocked') {
       navigate('/couple?module=love&focus=1')
+    } else if (notice.type === 'scratch') {
+      navigate('/couple?module=scratch&focus=1')
     } else if (notice.type === 'together') {
       // 同在检测的入口 💕 就在顶栏，任何页面都有，留在当前页即可
     } else {
@@ -133,7 +137,7 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
         {items !== null && items.length === 0 && (
           <div className="px-3 py-8 text-center text-xs leading-relaxed text-slate-400">还没有消息</div>
         )}
-        {items !== null && items.map((notice) => (
+        {items !== null && (view === 'preview' ? items : items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)).map((notice) => (
           <button
             key={notice.id}
             className={`flex w-full items-start gap-2 border-b border-slate-50 px-3 py-2.5 text-left last:border-0 active:bg-brand-50 ${notice.read_at ? 'bg-white' : 'bg-brand-50/70'}`}
@@ -158,9 +162,11 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
       )}
       {view === 'all' && items !== null && items.length > 0 && (
         <div className="flex items-center justify-between border-t border-slate-100 px-3 py-2 text-xs">
-          <button className="text-brand-600 disabled:text-slate-300" disabled={page === 0} onClick={() => { const p = page - 1; setPage(p); void loadPage(p, 'all') }}>上一页</button>
-          <span className="text-slate-400">第 {page + 1} 页</span>
-          <button className="text-brand-600 disabled:text-slate-300" disabled={!hasMore} onClick={() => { const p = page + 1; setPage(p); void loadPage(p, 'all') }}>下一页</button>
+          <button className="text-brand-600 disabled:text-slate-300" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>上一页</button>
+          <span className="text-slate-400">
+            {page + 1}/{Math.ceil(items.length / PAGE_SIZE)} 页 · 最新 {items.length} 条{items.length >= FULL_SIZE ? '（仅取最新 30 条）' : ''}
+          </span>
+          <button className="text-brand-600 disabled:text-slate-300" disabled={(page + 1) * PAGE_SIZE >= items.length} onClick={() => setPage((p) => p + 1)}>下一页</button>
         </div>
       )}
     </div>

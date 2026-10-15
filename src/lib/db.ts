@@ -2043,6 +2043,113 @@ export async function notifyDiceRoll(recipient: string, senderName: string): Pro
   })
 }
 
+/* ------------------------------ 情侣重要日倒计时 ------------------------------ */
+
+export interface CoupleCountdownItem {
+  id: string
+  title: string
+  /** 目标日期 YYYY-MM-DD */
+  date: string
+  emoji?: string
+  created_by?: string
+}
+
+export interface CoupleCountdownState {
+  items: CoupleCountdownItem[]
+}
+
+export interface CoupleCountdownRow {
+  member_a: string
+  member_b: string
+  state: CoupleCountdownState
+  updated_at: string
+}
+
+export async function fetchCoupleCountdown(userA: string, userB: string): Promise<CoupleCountdownRow | null> {
+  if (!userA || !userB || userA === userB) return null
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase.from('couple_countdown').select('*').eq('member_a', memberA).eq('member_b', memberB).maybeSingle()
+  if (error) {
+    if (isMissingTable(error)) return null
+    fail(error, '加载重要日倒计时')
+  }
+  return (data as CoupleCountdownRow | null) ?? null
+}
+
+export async function upsertCoupleCountdown(userA: string, userB: string, state: CoupleCountdownState): Promise<void> {
+  if (!userA || !userB || userA === userB) throw new Error('请先添加好友再使用倒计时')
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_countdown').upsert({
+    member_a: memberA,
+    member_b: memberB,
+    state,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'member_a,member_b' })
+  if (error) fail(error, '同步重要日倒计时')
+}
+
+/* ------------------------------ 情侣刮刮乐 ------------------------------ */
+
+export interface CoupleScratchCard {
+  id: string
+  prize: string
+  created_by: string
+  created_at: string
+  revealed_at: string | null
+  revealed_by: string | null
+}
+
+/**
+ * 刮刮乐状态：每人一张独立的卡（cards 的 key 为抽卡人 member id），
+ * 自己只能刮自己的卡，刮开结果双方都可见；log 只记「谁刮的 + 结果」。
+ */
+export interface CoupleScratchState {
+  cards: Record<string, CoupleScratchCard>
+  log: Array<{ at: string; text: string }>
+}
+
+export interface CoupleScratchRow {
+  member_a: string
+  member_b: string
+  state: CoupleScratchState
+  updated_at: string
+}
+
+export async function fetchCoupleScratch(userA: string, userB: string): Promise<CoupleScratchRow | null> {
+  if (!userA || !userB || userA === userB) return null
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase.from('couple_scratch').select('*').eq('member_a', memberA).eq('member_b', memberB).maybeSingle()
+  if (error) {
+    if (isMissingTable(error)) return null
+    fail(error, '加载刮刮乐')
+  }
+  return (data as CoupleScratchRow | null) ?? null
+}
+
+export async function upsertCoupleScratch(userA: string, userB: string, state: CoupleScratchState): Promise<void> {
+  if (!userA || !userB || userA === userB) throw new Error('请先添加好友再玩刮刮乐')
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_scratch').upsert({
+    member_a: memberA,
+    member_b: memberB,
+    state,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'member_a,member_b' })
+  if (error) fail(error, '同步刮刮乐')
+}
+
+/** 对方刮开了一张刮刮乐：落一条铃铛提醒，点击直达刮刮乐模块 */
+export async function notifyScratchRevealed(recipient: string, senderName: string, prize: string): Promise<void> {
+  if (!recipient) return
+  await insertFeedNotices([recipient], {
+    sender_name: senderName,
+    type: 'scratch',
+    post_id: null,
+    title: '🎫 刮刮乐被刮开啦',
+    body: `${senderName} 刮开了卡片，刮中了「${prize}」，快去看看～`,
+  })
+}
+
 /* ------------------------------ 情侣西瓜分 ------------------------------ */
 
 export interface CoupleWatermelonScoreRow {
@@ -2642,6 +2749,7 @@ export type FeedNoticeType =
   | 'dice'
   | 'love'
   | 'love-unlocked'
+  | 'scratch'
 
 export interface FeedNotificationRow {
   id: string
