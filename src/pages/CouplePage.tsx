@@ -60,6 +60,9 @@ import {
   listCoupleQuizUsedIds,
   listCoupleTruthDare,
   listCoupleTruthPrompts,
+  listCoupleTruthPromptBank,
+  addCoupleTruthPrompt,
+  deleteCoupleTruthPrompt,
   listCoupleWishes,
   countCoupleWishes,
   countCoupleMessages,
@@ -85,6 +88,7 @@ import {
   type CoupleQuizHistoryRow,
   type CoupleQuizRow,
   type CoupleTruthDareRow,
+  type CoupleTruthPromptRow,
   type CoupleWufuHistoryRow,
   type CoupleWufuRow,
   type CoupleWufuState,
@@ -118,6 +122,23 @@ import { useSession } from '../store/session'
 type Wish = { id: string; text: string; owner: string }
 type DrawnWish = Wish & { drawer: string }
 type ChatItem = { id: string; sender_id: string; receiver_id: string; content: string; created_at: string }
+
+const HISTORY_PAGE_SIZE = 10
+const safeDisplayText = (value: unknown, fallback = ''): string =>
+  typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value) : fallback
+
+function HistoryPager({ page, total, onChange }: { page: number; total: number; onChange: (page: number) => void }) {
+  const pages = Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE))
+  if (total <= HISTORY_PAGE_SIZE) return null
+  return (
+    <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-xs">
+      <button type="button" className="text-brand-600 disabled:text-slate-300" disabled={page === 0} onClick={() => onChange(page - 1)}>上一页</button>
+      <span className="text-slate-400">{Math.min(page + 1, pages)}/{pages} 页 · 共 {total} 条</span>
+      <button type="button" className="text-brand-600 disabled:text-slate-300" disabled={page >= pages - 1} onClick={() => onChange(page + 1)}>下一页</button>
+    </div>
+  )
+}
+
 export type QuestionKind = '轻松版' | '走心版' | '深度版' | '自定义'
 export type Question = { id: string; title: string; a: string; b: string; kind: QuestionKind }
 type QuizView = {
@@ -230,7 +251,7 @@ const BOARD_CELL_POOL: CoupleBoardCell[] = [
   { kind: 'task', text: '舔对方的手指' },
   { kind: 'task', text: '自拍一段接吻照片' },
   { kind: 'task', text: '把酒水或酸奶倒在自己胸上对方舔干净' },
-  { kind: 'task', text: '女方被男方公主抱在房内绕一圈' },
+  { kind: 'task', text: '公主抱对方在房内绕一圈' },
   { kind: 'task', text: '喝交杯酒并拍照' },
   { kind: 'task', text: '和对方做Do爱' },
   { kind: 'task', text: 'Tuo光衣服后跳二格' },
@@ -273,7 +294,7 @@ const BOARD_CELL_POOL: CoupleBoardCell[] = [
   { kind: 'goal', text: '蓝色棋子进入终点' },
   { kind: 'penalty', text: '【惩罚】给对方按摩小腿直到解除' },
   { kind: 'penalty', text: '【惩罚】被对方随意摸直到惩罚结束' },
-  { kind: 'penalty', text: '【惩罚】下次惩罚失效' },
+  { kind: 'penalty', text: '【惩罚】下次惩罚x2' },
   { kind: 'penalty', text: '【惩罚】伺候对方20秒' },
   { kind: 'bonus', text: '【福利】解除惩罚并摸对方胸部或打屁股一下' },
   { kind: 'bonus', text: '【福利】给对方按摩1分钟' },
@@ -825,27 +846,37 @@ const MINES_TASK_POOL: string[] = [
   '给对方讲你们之间最尴尬的一件事',
 ]
 
-/** 刮刮乐奖池：前段是甜蜜奖励，后段是「谢谢惠顾」（抽取时约 1/3 概率落空，模拟真实彩票） */
+/** 刮刮乐奖池：100 种结果，中奖概率由抽取逻辑控制为约 80% */
+const scratchDay = (time: string): string => {
+  const date = new Date(time)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 const SCRATCH_PRIZES: string[] = [
-  '亲吻一个',
-  '拥抱一分钟',
-  '对方陪你看一集想看的剧',
-  '一杯奶茶兑换券',
-  '按摩肩膀五分钟',
-  '今晚家务全包',
-  '许一个对方必须答应的小愿望',
-  '一个爱心早餐',
-  '晚安吻一个',
-  '看电影选片权一次',
-  '抱抱举高高十秒',
-  '对方夸你三句',
-  '财政小金库加 10 元',
-  '免吵小金牌（下次小矛盾可豁免）',
-  '一起散散步半小时',
-  '对方亲手做一道菜',
-  '谢谢惠顾，再接再厉～',
-  '谢谢惠顾，刮个寂寞～',
-  '谢谢惠顾，下次一定！',
+  '亲吻一个', '拥抱一分钟', '一起看一集想看的剧', '一杯奶茶兑换券', '按摩肩膀五分钟',
+  '今晚家务对方全包', '许一个对方必须答应的小愿望', '一个爱心早餐', '晚安吻一个', '看电影选片权一次',
+  '抱抱举高高十秒', '对方夸你三句', '财政小金库加 10 元', '免吵小金牌一次', '一起散步半小时',
+  '对方亲手做一道菜', '一起吃一顿火锅', '获得今日零食优先选择权', '对方给你捶背十分钟', '一起拍一张合照',
+  '一杯咖啡兑换券', '周末睡懒觉一次', '对方帮你整理桌面', '一起听完一张专辑', '获得一个专属昵称',
+  '对方讲一个冷笑话', '一起做一次甜点', '晚餐由你决定', '对方为你写一句情话', '一起看一部老电影',
+  '获得一次摸头奖励', '对方帮你吹头发', '一起散步看晚霞', '一份秘密小礼物', '对方替你跑腿一次',
+  '一起吃一份甜品', '获得一次撒娇特权', '对方给你一个惊喜拥抱', '一起玩桌游一小时', '一张手写便签',
+  '对方为你拍九宫格', '一起逛一次超市', '获得一次选歌权', '对方为你泡一杯茶', '一起做拉伸运动',
+  '获得一次优先被哄权', '对方陪你聊天半小时', '一起看一集综艺', '一份水果拼盘', '对方给你发一段语音情话',
+  '一起完成一件小家务', '获得一次免洗碗券', '对方为你留一盏灯', '一起去附近走走', '一张电子表情包专属券',
+  '对方为你准备早餐', '一起玩猜谜游戏', '获得一次被夸奖加倍', '对方给你一个额头吻', '一起整理相册',
+  '获得一次晚安电话', '对方为你选一套穿搭', '一起尝试新饮料', '获得一次小脾气豁免', '对方给你讲睡前故事',
+  '一起做十分钟冥想', '一份热腾腾的夜宵', '对方替你充一次水杯', '一起看一场直播', '获得一次拥抱续杯',
+  '对方为你写三件优点', '一起做一次早餐', '获得一次先选座位权', '对方帮你按摩手腕', '一起玩成语接龙',
+  '一份你喜欢的零食', '获得一次不被催促券', '对方为你拍一张认真工作的照片', '一起规划下一次约会', '对方为你唱一首歌',
+  '一起吃一顿早餐', '获得一次菜单决定权', '对方替你收拾一次房间', '一起看旅行照片', '一份暖心饮品',
+  '获得一次抱怨倾听券', '对方为你准备睡前水', '一起做一次手工', '获得一次小愿望加倍', '对方给你发一张可爱自拍',
+  '一起看星星十分钟', '获得一次被宠爱宣言', '对方替你完成一次小任务', '一起吃一份冰淇淋', '对方说一句永远站你这边',
+  '谢谢惠顾，再接再厉～', '谢谢惠顾，刮个寂寞～', '谢谢惠顾，下次一定～', '谢谢惠顾，甜蜜正在路上～', '谢谢惠顾，今日好运攒下啦～',
+  '谢谢惠顾，差一点点～', '谢谢惠顾，抱歉没中奖～', '谢谢惠顾，留到明天吧～', '谢谢惠顾，空手也是一种浪漫～', '谢谢惠顾，下张会更甜～',
 ]
 
 /**
@@ -1273,6 +1304,9 @@ export default function CouplePage() {
   const [truthAnswer, setTruthAnswer] = useState('')
   const [truthSubmitting, setTruthSubmitting] = useState(false)
   const [truthHistory, setTruthHistory] = useState<CoupleTruthDareRow[]>([])
+  const [truthPromptBank, setTruthPromptBank] = useState<CoupleTruthPromptRow[]>([])
+  const [truthPromptText, setTruthPromptText] = useState('')
+  const [truthPromptSaving, setTruthPromptSaving] = useState(false)
 
   /* ------------------------------ 联网飞行棋 ------------------------------ */
   const [boardGame, setBoardGame] = useState<CoupleBoardGameRow | null>(null)
@@ -1364,6 +1398,16 @@ export default function CouplePage() {
   /* 踩雷任务弹层 / 通关奖励弹层 */
   const [minesTask, setMinesTask] = useState<string | null>(null)
   const [minesReward, setMinesReward] = useState<string | null>(null)
+  const [minesFlashingCells, setMinesFlashingCells] = useState<Set<number>>(new Set())
+  const [truthHistoryPage, setTruthHistoryPage] = useState(0)
+  const [boardHistoryPage, setBoardHistoryPage] = useState(0)
+  const [minesHistoryPage, setMinesHistoryPage] = useState(0)
+  const [wufuHistoryPage, setWufuHistoryPage] = useState(0)
+  const [gomokuHistoryPage, setGomokuHistoryPage] = useState(0)
+  const [watermelonHistoryPage, setWatermelonHistoryPage] = useState(0)
+  const [diceHistoryPage, setDiceHistoryPage] = useState(0)
+  const [scratchHistoryPage, setScratchHistoryPage] = useState(0)
+  const [messageHistoryPage, setMessageHistoryPage] = useState(0)
 
   const questionPool = questionKind === '自定义'
     ? customQuestions
@@ -1379,11 +1423,15 @@ export default function CouplePage() {
     () => quizTotalQuestions.filter((question) => usedQuestionIds.has(question.id) && question.id !== activeUnrevealedQuizId).length,
     [quizTotalQuestions, usedQuestionIds, activeUnrevealedQuizId]
   )
-  /* 真心话进度：双方历史里答过的题（按题目文本去重）占 400 道题库的比例 */
+  /* 真心话进度：固定题库 + 你们自定义题库中已答过的题目数 */
+  const truthPromptPool = useMemo(
+    () => [...new Set([...TRUTH_PROMPTS, ...truthPromptBank.map((row) => row.prompt)])],
+    [truthPromptBank]
+  )
   const truthDoneCount = useMemo(() => {
     const used = new Set(truthHistory.map((row) => row.prompt))
-    return TRUTH_PROMPTS.filter((prompt) => used.has(prompt)).length
-  }, [truthHistory])
+    return truthPromptPool.filter((prompt) => used.has(prompt)).length
+  }, [truthHistory, truthPromptPool])
   const loveMessage = LOVE_MESSAGES[dayNumber() % LOVE_MESSAGES.length]
   const mealDone = (list: Meal[]) => REQUIRED_SLOTS.filter((s) => list.some((m) => m.slot === s)).length
   const loveUnlocked = Boolean(friendId) && mealDone(myMeals) === 3 && mealDone(peerMeals) === 3
@@ -1418,14 +1466,7 @@ export default function CouplePage() {
     if (prev !== null && loveUnlocked && !prev && loveSeenKey && readCache<string | null>(loveSeenKey, null) !== todayStr()) {
       setLoveReveal(true)
       if (memberId && friendId) {
-        const notifyKey = `love-unlocked-sent-${todayStr()}`
-        try {
-          if (sessionStorage.getItem(notifyKey)) return
-          sessionStorage.setItem(notifyKey, '1')
-        } catch {
-          // 存储不可用时仍允许发送，最坏情况是多一条提醒
-        }
-        void notifyLoveUnlocked([memberId, friendId], memberName || '我')
+        void notifyLoveUnlocked([memberId, friendId], memberName || '我', todayStr())
       }
     }
   }, [loveUnlocked, loveSeenKey, memberId, friendId, memberName])
@@ -1493,7 +1534,12 @@ export default function CouplePage() {
   const reloadTruthHistory = useCallback(async () => {
     if (!memberId || !friendId) return
     try {
-      setTruthHistory(await listCoupleTruthDare(memberId, friendId, 100))
+      const [history, prompts] = await Promise.all([
+        listCoupleTruthDare(memberId, friendId, 100),
+        listCoupleTruthPromptBank(memberId, friendId),
+      ])
+      setTruthHistory(history)
+      setTruthPromptBank(prompts)
     } catch (error) {
       console.warn('加载真心话记录失败', error)
     }
@@ -1583,7 +1629,11 @@ export default function CouplePage() {
       if (!memberId || !friendId) return
       const [a, b] = orderedPair(memberId, friendId)
       if (row.member_a !== a || row.member_b !== b) return
-      setMinesGame(row)
+      setMinesGame((current) => {
+        // realtime 可能晚于本地写入到达：旧快照不能覆盖刚写入的旗子或对方动作。
+        if (current && new Date(row.updated_at).getTime() < new Date(current.updated_at).getTime()) return current
+        return row
+      })
     },
     [memberId, friendId]
   )
@@ -2013,6 +2063,8 @@ export default function CouplePage() {
       { table: 'couple_quiz', on: (p) => applyQuizRow(p.new as CoupleQuizRow) },
       // 真心话大冒险：对方抽题 / 提交答案后，双方记录列表即时刷新
       { table: 'couple_truth_dare', event: 'INSERT', on: () => void reloadTruthHistory() },
+      { table: 'couple_truth_prompts', event: 'INSERT', on: () => void reloadTruthHistory() },
+      { table: 'couple_truth_prompts', event: 'DELETE', on: () => void reloadTruthHistory() },
       // 联网飞行棋：对方掷骰 / 暂停 / 继续后，棋局即时同步
       // （只订阅 INSERT / UPDATE；DELETE 事件不带行数据、无法区分是谁的棋局，交由轮询兜底同步）
       { table: 'couple_board_games', event: 'INSERT', on: (p) => applyBoardRow(p.new as CoupleBoardGameRow) },
@@ -2456,13 +2508,42 @@ export default function CouplePage() {
   /* ------------------------------ 真心话大冒险 ------------------------------ */
 
   const drawTruth = () => {
+    const customPrompts = truthPromptBank.map((row) => row.prompt)
+    const allPrompts = [...new Set([...TRUTH_PROMPTS, ...customPrompts])]
     const usedPrompts = new Set(truthHistory.map((row) => row.prompt))
-    const pool = TRUTH_PROMPTS.filter((p) => !usedPrompts.has(p))
-    // 400 道全部答完时提示一轮完成，然后从头再来（第二轮同样不重复）
-    if (!pool.length) toast.show(`${TRUTH_PROMPTS.length} 道真心话都答过啦，从头再来一轮 🎉`)
-    const list = pool.length ? pool : TRUTH_PROMPTS
+    const pool = allPrompts.filter((p) => !usedPrompts.has(p))
+    // 全部答完时提示一轮完成，然后从头再来（第二轮同样不重复）
+    if (!pool.length) toast.show(`${allPrompts.length} 道真心话都答过啦，从头再来一轮 🎉`)
+    const list = pool.length ? pool : allPrompts
     setTruthDraw({ type: 'truth', prompt: list[Math.floor(Math.random() * list.length)] })
     setTruthAnswer('')
+  }
+
+  const addTruthPrompt = async () => {
+    const prompt = truthPromptText.trim()
+    if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+    if (!prompt) return toast.show('先写下题目再加入题库', 'err')
+    setTruthPromptSaving(true)
+    try {
+      const row = await addCoupleTruthPrompt(memberId, friendId, memberId, prompt)
+      setTruthPromptBank((prev) => [row, ...prev.filter((item) => item.prompt !== row.prompt)])
+      setTruthPromptText('')
+      toast.show('已加入你们的真心话题库')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setTruthPromptSaving(false)
+    }
+  }
+
+  const removeTruthPrompt = async (id: string) => {
+    try {
+      await deleteCoupleTruthPrompt(id)
+      setTruthPromptBank((prev) => prev.filter((item) => item.id !== id))
+      toast.show('已从自定义题库移除')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    }
   }
 
   const drawDare = async () => {
@@ -2910,12 +2991,20 @@ export default function CouplePage() {
     if (minesMode === 'flag') {
       setMinesSaving(true)
       try {
-        const next: CoupleMinesState = {
-          ...minesState,
-          cells: minesState.cells.map((c, i) => (i === index ? (c === MINES_CELL.flagged ? MINES_CELL.closed : MINES_CELL.flagged) : c)),
+        // 旗子不消耗回合，也不能用旧的 minesState 覆盖对方刚挖开的格子。
+        const fresh = (await fetchCoupleMines(memberId, friendId)) ?? minesGame
+        const latest = fresh.state
+        if (latest.cleared || latest.cells[index] === MINES_CELL.opened) {
+          setMinesGame(fresh)
+          return
         }
+        const next: CoupleMinesState = {
+          ...latest,
+          cells: latest.cells.map((c, i) => (i === index ? (c === MINES_CELL.flagged ? MINES_CELL.closed : MINES_CELL.flagged) : c)),
+        }
+        const updatedAt = new Date().toISOString()
         await upsertCoupleMines(memberId, friendId, next)
-        setMinesGame({ ...minesGame, state: next, updated_at: new Date().toISOString() })
+        setMinesGame({ ...fresh, state: next, updated_at: updatedAt })
       } catch (error) {
         toast.show((error as Error).message, 'err')
       } finally {
@@ -3347,12 +3436,9 @@ export default function CouplePage() {
         senderName: memberName || '我',
       })
       void reloadWatermelonLogs()
-      if (peerOnline) {
-        toast.show(`🍉 已给 ${friendName} ${watermelonDelta > 0 ? `加 ${watermelonDelta} 分` : `减 ${Math.abs(watermelonDelta)} 分`}：${reason}`)
-      } else {
-        await notifyWatermelonScore(friendId, memberName || '我', watermelonDelta, reason)
-        toast.show('🍉 西瓜分已记录，对方上线后会在铃铛看到')
-      }
+      // 西瓜分是结果变更通知，不受对局在线分流影响：对方铃铛始终留一条记录。
+      await notifyWatermelonScore(friendId, memberName || '我', watermelonDelta, reason)
+      toast.show(`🍉 已给 ${friendName} ${watermelonDelta > 0 ? `加 ${watermelonDelta} 分` : `减 ${Math.abs(watermelonDelta)} 分`}：${reason}`)
       setWatermelonDelta(0)
       setWatermelonCustomValue('')
       setWatermelonReason('')
@@ -3607,12 +3693,17 @@ export default function CouplePage() {
     if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
     if (scratchSaving) return
     const mine = scratchGame?.state.cards?.[myId]
+    const today = scratchDay(new Date().toISOString())
     if (mine && !mine.revealed_at) return toast.show('先把当前这张刮开再抽新的吧～')
+    if (mine && (scratchDay(mine.created_at) === today || (mine.revealed_at && scratchDay(mine.revealed_at) === today))) {
+      return toast.show('今天已经刮过啦，明天再来吧～')
+    }
     setScratchSaving(true)
     try {
       const miss = SCRATCH_PRIZES.filter((p) => p.startsWith('谢谢惠顾'))
       const prizes = SCRATCH_PRIZES.filter((p) => !p.startsWith('谢谢惠顾'))
-      const prize = Math.random() < 0.34 ? miss[Math.floor(Math.random() * miss.length)] : prizes[Math.floor(Math.random() * prizes.length)]
+      // 中奖率约 80%，谢谢惠顾约 20%
+      const prize = Math.random() < 0.20 ? miss[Math.floor(Math.random() * miss.length)] : prizes[Math.floor(Math.random() * prizes.length)]
       const at = new Date().toISOString()
       const card: CoupleScratchCard = { id: crypto.randomUUID(), prize, created_by: myId, created_at: at, revealed_at: null, revealed_by: null }
       const state: CoupleScratchState = {
@@ -3764,6 +3855,13 @@ export default function CouplePage() {
     const prev = prevMinesRef.current
     prevMinesRef.current = minesState
     if (!minesState || !prev || !minesGame) return
+    const opponentOpened = minesState.cells
+      .map((cell, index) => (cell === MINES_CELL.opened && prev.cells[index] !== MINES_CELL.opened ? index : -1))
+      .filter((index) => index >= 0)
+    if (opponentOpened.length > 0 && minesState.turn === myMinesIndex) {
+      setMinesFlashingCells(new Set(opponentOpened))
+      window.setTimeout(() => setMinesFlashingCells(new Set()), 900)
+    }
     if (minesState.cleared && !prev.cleared) {
       setMinesReward(minesState.reward)
       // 对方通关落库后实时推送偶发丢失时，这里兜底刷新一次对局历史列表
@@ -3891,7 +3989,7 @@ export default function CouplePage() {
             { id: 'wish', icon: '🎁', title: '秘密心愿', detail: `${gridCounts.wishes} 个心愿` },
             { id: 'chat', icon: '💬', title: '甜蜜留言', detail: `${gridCounts.messages} 条留言` },
             { id: 'quiz', icon: '💞', title: '同步抉择', detail: `已做 ${gridCounts.quizDone}/${quizTotalQuestions.length} 题` },
-            { id: 'truth', icon: '🎲', title: '真心话大冒险', detail: `已答 ${gridCounts.truthDone}/${TRUTH_PROMPTS.length} 题` },
+            { id: 'truth', icon: '🎲', title: '真心话大冒险', detail: `已答 ${gridCounts.truthDone}/${truthPromptPool.length} 题` },
             { id: 'board', icon: '🎯', title: '情侣飞行棋', detail: '联网轮流掷骰对战' },
             { id: 'mines', icon: '💣', title: '情侣扫雷', detail: '轮流拆雷，踩雷做任务' },
             { id: 'wufu', icon: '♟️', title: '摆方五福棋', detail: '摆子提子走子，吃到剩2子' },
@@ -3964,14 +4062,31 @@ export default function CouplePage() {
                   <button className="btn-primary" onClick={() => void drawDare()}>抽大冒险</button>
                 </div>
               )}
+              <div className="space-y-2 rounded-xl bg-slate-50 p-3">
+                <div className="text-xs font-semibold text-slate-600">加入你们的真心话题库</div>
+                <div className="flex gap-2">
+                  <input className="input min-w-0 flex-1" maxLength={300} value={truthPromptText} onChange={(e) => setTruthPromptText(e.target.value)} placeholder="写一道只有你们懂的题…" />
+                  <button className="btn-primary shrink-0 px-3" disabled={truthPromptSaving || !truthPromptText.trim()} onClick={() => void addTruthPrompt()}>{truthPromptSaving ? '保存中…' : '加入'}</button>
+                </div>
+                {truthPromptBank.length > 0 && (
+                  <div className="space-y-1 text-[11px] text-slate-500">
+                    {truthPromptBank.map((item) => (
+                      <div key={item.id} className="flex items-start gap-2 rounded-lg bg-white p-2">
+                        <span className="min-w-0 flex-1 break-words">{item.prompt}</span>
+                        <button className="shrink-0 text-rose-500" onClick={() => void removeTruthPrompt(item.id)}>删除</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <h4 className="text-sm font-semibold text-slate-600">我们的记录</h4>
                   <span className="chip border-slate-200 bg-slate-50 text-slate-500">{truthHistory.length} 条</span>
                 </div>
-                <div className="touch-scroll max-h-64 space-y-2 overflow-y-auto rounded-xl bg-slate-50 p-3">
+                <div className="space-y-2 rounded-xl bg-slate-50 p-3">
                   {truthHistory.length === 0 && <p className="py-4 text-center text-xs text-slate-400">还没有记录，抽一题试试吧～</p>}
-                  {truthHistory.map((row) => {
+                  {truthHistory.slice(truthHistoryPage * HISTORY_PAGE_SIZE, (truthHistoryPage + 1) * HISTORY_PAGE_SIZE).map((row) => {
                     const isMine = row.sender_id === memberId
                     return (
                       <div key={row.id} className="rounded-xl bg-white p-3 text-xs shadow-sm">
@@ -3990,6 +4105,7 @@ export default function CouplePage() {
                     )
                   })}
                 </div>
+                <HistoryPager page={truthHistoryPage} total={truthHistory.length} onChange={setTruthHistoryPage} />
               </div>
             </section>
           )}
@@ -4247,7 +4363,7 @@ export default function CouplePage() {
                 {boardHistory.length === 0 && (
                   <p className="rounded-xl bg-slate-50 py-3 text-center text-xs text-slate-400">还没有打完的棋局，先来一局吧～</p>
                 )}
-                {boardHistory.map((row) => {
+                {boardHistory.slice(boardHistoryPage * HISTORY_PAGE_SIZE, (boardHistoryPage + 1) * HISTORY_PAGE_SIZE).map((row) => {
                   const winnerId = row.winner === 0 ? row.member_a : row.member_b
                   const winnerName = winnerId === memberId ? memberName || '我' : friendName
                   const loserName = winnerId === memberId ? friendName : memberName || '我'
@@ -4281,6 +4397,7 @@ export default function CouplePage() {
                     </div>
                   )
                 })}
+                <HistoryPager page={boardHistoryPage} total={boardHistory.length} onChange={setBoardHistoryPage} />
               </div>
             </section>
           )}
@@ -4407,6 +4524,8 @@ export default function CouplePage() {
                           }
                           onClick={() => void actMinesCell(index)}
                           className={`flex aspect-square items-center justify-center rounded text-[11px] font-bold ring-1 transition ${
+                            minesFlashingCells.has(index) ? 'mines-opponent-flash' : ''
+                          } ${
                             cell === MINES_CELL.opened
                               ? openedMine
                                 ? 'bg-rose-100 text-rose-600 ring-rose-200'
@@ -4441,7 +4560,7 @@ export default function CouplePage() {
                 {minesHistory.length === 0 && (
                   <p className="rounded-xl bg-slate-50 py-3 text-center text-xs text-slate-400">还没有通关的扫雷，先来一局吧～</p>
                 )}
-                {minesHistory.map((row) => {
+                {minesHistory.slice(minesHistoryPage * HISTORY_PAGE_SIZE, (minesHistoryPage + 1) * HISTORY_PAGE_SIZE).map((row) => {
                   const open = minesHistoryOpenId === row.id
                   const hitCount = row.state.hits?.length ?? 0
                   return (
@@ -4479,6 +4598,7 @@ export default function CouplePage() {
                     </div>
                   )
                 })}
+                <HistoryPager page={minesHistoryPage} total={minesHistory.length} onChange={setMinesHistoryPage} />
               </div>
             </section>
           )}
@@ -4547,7 +4667,7 @@ export default function CouplePage() {
                       <p className="rounded-xl bg-slate-50 py-2 text-center text-[11px] text-slate-400">还没有历史对局</p>
                     ) : (
                       <div className="space-y-2">
-                        {wufuHistory.map((row) => {
+                        {wufuHistory.slice(wufuHistoryPage * HISTORY_PAGE_SIZE, (wufuHistoryPage + 1) * HISTORY_PAGE_SIZE).map((row) => {
                           const s = row.state
                           const winnerName = s.winner === null ? '—' : (wufuNames && s.winner === 0 ? wufuNames[0] : wufuNames ? wufuNames[1] : '')
                           const surrendered = s.log.some((item) => item.text.includes('🏳️'))
@@ -4789,7 +4909,7 @@ export default function CouplePage() {
                       <p className="rounded-xl bg-slate-50 py-2 text-center text-[11px] text-slate-400">还没有历史对局</p>
                     ) : (
                       <div className="space-y-2">
-                        {wufuHistory.map((row) => {
+                        {wufuHistory.slice(wufuHistoryPage * HISTORY_PAGE_SIZE, (wufuHistoryPage + 1) * HISTORY_PAGE_SIZE).map((row) => {
                           const s = row.state
                           const winnerName = s.winner === null ? '—' : (wufuNames && s.winner === 0 ? wufuNames[0] : wufuNames ? wufuNames[1] : '')
                           const surrendered = s.log.some((item) => item.text.includes('🏳️'))
@@ -4846,6 +4966,7 @@ export default function CouplePage() {
                         })}
                       </div>
                     )}
+                    <HistoryPager page={wufuHistoryPage} total={wufuHistory.length} onChange={setWufuHistoryPage} />
                   </div>
                 </>
               ) : null}
@@ -4977,7 +5098,7 @@ export default function CouplePage() {
                   <h4 className="text-xs font-semibold text-slate-600">对局历史</h4>
                   <button type="button" className="btn-ghost text-xs" onClick={() => void reloadGomokuHistory()}>刷新</button>
                 </div>
-                {gomokuHistory.length === 0 ? <p className="text-xs text-slate-400">还没有已结束的对局</p> : gomokuHistory.map((row) => (
+                {gomokuHistory.length === 0 ? <p className="text-xs text-slate-400">还没有已结束的对局</p> : gomokuHistory.slice(gomokuHistoryPage * HISTORY_PAGE_SIZE, (gomokuHistoryPage + 1) * HISTORY_PAGE_SIZE).map((row) => (
                   <div key={row.id} className="rounded-lg border border-slate-200 p-2">
                     <div className="flex flex-wrap items-center justify-between gap-1 text-xs">
                       <span className="flex flex-wrap items-center gap-2">
@@ -5025,6 +5146,7 @@ export default function CouplePage() {
                   </div>
                 ))}
               </div>
+              <HistoryPager page={gomokuHistoryPage} total={gomokuHistory.length} onChange={setGomokuHistoryPage} />
             </section>
           )}
 
@@ -5181,8 +5303,8 @@ export default function CouplePage() {
                 {watermelonLogs.length === 0 ? (
                   <p className="text-xs text-slate-400">还没有西瓜分记录，快给 TA 来第一分吧～</p>
                 ) : (
-                  <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
-                    {watermelonLogs.map((log) => (
+                  <div className="space-y-2 pr-1">
+                    {watermelonLogs.slice(watermelonHistoryPage * HISTORY_PAGE_SIZE, (watermelonHistoryPage + 1) * HISTORY_PAGE_SIZE).map((log) => (
                       <div key={log.id} className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white p-2.5 text-xs shadow-sm">
                         <div className="min-w-0 flex-1">
                           <p className="font-semibold text-slate-800">
@@ -5203,6 +5325,7 @@ export default function CouplePage() {
                   </div>
                 )}
               </div>
+              <HistoryPager page={watermelonHistoryPage} total={watermelonLogs.length} onChange={setWatermelonHistoryPage} />
             </section>
           )}
 
@@ -5356,8 +5479,8 @@ export default function CouplePage() {
                     {diceHistory.length === 0 ? (
                       <p className="text-xs text-slate-400">暂无对局记录（一局结束才归档一条）</p>
                     ) : (
-                      <div className="max-h-48 space-y-1 overflow-y-auto text-xs">
-                        {diceHistory.map((row) => {
+                      <div className="space-y-1 text-xs">
+                        {diceHistory.slice(diceHistoryPage * HISTORY_PAGE_SIZE, (diceHistoryPage + 1) * HISTORY_PAGE_SIZE).map((row) => {
                           const s = row.state
                           const rounds = Math.max(0, s.round - 1)
                           const loser = s.chips[0] === 0 ? 0 : s.chips[1] === 0 ? 1 : null
@@ -5377,6 +5500,7 @@ export default function CouplePage() {
                             </div>
                           )
                         })}
+                        <HistoryPager page={diceHistoryPage} total={diceHistory.length} onChange={setDiceHistoryPage} />
                       </div>
                     )}
                   </div>
@@ -5393,31 +5517,37 @@ export default function CouplePage() {
                 <p className="mt-1 text-xs text-slate-400">纪念日、生日、旅行日……添加多个重要日期，一起倒数还有多少天。</p>
               </div>
               <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-[64px_1fr_150px_auto]">
-                <input className="input text-center" placeholder="📅" value={countdownEmoji} onChange={(event) => setCountdownEmoji(event.target.value)} maxLength={4} />
-                <input className="input" placeholder="重要日名称" value={countdownTitle} onChange={(event) => setCountdownTitle(event.target.value)} maxLength={30} />
+                <select className="input w-full px-1 text-center text-lg" value={typeof countdownEmoji === 'string' && ['📅', '🎂', '💖', '💍', '✈️', '🏠', '🎓', '🎉', '🌸', '🍰', '🌟', '🎁'].includes(countdownEmoji) ? countdownEmoji : '📅'} onChange={(event) => setCountdownEmoji(event.target.value)}>
+                  {['📅', '🎂', '💖', '💍', '✈️', '🏠', '🎓', '🎉', '🌸', '🍰', '🌟', '🎁'].map((emoji) => <option key={emoji} value={emoji}>{emoji}</option>)}
+                </select>
+                <input className="input" placeholder="名称" value={countdownTitle} onChange={(event) => setCountdownTitle(event.target.value)} maxLength={30} />
                 <input className="input" type="date" value={countdownDate} onChange={(event) => setCountdownDate(event.target.value)} />
                 <button type="button" className="btn-primary" disabled={countdownSaving || !memberId || !friendId} onClick={() => void addCountdown()}>添加</button>
               </div>
-              {(countdownGame?.state.items ?? []).length === 0 ? (
+              {(!Array.isArray(countdownGame?.state.items) || countdownGame.state.items.length === 0) ? (
                 <p className="py-4 text-center text-xs text-slate-400">还没有重要日，添加一个吧～</p>
               ) : (
                 <div className="space-y-2">
-                  {(countdownGame?.state.items ?? []).map((item) => {
-                    const target = new Date(`${item.date}T00:00:00`)
+                  {(Array.isArray(countdownGame?.state.items) ? countdownGame.state.items : []).map((item, index) => {
+                    const itemId = safeDisplayText(item?.id, `countdown-${index}`)
+                    const itemTitle = safeDisplayText(item.title, '未命名重要日')
+                    const itemDate = safeDisplayText(item.date)
+                    const itemEmoji = safeDisplayText(item.emoji, '📅')
+                    const target = new Date(`${itemDate}T00:00:00`)
                     const today = new Date()
                     today.setHours(0, 0, 0, 0)
                     const days = Math.ceil((target.getTime() - today.getTime()) / 86_400_000)
                     const label = days > 0 ? `还有 ${days} 天` : days === 0 ? '🎉 就是今天！' : `已过去 ${-days} 天`
                     const soon = days >= 0 && days <= 7
                     return (
-                      <div key={item.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3">
-                        <span className="text-xl">{item.emoji || '📅'}</span>
+                      <div key={itemId} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3">
+                        <span className="text-xl">{itemEmoji || '📅'}</span>
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-semibold text-slate-700">{item.title}</div>
-                          <div className="text-[11px] text-slate-400">{item.date}</div>
+                          <div className="truncate text-sm font-semibold text-slate-700">{itemTitle}</div>
+                          <div className="text-[11px] text-slate-400">{itemDate}</div>
                         </div>
                         <span className={`chip shrink-0 ${days === 0 ? 'border-rose-200 bg-rose-50 text-rose-600' : soon ? 'border-amber-200 bg-amber-50 text-amber-600' : 'border-brand-200 bg-brand-50 text-brand-600'}`}>{label}</span>
-                        <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs text-rose-500" disabled={countdownSaving} onClick={() => void removeCountdown(item.id)}>删除</button>
+                        <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs text-rose-500" disabled={countdownSaving} onClick={() => void removeCountdown(itemId)}>删除</button>
                       </div>
                     )
                   })}
@@ -5448,7 +5578,11 @@ export default function CouplePage() {
                             {mine.prize.startsWith('谢谢惠顾') ? '😅' : '🎉'} {mine.prize}
                           </div>
                           <div className="mt-1 text-[11px] text-slate-400">刮开于 {new Date(mine.revealed_at).toLocaleString('zh-CN')}</div>
-                          <button type="button" className="btn-primary mt-3" disabled={scratchSaving || !ready} onClick={() => void drawScratchCard()}>🎫 再抽一张</button>
+                          {scratchDay(mine.revealed_at) === scratchDay(new Date().toISOString()) ? (
+                            <button type="button" className="btn-primary mt-3" disabled>🎫 明天再来</button>
+                          ) : (
+                            <button type="button" className="btn-primary mt-3" disabled={scratchSaving || !ready} onClick={() => void drawScratchCard()}>🎫 抽今天的刮刮乐</button>
+                          )}
                         </div>
                       ) : (
                         <div className="space-y-2">
@@ -5492,13 +5626,14 @@ export default function CouplePage() {
               {(scratchGame?.state.log ?? []).length > 0 && (
                 <div className="space-y-2 border-t border-slate-100 pt-3">
                   <h4 className="text-xs font-semibold text-slate-600">🎫 刮刮乐记录</h4>
-                  <div className="max-h-40 space-y-1 overflow-y-auto text-[11px]">
-                    {[...(scratchGame?.state.log ?? [])].reverse().map((entry, i) => (
+                  <div className="space-y-1 text-[11px]">
+                    {[...(scratchGame?.state.log ?? [])].reverse().slice(scratchHistoryPage * HISTORY_PAGE_SIZE, (scratchHistoryPage + 1) * HISTORY_PAGE_SIZE).map((entry, i) => (
                       <div key={`${entry.at}-${i}`} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-2">
                         <span className="min-w-0 flex-1 break-words text-slate-600">{entry.text}</span>
-                        <span className="shrink-0 text-slate-300">{new Date(entry.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="shrink-0 text-slate-300">                    {new Date(entry.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
                     ))}
+                    <HistoryPager page={scratchHistoryPage} total={(scratchGame?.state.log ?? []).length} onChange={setScratchHistoryPage} />
                   </div>
                 </div>
               )}
@@ -5609,7 +5744,7 @@ export default function CouplePage() {
           {messages.length === 0 && (
             <div className="py-5 text-center text-xs text-slate-400">发一句“今天也要开心”吧</div>
           )}
-          {messages.map((m) => {
+          {messages.slice(messageHistoryPage * HISTORY_PAGE_SIZE, (messageHistoryPage + 1) * HISTORY_PAGE_SIZE).map((m) => {
             const isMine = m.sender_id === myId
             const name = isMine ? '我' : friendName
             return (
@@ -5640,6 +5775,7 @@ export default function CouplePage() {
           })}
           <div ref={chatBottomRef} />
         </div>
+        <HistoryPager page={messageHistoryPage} total={messages.length} onChange={setMessageHistoryPage} />
         <div className="flex min-w-0 flex-col gap-2 min-[420px]:flex-row">
           <input
             className="input min-w-0 flex-1"
@@ -5907,7 +6043,7 @@ export default function CouplePage() {
             <div className="mt-2 text-xs font-medium tracking-widest text-rose-400">今日专属情话已解锁</div>
             <p className="mt-4 text-lg font-semibold leading-relaxed text-rose-700">“{loveMessage}”</p>
             <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
-              你们今天的三餐都打卡完成啦，这是只属于你们的一句话
+              你们今日三餐都打卡完啦，这是属于你们的一句话
             </p>
             <button
               className="btn-primary mt-5 w-full"

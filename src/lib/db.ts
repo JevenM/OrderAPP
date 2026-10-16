@@ -1222,6 +1222,47 @@ export async function listCoupleTruthPrompts(userA: string, userB: string): Prom
   return [...new Set(((data ?? []) as { prompt: string }[]).map((row) => row.prompt).filter(Boolean))]
 }
 
+export interface CoupleTruthPromptRow {
+  id: string
+  member_a: string
+  member_b: string
+  prompt: string
+  created_by: string
+  created_at: string
+}
+
+export async function listCoupleTruthPromptBank(userA: string, userB: string): Promise<CoupleTruthPromptRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_truth_prompts')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .order('created_at', { ascending: false })
+    .limit(300)
+  if (error) fail(error, '加载自定义真心话题库')
+  return (data ?? []) as CoupleTruthPromptRow[]
+}
+
+export async function addCoupleTruthPrompt(userA: string, userB: string, createdBy: string, prompt: string): Promise<CoupleTruthPromptRow> {
+  const clean = prompt.trim().slice(0, 300)
+  if (!clean) throw new Error('题目不能为空')
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_truth_prompts')
+    .upsert({ member_a: memberA, member_b: memberB, created_by: createdBy, prompt: clean }, { onConflict: 'member_a,member_b,prompt' })
+    .select()
+    .single()
+  if (error || !data) fail(error, '保存自定义真心话题目')
+  return data as CoupleTruthPromptRow
+}
+
+export async function deleteCoupleTruthPrompt(id: string): Promise<void> {
+  const { error } = await supabase.from('couple_truth_prompts').delete().eq('id', id)
+  if (error) fail(error, '删除自定义真心话题目')
+}
+
 export async function listCoupleQuizHistory(userA: string, userB: string, limit = 200): Promise<CoupleQuizHistoryRow[]> {
   if (!userA || !userB || userA === userB) return []
   const [memberA, memberB] = couplePair(userA, userB)
@@ -1380,15 +1421,21 @@ export async function notifyCoupleMealNudge(recipient: string, senderName: strin
   })
 }
 
-/** 双方三餐打卡齐、专属情话解锁：给两人的铃铛各落一条提醒，点击直达「今日专属情话」 */
-export async function notifyLoveUnlocked(recipients: [string, string], senderName: string): Promise<void> {
-  await insertFeedNotices(recipients.filter(Boolean), {
+/**
+ * 双方三餐打卡齐、专属情话解锁：给两人的铃铛各落一条提醒。
+ * 使用情侣 + 日期组成的稳定业务键，避免双方客户端同时检测到解锁时重复写入。
+ */
+export async function notifyLoveUnlocked(recipients: [string, string], senderName: string, day: string): Promise<void> {
+  const unique = [...new Set(recipients.filter(Boolean))]
+  if (unique.length < 2) return
+  const pair = [...unique].sort().join(':')
+  await insertFeedNotices(unique, {
     sender_name: senderName,
     type: 'love-unlocked',
-    post_id: null,
+    post_id: `love-unlocked:${day}:${pair}`,
     title: '💖 今日专属情话已解锁',
     body: `${senderName} 和你今天的三餐打卡都齐啦，专属情话已经揭晓，快去看看吧～`,
-  })
+  }, true)
 }
 
 /**
@@ -2250,6 +2297,30 @@ export async function listAllCoupleWatermelonLogs(limit = 200): Promise<CoupleWa
   return (data ?? []) as CoupleWatermelonLogRow[]
 }
 
+export async function listAllCoupleTruthPromptBank(limit = 500): Promise<CoupleTruthPromptRow[]> {
+  const { data, error } = await supabase.from('couple_truth_prompts').select('*').order('created_at', { ascending: false }).limit(limit)
+  if (error && !isMissingTable(error)) fail(error, '加载全部自定义真心话题库')
+  return (data ?? []) as CoupleTruthPromptRow[]
+}
+
+export async function listAllCoupleCountdown(limit = 200): Promise<CoupleCountdownRow[]> {
+  const { data, error } = await supabase.from('couple_countdown').select('*').order('updated_at', { ascending: false }).limit(limit)
+  if (error && !isMissingTable(error)) fail(error, '加载全部重要日倒计时')
+  return (data ?? []) as CoupleCountdownRow[]
+}
+
+export async function listAllCoupleScratch(limit = 200): Promise<CoupleScratchRow[]> {
+  const { data, error } = await supabase.from('couple_scratch').select('*').order('updated_at', { ascending: false }).limit(limit)
+  if (error && !isMissingTable(error)) fail(error, '加载全部刮刮乐')
+  return (data ?? []) as CoupleScratchRow[]
+}
+
+export async function deleteCoupleTruthPrompts(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { error } = await supabase.from('couple_truth_prompts').delete().in('id', ids)
+  if (error && !isMissingTable(error)) fail(error, '删除自定义真心话题目')
+}
+
 export async function deleteCoupleWatermelonLogs(ids: string[]): Promise<void> {
   if (!ids.length) return
   const { error } = await supabase.from('couple_watermelon_logs').delete().in('id', ids)
@@ -2799,7 +2870,8 @@ async function isRecipientOnline(recipientId: string): Promise<boolean> {
 /** 批量落通知：任一条失败都不影响主流程；游戏类通知会自动跳过在线用户（在线时由前端弹窗提示） */
 async function insertFeedNotices(
   recipients: string[],
-  notice: Omit<FeedNotificationRow, 'id' | 'recipient' | 'read_at' | 'created_at'>
+  notice: Omit<FeedNotificationRow, 'id' | 'recipient' | 'read_at' | 'created_at'>,
+  dedupeByPostId = false
 ): Promise<void> {
   const unique = [...new Set(recipients.filter(Boolean))]
   if (!unique.length) return
@@ -2816,6 +2888,25 @@ async function insertFeedNotices(
   const finalRecipients = filtered.filter((id): id is string => id !== null)
   if (!finalRecipients.length) return
   try {
+    if (dedupeByPostId && notice.post_id) {
+      const { data: existing, error: lookupError } = await supabase
+        .from('feed_notifications')
+        .select('recipient')
+        .in('recipient', finalRecipients)
+        .eq('type', notice.type)
+        .eq('post_id', notice.post_id)
+      if (lookupError) throw lookupError
+      const existingRecipients = new Set((existing ?? []).map((row: { recipient: string }) => row.recipient))
+      const missingRecipients = finalRecipients.filter((recipient) => !existingRecipients.has(recipient))
+      if (!missingRecipients.length) return
+      const { error } = await supabase
+        .from('feed_notifications')
+        .insert(missingRecipients.map((recipient) => ({ ...notice, recipient })))
+      if (error && error.code !== '23505') {
+        console.warn('写入饭圈通知失败', error)
+      }
+      return
+    }
     const { error } = await supabase
       .from('feed_notifications')
       .insert(finalRecipients.map((recipient) => ({ ...notice, recipient })))

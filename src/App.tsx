@@ -38,6 +38,7 @@ const AdminCoupleWishes = lazy(() => import('./pages/AdminCoupleWishes'))
 const AdminCoupleQuestions = lazy(() => import('./pages/AdminCoupleQuestions'))
 const AdminCoupleTruthDare = lazy(() => import('./pages/AdminCoupleTruthDare'))
 const AdminCoupleData = lazy(() => import('./pages/AdminCoupleData'))
+const AdminCoupleModules = lazy(() => import('./pages/AdminCoupleModules'))
 const AdminFeed = lazy(() => import('./pages/AdminFeed'))
 const AdminModuleFlags = lazy(() => import('./pages/AdminModuleFlags'))
 const AdminOrders = lazy(() => import('./pages/AdminOrders'))
@@ -113,6 +114,7 @@ function Shell() {
               {isAdmin && <Route path="/admin" element={<AdminHome />} />}
               {isAdmin && <Route path="/admin/friendships" element={<AdminFriendships />} />}
               {isAdmin && <Route path="/admin/couple-data" element={<AdminCoupleData />} />}
+              {isAdmin && <Route path="/admin/couple-modules" element={<AdminCoupleModules />} />}
               {isAdmin && <Route path="/admin/feed" element={<AdminFeed />} />}
               {isAdmin && <Route path="/admin/modules" element={<AdminModuleFlags />} />}
               {isAdmin && <Route path="/admin/couple-history" element={<AdminCoupleHistory />} />}

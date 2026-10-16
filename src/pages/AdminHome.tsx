@@ -14,6 +14,7 @@ const DAILY_LINKS: AdminLink[] = [
 /** 互动空间：情侣互动模块的数据管理 */
 const COUPLE_LINKS: AdminLink[] = [
   { to: '/admin/couple-data', emoji: '💞', title: '互动数据管理', desc: '留言板 / 同步抉择 / 真心话 / 心愿 / 飞行棋 / 扫雷', badge: '查看 · 编辑 · 导出 · 删除' },
+  { to: '/admin/couple-modules', emoji: '🧩', title: '新增互动数据', desc: '西瓜分 / 重要日 / 刮刮乐 / 自定义真心话', badge: '查看 · 清理' },
   { to: '/admin/couple-questions', emoji: '❓', title: '同步抉择题库', desc: '维护轻松版 / 走心版 / 深度版题目' },
   { to: '/admin/friendships', emoji: '🤝', title: '好友关系管理', desc: '配对与解除成员好友关系' },
   { to: '/admin/modules', emoji: '🧩', title: '模块管理', desc: '控制普通用户可见可用的互动模块与入口', badge: '全局 · 按成员' },
