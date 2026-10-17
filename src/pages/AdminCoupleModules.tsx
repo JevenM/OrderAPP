@@ -10,10 +10,13 @@ import {
   type CoupleTruthPromptRow,
   type CoupleWatermelonLogRow,
 } from '../lib/db'
+import Pager from '../components/Pager'
 import { useToast } from '../components/Toast'
 import { useMembers } from '../store/members'
 
 const fmt = (time: string) => new Date(time).toLocaleString('zh-CN')
+/** 后台列表每页条数：列表卡片较高，比互动历史少一些页数的同时避免一次铺太长 */
+const ADMIN_PAGE_SIZE = 20
 
 export default function AdminCoupleModules() {
   const toast = useToast()
@@ -23,6 +26,9 @@ export default function AdminCoupleModules() {
   const [scratches, setScratches] = useState<CoupleScratchRow[]>([])
   const [prompts, setPrompts] = useState<CoupleTruthPromptRow[]>([])
   const [loading, setLoading] = useState(true)
+  /* 长列表分页：内部滚动条在苹果设备上划不动，改为翻页 */
+  const [watermelonPage, setWatermelonPage] = useState(0)
+  const [promptsPage, setPromptsPage] = useState(0)
 
   const nameOf = (id: string) => members.find((member) => member.id === id)?.name ?? '未知成员'
   const pairLabel = (a: string, b: string) => `${nameOf(a)} ↔ ${nameOf(b)}`
@@ -77,14 +83,15 @@ export default function AdminCoupleModules() {
           <h3 className="text-sm font-semibold text-slate-700">🍉 西瓜分变更记录（{watermelon.length}）</h3>
         </div>
         {watermelon.length === 0 ? <p className="text-xs text-slate-400">暂无记录</p> : (
-          <div className="max-h-72 space-y-2 overflow-y-auto">
-            {watermelon.map((row) => (
+          <div className="space-y-2">
+            {watermelon.slice(watermelonPage * ADMIN_PAGE_SIZE, (watermelonPage + 1) * ADMIN_PAGE_SIZE).map((row) => (
               <div key={row.id} className="rounded-xl bg-slate-50 p-3 text-xs">
                 <div className="font-medium text-slate-700">{pairLabel(row.member_a, row.member_b)}</div>
                 <div className="mt-1 text-slate-500">{nameOf(row.sender_id)} 给 {nameOf(row.target_member)} {row.delta > 0 ? `加 ${row.delta}` : `减 ${Math.abs(row.delta)}`} 分：{row.reason}</div>
                 <div className="mt-1 text-[10px] text-slate-400">{fmt(row.created_at)}</div>
               </div>
             ))}
+            <Pager page={watermelonPage} total={watermelon.length} pageSize={ADMIN_PAGE_SIZE} onChange={setWatermelonPage} />
           </div>
         )}
       </section>
@@ -118,12 +125,14 @@ export default function AdminCoupleModules() {
           <button className="btn-ghost px-2 py-1 text-[11px] text-rose-600" disabled={!prompts.length} onClick={() => void removePrompts()}>清空题库</button>
         </div>
         {prompts.length === 0 ? <p className="text-xs text-slate-400">暂无自定义题目</p> : (
-          <div className="max-h-80 space-y-2 overflow-y-auto">{prompts.map((row) => (
+          <div className="space-y-2">{prompts.slice(promptsPage * ADMIN_PAGE_SIZE, (promptsPage + 1) * ADMIN_PAGE_SIZE).map((row) => (
             <div key={row.id} className="rounded-xl bg-slate-50 p-3 text-xs">
               <div className="break-words text-slate-700">{row.prompt}</div>
               <div className="mt-1 text-[10px] text-slate-400">{pairLabel(row.member_a, row.member_b)} · {nameOf(row.created_by)} · {fmt(row.created_at)}</div>
             </div>
-          ))}</div>
+          ))}
+            <Pager page={promptsPage} total={prompts.length} pageSize={ADMIN_PAGE_SIZE} onChange={setPromptsPage} />
+          </div>
         )}
       </section>
     </div>

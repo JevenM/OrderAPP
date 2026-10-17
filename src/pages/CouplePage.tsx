@@ -139,6 +139,47 @@ function HistoryPager({ page, total, onChange }: { page: number; total: number; 
   )
 }
 
+/**
+ * 对局动态 / 详情日志：原来靠 max-h + overflow-y-auto 内部滚动，
+ * 苹果设备上容易划不动，统一改成不滚动、超出一页就分页翻。
+ * 只渲染列表本身，外层容器和字号由调用方决定。
+ */
+function LogList({
+  items,
+  page,
+  onPage,
+  empty = '暂无动态',
+}: {
+  items: string[]
+  page: number
+  onPage: (page: number) => void
+  empty?: string
+}) {
+  const pages = Math.max(1, Math.ceil(items.length / HISTORY_PAGE_SIZE))
+  // 日志会被裁剪/重置，页码可能越界，这里统一收敛到有效范围
+  const safePage = Math.min(Math.max(page, 0), pages - 1)
+  return (
+    <div className="space-y-1">
+      {items.length === 0 ? (
+        <p className="py-1 text-slate-400">{empty}</p>
+      ) : (
+        items
+          .slice(safePage * HISTORY_PAGE_SIZE, (safePage + 1) * HISTORY_PAGE_SIZE)
+          .map((text, index) => (
+            <p key={`${safePage}-${index}`} className="break-words">{text}</p>
+          ))
+      )}
+      {items.length > HISTORY_PAGE_SIZE && (
+        <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-[11px]">
+          <button type="button" className="text-brand-600 disabled:text-slate-300" disabled={safePage === 0} onClick={() => onPage(safePage - 1)}>上一页</button>
+          <span className="text-slate-400">{safePage + 1}/{pages} 页 · 共 {items.length} 条</span>
+          <button type="button" className="text-brand-600 disabled:text-slate-300" disabled={safePage >= pages - 1} onClick={() => onPage(safePage + 1)}>下一页</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export type QuestionKind = '轻松版' | '走心版' | '深度版' | '自定义'
 export type Question = { id: string; title: string; a: string; b: string; kind: QuestionKind }
 type QuizView = {
@@ -1333,9 +1374,14 @@ export default function CouplePage() {
   /* 对局历史：每局的过程日志与结果都可回看 */
   const [boardHistory, setBoardHistory] = useState<CoupleBoardGameHistoryRow[]>([])
   const [boardHistoryOpenId, setBoardHistoryOpenId] = useState<string | null>(null)
+  /* 对局动态/详情日志分页：滚动容器在苹果设备上划不动，改用翻页 */
+  const [boardLogPage, setBoardLogPage] = useState(0)
+  const [boardDetailLogPage, setBoardDetailLogPage] = useState(0)
   /* 扫雷对局历史：每局通关的棋盘、踩雷任务与奖励都可回看 */
   const [minesHistory, setMinesHistory] = useState<CoupleMinesHistoryRow[]>([])
   const [minesHistoryOpenId, setMinesHistoryOpenId] = useState<string | null>(null)
+  const [minesLogPage, setMinesLogPage] = useState(0)
+  const [minesDetailLogPage, setMinesDetailLogPage] = useState(0)
 
   /* ------------------------------ 联网摆方（五福棋） ------------------------------ */
   const [wufuGame, setWufuGame] = useState<CoupleWufuRow | null>(null)
@@ -1348,6 +1394,9 @@ export default function CouplePage() {
   /* 摆方对局历史：一局结束（正常分出胜负 / 投降认输）时存档，供回看 */
   const [wufuHistory, setWufuHistory] = useState<CoupleWufuHistoryRow[]>([])
   const [wufuHistoryOpenId, setWufuHistoryOpenId] = useState<string | null>(null)
+  /* 摆方的「对局动态」与历史详情日志分页（同一时刻只展开一条历史） */
+  const [wufuLogPage, setWufuLogPage] = useState(0)
+  const [wufuDetailLogPage, setWufuDetailLogPage] = useState(0)
 
   /* ------------------------------ 联网五子棋 ------------------------------ */
   const [gomokuGame, setGomokuGame] = useState<CoupleGomokuRow | null>(null)
@@ -1355,6 +1404,7 @@ export default function CouplePage() {
   const [gomokuSaving, setGomokuSaving] = useState(false)
   const [gomokuHistory, setGomokuHistory] = useState<CoupleGomokuHistoryRow[]>([])
   const [gomokuHistoryOpenId, setGomokuHistoryOpenId] = useState<string | null>(null)
+  const [gomokuLogPage, setGomokuLogPage] = useState(0)
 
   /* ------------------------------ 情侣西瓜分 ------------------------------ */
   const [watermelonScore, setWatermelonScore] = useState<CoupleWatermelonScoreRow | null>(null)
@@ -1423,15 +1473,22 @@ export default function CouplePage() {
     () => quizTotalQuestions.filter((question) => usedQuestionIds.has(question.id) && question.id !== activeUnrevealedQuizId).length,
     [quizTotalQuestions, usedQuestionIds, activeUnrevealedQuizId]
   )
-  /* 真心话进度：固定题库 + 你们自定义题库中已答过的题目数 */
-  const truthPromptPool = useMemo(
-    () => [...new Set([...TRUTH_PROMPTS, ...truthPromptBank.map((row) => row.prompt)])],
-    [truthPromptBank]
+  /* 真心话可抽题库 = 固定题库 + 「对方出的」自定义题。
+     自己出的题只能由对方抽到，所以不计入我自己的可抽题库。 */
+  const peerTruthPrompts = useMemo(
+    () => truthPromptBank.filter((row) => row.created_by !== memberId).map((row) => row.prompt),
+    [truthPromptBank, memberId]
   )
-  const truthDoneCount = useMemo(() => {
-    const used = new Set(truthHistory.map((row) => row.prompt))
-    return truthPromptPool.filter((prompt) => used.has(prompt)).length
-  }, [truthHistory, truthPromptPool])
+  const truthPromptPool = useMemo(
+    () => [...new Set([...TRUTH_PROMPTS, ...peerTruthPrompts])],
+    [peerTruthPrompts]
+  )
+  /* 已答过的题：情侣对共享，任一方答过就不再重复出现 */
+  const usedTruthPrompts = useMemo(() => new Set(truthHistory.map((row) => row.prompt)), [truthHistory])
+  const truthDoneCount = useMemo(
+    () => truthPromptPool.filter((prompt) => usedTruthPrompts.has(prompt)).length,
+    [usedTruthPrompts, truthPromptPool]
+  )
   const loveMessage = LOVE_MESSAGES[dayNumber() % LOVE_MESSAGES.length]
   const mealDone = (list: Meal[]) => REQUIRED_SLOTS.filter((s) => list.some((m) => m.slot === s)).length
   const loveUnlocked = Boolean(friendId) && mealDone(myMeals) === 3 && mealDone(peerMeals) === 3
@@ -2507,14 +2564,21 @@ export default function CouplePage() {
 
   /* ------------------------------ 真心话大冒险 ------------------------------ */
 
+  /* 抽题规则：
+     1. 自己出的自定义题不进自己的池子 —— 保证「自己绝对抽不到自己出的题」；
+     2. 对方出的自定义题优先抽取 —— 保证「对方出的题一定会被自己抽到」，不被固定题库稀释；
+     3. 对方出的题抽完后，再在「固定题库 + 对方出的题」里过滤掉已答过的随机抽。 */
   const drawTruth = () => {
-    const customPrompts = truthPromptBank.map((row) => row.prompt)
-    const allPrompts = [...new Set([...TRUTH_PROMPTS, ...customPrompts])]
-    const usedPrompts = new Set(truthHistory.map((row) => row.prompt))
-    const pool = allPrompts.filter((p) => !usedPrompts.has(p))
+    const peerUnused = peerTruthPrompts.filter((p) => !usedTruthPrompts.has(p))
+    if (peerUnused.length) {
+      setTruthDraw({ type: 'truth', prompt: peerUnused[Math.floor(Math.random() * peerUnused.length)] })
+      setTruthAnswer('')
+      return
+    }
+    const pool = truthPromptPool.filter((p) => !usedTruthPrompts.has(p))
     // 全部答完时提示一轮完成，然后从头再来（第二轮同样不重复）
-    if (!pool.length) toast.show(`${allPrompts.length} 道真心话都答过啦，从头再来一轮 🎉`)
-    const list = pool.length ? pool : allPrompts
+    if (!pool.length) toast.show(`${truthPromptPool.length} 道真心话都答过啦，从头再来一轮 🎉`)
+    const list = pool.length ? pool : truthPromptPool
     setTruthDraw({ type: 'truth', prompt: list[Math.floor(Math.random() * list.length)] })
     setTruthAnswer('')
   }
@@ -2523,12 +2587,13 @@ export default function CouplePage() {
     const prompt = truthPromptText.trim()
     if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
     if (!prompt) return toast.show('先写下题目再加入题库', 'err')
+    if (truthPromptBank.some((item) => item.prompt === prompt)) return toast.show('这道题已经在题库里啦', 'err')
     setTruthPromptSaving(true)
     try {
       const row = await addCoupleTruthPrompt(memberId, friendId, memberId, prompt)
       setTruthPromptBank((prev) => [row, ...prev.filter((item) => item.prompt !== row.prompt)])
       setTruthPromptText('')
-      toast.show('已加入你们的真心话题库')
+      toast.show('已加入题库，这道题只有 TA 能抽到 🎯')
     } catch (error) {
       toast.show((error as Error).message, 'err')
     } finally {
@@ -4014,14 +4079,14 @@ export default function CouplePage() {
                     <p className="text-xs text-slate-400">真心话要写下答案，提交后对方立刻知晓；题目和答案都会留档。</p>
                   </div>
                   <span className="chip shrink-0 border-rose-200 bg-rose-50 text-rose-600">
-                    已答 {truthDoneCount}/{TRUTH_PROMPTS.length}
+                    已答 {truthDoneCount}/{truthPromptPool.length}
                   </span>
                 </div>
                 {/* 答题进度条：已答过的题不再重复出现，全部答完后从头再来 */}
                 <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
                   <div
                     className="h-full rounded-full bg-gradient-to-r from-rose-400 to-orange-400 transition-all duration-500"
-                    style={{ width: `${(truthDoneCount / TRUTH_PROMPTS.length) * 100}%` }}
+                    style={{ width: `${(truthDoneCount / truthPromptPool.length) * 100}%` }}
                   />
                 </div>
               </div>
@@ -4064,18 +4129,27 @@ export default function CouplePage() {
               )}
               <div className="space-y-2 rounded-xl bg-slate-50 p-3">
                 <div className="text-xs font-semibold text-slate-600">加入你们的真心话题库</div>
+                <p className="text-[11px] leading-relaxed text-slate-400">
+                  你出的题只有 TA 能抽到，你不会抽到自己出的题；TA 出的题会优先被你抽到。
+                </p>
                 <div className="flex gap-2">
                   <input className="input min-w-0 flex-1" maxLength={300} value={truthPromptText} onChange={(e) => setTruthPromptText(e.target.value)} placeholder="写一道只有你们懂的题…" />
                   <button className="btn-primary shrink-0 px-3" disabled={truthPromptSaving || !truthPromptText.trim()} onClick={() => void addTruthPrompt()}>{truthPromptSaving ? '保存中…' : '加入'}</button>
                 </div>
                 {truthPromptBank.length > 0 && (
                   <div className="space-y-1 text-[11px] text-slate-500">
-                    {truthPromptBank.map((item) => (
-                      <div key={item.id} className="flex items-start gap-2 rounded-lg bg-white p-2">
-                        <span className="min-w-0 flex-1 break-words">{item.prompt}</span>
-                        <button className="shrink-0 text-rose-500" onClick={() => void removeTruthPrompt(item.id)}>删除</button>
-                      </div>
-                    ))}
+                    {truthPromptBank.map((item) => {
+                      const fromMe = item.created_by === memberId
+                      return (
+                        <div key={item.id} className="flex items-start gap-2 rounded-lg bg-white p-2">
+                          <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] ${fromMe ? 'bg-rose-50 text-rose-500' : 'bg-brand-50 text-brand-600'}`}>
+                            {fromMe ? '我出的' : 'TA 出的'}
+                          </span>
+                          <span className="min-w-0 flex-1 break-words">{item.prompt}</span>
+                          <button className="shrink-0 text-rose-500" onClick={() => void removeTruthPrompt(item.id)}>删除</button>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -4288,10 +4362,13 @@ export default function CouplePage() {
                         </span>
                       ))}
                   </div>
-                  <div className="touch-scroll max-h-40 space-y-1 overflow-y-auto rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
-                    {[...boardState.log].reverse().map((item, index) => (
-                      <p key={`${item.at}-${index}`} className="break-words">{item.text}</p>
-                    ))}
+                  <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+                    <LogList
+                      items={[...boardState.log].reverse().map((item) => item.text)}
+                      page={boardLogPage}
+                      onPage={setBoardLogPage}
+                      empty="还没有动态，掷骰开始吧～"
+                    />
                   </div>
                   {boardState.dice !== null && <p className="text-center text-sm text-brand-600">上次掷出 {boardState.dice} 点</p>}
                   {boardState.pending && (
@@ -4372,7 +4449,10 @@ export default function CouplePage() {
                     <div key={row.id} className="rounded-xl bg-slate-50 p-3 text-xs">
                       <button
                         className="flex w-full items-center justify-between gap-2 text-left"
-                        onClick={() => setBoardHistoryOpenId(open ? null : row.id)}
+                        onClick={() => {
+                          setBoardHistoryOpenId(open ? null : row.id)
+                          if (!open) setBoardDetailLogPage(0)
+                        }}
                       >
                         <span className="min-w-0 flex-1 truncate font-semibold text-slate-700">
                           🏁 {winnerName} 胜 {loserName}
@@ -4387,10 +4467,13 @@ export default function CouplePage() {
                           <p className="text-[11px] text-slate-400">
                             棋盘 {row.state.size} 格 · 步数 {row.state.stepMin}-{row.state.stepMax} · 终局位置 ❤️ {row.state.positions[0] + 1} 格 / 💙 {row.state.positions[1] + 1} 格
                           </p>
-                          <div className="touch-scroll max-h-44 space-y-1 overflow-y-auto rounded-lg bg-white p-2 text-[11px] leading-relaxed text-slate-600">
-                            {row.state.log.map((item, index) => (
-                              <p key={index} className="break-words">{item.text}</p>
-                            ))}
+                          <div className="rounded-lg bg-white p-2 text-[11px] leading-relaxed text-slate-600">
+                            <LogList
+                              items={row.state.log.map((item) => item.text)}
+                              page={boardDetailLogPage}
+                              onPage={setBoardDetailLogPage}
+                              empty="本局没有过程记录"
+                            />
                           </div>
                         </div>
                       )}
@@ -4540,10 +4623,13 @@ export default function CouplePage() {
                       )
                     })}
                   </div>
-                  <div className="touch-scroll max-h-40 space-y-1 overflow-y-auto rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
-                    {[...minesState.log].reverse().map((item, index) => (
-                      <p key={`${item.at}-${index}`} className="break-words">{item.text}</p>
-                    ))}
+                  <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+                    <LogList
+                      items={[...minesState.log].reverse().map((item) => item.text)}
+                      page={minesLogPage}
+                      onPage={setMinesLogPage}
+                      empty="还没有动态，翻开第一格吧～"
+                    />
                   </div>
                   <button className="btn-ghost w-full text-rose-600" disabled={minesSaving} onClick={() => void endMinesGame()}>
                     结束本局（销毁数据重新设置）
@@ -4567,7 +4653,10 @@ export default function CouplePage() {
                     <div key={row.id} className="rounded-xl bg-slate-50 p-3 text-xs">
                       <button
                         className="flex w-full items-center justify-between gap-2 text-left"
-                        onClick={() => setMinesHistoryOpenId(open ? null : row.id)}
+                        onClick={() => {
+                          setMinesHistoryOpenId(open ? null : row.id)
+                          if (!open) setMinesDetailLogPage(0)
+                        }}
                       >
                         <span className="min-w-0 flex-1 truncate font-semibold text-slate-700">
                           🎉 通关 · {row.state.rows}×{row.state.cols} · 💣{hitCount}
@@ -4583,12 +4672,13 @@ export default function CouplePage() {
                             <p className="text-[11px] text-emerald-600">🎁 解锁奖励：{row.state.reward}</p>
                           )}
                           {hitCount > 0 ? (
-                            <div className="touch-scroll max-h-44 space-y-1 overflow-y-auto rounded-lg bg-white p-2 text-[11px] leading-relaxed text-slate-600">
-                              {row.state.hits.map((h, i) => (
-                                <p key={i} className="break-words">
-                                  💣 {h.player === myMinesIndex ? '你' : friendName} 踩雷：{h.task}
-                                </p>
-                              ))}
+                            <div className="rounded-lg bg-white p-2 text-[11px] leading-relaxed text-slate-600">
+                              <LogList
+                                items={row.state.hits.map((h) => `💣 ${h.player === myMinesIndex ? '你' : friendName} 踩雷：${h.task}`)}
+                                page={minesDetailLogPage}
+                                onPage={setMinesDetailLogPage}
+                                empty="本局没有踩雷记录"
+                              />
                             </div>
                           ) : (
                             <p className="text-[11px] text-slate-400">全程零踩雷，默契满分 💯</p>
@@ -4683,7 +4773,10 @@ export default function CouplePage() {
                               <button
                                 type="button"
                                 className="mt-1 text-[11px] text-brand-500 active:text-brand-600"
-                                onClick={() => setWufuHistoryOpenId(open ? null : row.id)}
+                                onClick={() => {
+                                  setWufuHistoryOpenId(open ? null : row.id)
+                                  if (!open) setWufuDetailLogPage(0)
+                                }}
                               >
                                 {open ? '收起棋局快照 ▴' : `展开棋局快照 ▾（共 ${s.log.length} 步）`}
                               </button>
@@ -4712,10 +4805,13 @@ export default function CouplePage() {
                                       })}
                                     </div>
                                   </div>
-                                  <div className="max-h-40 overflow-y-auto rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
-                                    {s.log.map((item, i) => (
-                                      <p key={i} className="break-words">{item.text}</p>
-                                    ))}
+                                  <div className="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
+                                    <LogList
+                                      items={s.log.map((item) => item.text)}
+                                      page={wufuDetailLogPage}
+                                      onPage={setWufuDetailLogPage}
+                                      empty="本局没有过程记录"
+                                    />
                                   </div>
                                 </div>
                               )}
@@ -4880,15 +4976,13 @@ export default function CouplePage() {
 
                   <div className="space-y-1">
                     <h4 className="text-xs font-semibold text-slate-500">📜 对局动态</h4>
-                    {wufuState.log.length === 0 ? (
-                      <p className="rounded-xl bg-slate-50 py-2 text-center text-[11px] text-slate-400">暂无动态</p>
-                    ) : (
-                      <div className="touch-scroll max-h-40 space-y-1 overflow-y-auto rounded-lg bg-slate-50 p-2 text-[11px] leading-relaxed text-slate-600">
-                        {[...wufuState.log].reverse().map((item, i) => (
-                          <p key={i} className="break-words">{item.text}</p>
-                        ))}
-                      </div>
-                    )}
+                    <div className="rounded-lg bg-slate-50 p-2 text-[11px] leading-relaxed text-slate-600">
+                      <LogList
+                        items={[...wufuState.log].reverse().map((item) => item.text)}
+                        page={wufuLogPage}
+                        onPage={setWufuLogPage}
+                      />
+                    </div>
                   </div>
 
                   {/* 摆方对局历史：正常分出胜负或投降认输后自动存档，点击展开查看棋局快照 */}
@@ -4925,7 +5019,10 @@ export default function CouplePage() {
                               <button
                                 type="button"
                                 className="mt-1 text-[11px] text-brand-500 active:text-brand-600"
-                                onClick={() => setWufuHistoryOpenId(open ? null : row.id)}
+                                onClick={() => {
+                                  setWufuHistoryOpenId(open ? null : row.id)
+                                  if (!open) setWufuDetailLogPage(0)
+                                }}
                               >
                                 {open ? '收起棋局快照 ▴' : `展开棋局快照 ▾（共 ${s.log.length} 步）`}
                               </button>
@@ -4954,10 +5051,13 @@ export default function CouplePage() {
                                       })}
                                     </div>
                                   </div>
-                                  <div className="max-h-40 overflow-y-auto rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
-                                    {s.log.map((item, i) => (
-                                      <p key={i} className="break-words">{item.text}</p>
-                                    ))}
+                                  <div className="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
+                                    <LogList
+                                      items={s.log.map((item) => item.text)}
+                                      page={wufuDetailLogPage}
+                                      onPage={setWufuDetailLogPage}
+                                      empty="本局没有过程记录"
+                                    />
                                   </div>
                                 </div>
                               )}
@@ -5085,8 +5185,13 @@ export default function CouplePage() {
                       </div>
                     </div>
                   </div>
-                  <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
-                    {[...gomokuState.log].reverse().map((item, index) => <p key={index}>{item.text}</p>)}
+                  <div className="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
+                    <LogList
+                      items={[...gomokuState.log].reverse().map((item) => item.text)}
+                      page={gomokuLogPage}
+                      onPage={setGomokuLogPage}
+                      empty="还没有落子记录"
+                    />
                   </div>
                 </>
               ) : null}
@@ -5740,7 +5845,7 @@ export default function CouplePage() {
             清空
           </button>
         </div>
-        <div className="touch-scroll max-h-72 space-y-2 overflow-y-auto rounded-xl bg-slate-50 p-3">
+        <div className="space-y-2 rounded-xl bg-slate-50 p-3">
           {messages.length === 0 && (
             <div className="py-5 text-center text-xs text-slate-400">发一句“今天也要开心”吧</div>
           )}

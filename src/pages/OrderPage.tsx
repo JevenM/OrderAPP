@@ -3,6 +3,7 @@ import { createDishRequest, createOrder, listDishes, listOrders } from '../lib/d
 import { pushEmail } from '../lib/notify'
 import { timeCn } from '../lib/date'
 import { useRealtime } from '../lib/realtime'
+import Pager from '../components/Pager'
 import { useToast } from '../components/Toast'
 import { useSession } from '../store/session'
 import { ORDER_STATUS, SLOTS, type Dish, type MealSlot, type OrderWithItems } from '../lib/types'
@@ -12,6 +13,8 @@ type CartItem = { dish_id: string | null; dish_name: string; emoji: string; qty:
 /** 购物车里「自定义菜」的 key 前缀（菜单菜直接用 dish.id） */
 const CUSTOM_PREFIX = 'custom:'
 const CUSTOM_EMOJI = '✨'
+/** 购物车每页显示的条目数：悬浮面板不高，超出就翻页（内部滚动条在苹果设备上划不动） */
+const CART_PAGE_SIZE = 6
 
 export default function OrderPage() {
   const toast = useToast()
@@ -30,6 +33,8 @@ export default function OrderPage() {
   const [selectedDish, setSelectedDish] = useState<Dish | null>(null)
   const [wheelRotation, setWheelRotation] = useState(0)
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
+  /* 购物车分页 */
+  const [cartPage, setCartPage] = useState(0)
 
   const load = useCallback(async () => {
     try {
@@ -83,6 +88,9 @@ export default function OrderPage() {
   const totalQty = Object.values(cart).reduce((a, b) => a + b, 0)
   const picked = Object.entries(cart).filter(([, q]) => q > 0)
   const customPicked = picked.filter(([key]) => key.startsWith(CUSTOM_PREFIX))
+  /* 数量减到 0 时条目会消失，页码要收敛，否则会停在空白页 */
+  const cartPages = Math.max(1, Math.ceil(picked.length / CART_PAGE_SIZE))
+  const safeCartPage = Math.min(Math.max(cartPage, 0), cartPages - 1)
 
   const changeKey = (key: string, delta: number) => {
     setCart((c) => {
@@ -393,7 +401,7 @@ export default function OrderPage() {
       )}
 
       {totalQty > 0 && (
-        <aside className="fixed bottom-20 right-3 z-20 flex max-h-[55vh] w-56 max-w-[calc(100vw-1.5rem)] flex-col rounded-2xl border border-brand-100 bg-white/95 p-3 shadow-card backdrop-blur sm:right-[max(0.75rem,calc((100vw-28rem)/2))]">
+        <aside className="fixed bottom-20 right-3 z-20 flex w-56 max-w-[calc(100vw-1.5rem)] flex-col rounded-2xl border border-brand-100 bg-white/95 p-3 shadow-card backdrop-blur sm:right-[max(0.75rem,calc((100vw-28rem)/2))]">
           <div className="mb-2 flex items-center justify-between gap-2 border-b border-brand-100 pb-2">
             <div className="text-xs font-medium text-slate-600">
               已选 <span className="text-base font-semibold text-brand-600">{totalQty}</span> 份
@@ -402,8 +410,8 @@ export default function OrderPage() {
               {submitting ? '提交中…' : '提交订单'}
             </button>
           </div>
-          <ul className="min-h-0 space-y-1 overflow-y-auto">
-            {picked.map(([key, qty]) => {
+          <ul className="space-y-1">
+            {picked.slice(safeCartPage * CART_PAGE_SIZE, (safeCartPage + 1) * CART_PAGE_SIZE).map(([key, qty]) => {
               const dish = dishes.find((entry) => entry.id === key)
               const label = key.startsWith(CUSTOM_PREFIX) ? key.slice(CUSTOM_PREFIX.length) : dish?.name ?? '已下架的菜'
               const emoji = key.startsWith(CUSTOM_PREFIX) ? CUSTOM_EMOJI : dish?.emoji ?? '🍽️'
@@ -433,6 +441,7 @@ export default function OrderPage() {
               )
             })}
           </ul>
+          <Pager page={safeCartPage} total={picked.length} pageSize={CART_PAGE_SIZE} onChange={setCartPage} />
         </aside>
       )}
     </div>

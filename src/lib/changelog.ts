@@ -25,6 +25,18 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.39',
+    date: '2026-10-17',
+    title: '真心话出题归属与对局日志分页',
+    items: [
+      { kind: 'fix', text: '真心话自定义题目按出题人隔离：自己出的题只有对方能抽到，自己绝对抽不到自己出的题' },
+      { kind: 'improve', text: '对方出的真心话题目优先抽取，保证 TA 专门给你出的题一定先被抽到，不会被固定题库稀释' },
+      { kind: 'improve', text: '真心话题库列表标注「我出的 / TA 出的」，进度按各自可抽题目统计' },
+      { kind: 'improve', text: '飞行棋、扫雷、摆方、五子棋的对局动态与各局详情日志改为分页，避免苹果设备滚动列表无法上下滑动' },
+      { kind: 'improve', text: '后台的西瓜分记录、自定义真心话题库、可抽题目勾选列表，以及点餐页购物车改为分页显示' },
+    ],
+  },
+  {
     version: '1.9.38',
     date: '2026-10-16',
     title: '互动历史分页与倒计时表情优化',

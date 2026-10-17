@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Pager from '../components/Pager'
 import { useToast } from '../components/Toast'
 import { deleteCoupleQuizBankQuestion, listAllFriendships, listCoupleQuizBank, listCoupleQuizPairQuestions, saveCoupleQuizBankQuestion, saveCoupleQuizPairQuestions, setCoupleQuizBankQuestionEnabled, type CoupleQuizBankRow } from '../lib/db'
 import { ALL_QUESTIONS, type Question, type QuestionKind } from './CouplePage'
 import { useMembers } from '../store/members'
 
 const EMPTY: Omit<Question, 'id'> = { title: '', a: '', b: '', kind: '轻松版' }
+/** 每对情侣的可抽题目勾选列表每页条数 */
+const PICK_PAGE_SIZE = 20
 
 export default function AdminCoupleQuestions() {
   const toast = useToast()
@@ -18,6 +21,8 @@ export default function AdminCoupleQuestions() {
   const [filter, setFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  /* 题目勾选列表分页：内部滚动条在苹果设备上划不动，改为翻页 */
+  const [pickPage, setPickPage] = useState(0)
 
   const memberNames = useMemo(() => new Map(members.map((member) => [member.id, member.name])), [members])
   const pair = pairs.find((item) => `${item.a}|${item.b}` === selectedPair)
@@ -25,6 +30,9 @@ export default function AdminCoupleQuestions() {
     const normalized = filter.trim().toLocaleLowerCase()
     return questions.filter((question) => !normalized || `${question.title} ${question.a} ${question.b}`.toLocaleLowerCase().includes(normalized))
   }, [questions, filter])
+  /* 题目被删除后列表会变短，页码要收敛，否则会停在空白页 */
+  const pickPages = Math.max(1, Math.ceil(questions.length / PICK_PAGE_SIZE))
+  const safePickPage = Math.min(Math.max(pickPage, 0), pickPages - 1)
 
   const reloadQuestions = useCallback(async () => {
     setLoading(true)
@@ -174,8 +182,8 @@ export default function AdminCoupleQuestions() {
             <span>{usesDefaultPool ? '当前使用全部启用题目' : `当前自定义题池：${selectedIds.size} 道`}</span>
             {<button className="underline" disabled={saving} onClick={() => void useGlobalPool()}>{usesDefaultPool ? '应用勾选项' : '恢复全部启用题目'}</button>}
           </div>
-          <div className="max-h-[45vh] space-y-2 overflow-y-auto">
-            {questions.map((question) => (
+          <div className="space-y-2">
+            {questions.slice(safePickPage * PICK_PAGE_SIZE, (safePickPage + 1) * PICK_PAGE_SIZE).map((question) => (
               <label key={question.id} className={`flex cursor-pointer items-start gap-2 rounded-xl border p-3 ${!question.enabled ? 'opacity-50' : ''}`}>
                 <input className="mt-1" type="checkbox" checked={selectedIds.has(question.id)} disabled={!question.enabled || saving} onChange={() => toggleQuestion(question.id)} />
                 <span className="min-w-0 flex-1">
@@ -184,6 +192,7 @@ export default function AdminCoupleQuestions() {
                 </span>
               </label>
             ))}
+            <Pager page={safePickPage} total={questions.length} pageSize={PICK_PAGE_SIZE} onChange={setPickPage} />
           </div>
           <button className="btn-primary w-full" disabled={saving || !selectedIds.size} onClick={() => void savePairQuestions()}>保存此情侣题池</button>
         </>}

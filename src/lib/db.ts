@@ -1249,9 +1249,20 @@ export async function addCoupleTruthPrompt(userA: string, userB: string, created
   const clean = prompt.trim().slice(0, 300)
   if (!clean) throw new Error('题目不能为空')
   const [memberA, memberB] = couplePair(userA, userB)
+  /* 题目按「情侣对 + 题目内容」唯一。已存在时必须保留原出题人：
+     出题人决定了谁能抽到这道题，被后加的人覆盖会把归属翻转，对方就抽不到了。 */
+  const { data: exists, error: existError } = await supabase
+    .from('couple_truth_prompts')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .eq('prompt', clean)
+    .maybeSingle()
+  if (existError) fail(existError, '保存自定义真心话题目')
+  if (exists) return exists as CoupleTruthPromptRow
   const { data, error } = await supabase
     .from('couple_truth_prompts')
-    .upsert({ member_a: memberA, member_b: memberB, created_by: createdBy, prompt: clean }, { onConflict: 'member_a,member_b,prompt' })
+    .insert({ member_a: memberA, member_b: memberB, created_by: createdBy, prompt: clean })
     .select()
     .single()
   if (error || !data) fail(error, '保存自定义真心话题目')
