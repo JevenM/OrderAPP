@@ -25,6 +25,15 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.42',
+    date: '2026-10-18',
+    title: '西瓜分变动补上铃铛提醒',
+    items: [
+      { kind: 'fix', text: '对方给我加减西瓜分后，铃铛不再遗漏提醒（之前在线的一方会被当成「已前端弹窗」而跳过通知，实际又没有对应弹窗）' },
+      { kind: 'improve', text: '铃铛里新增 🍉 图标，西瓜分消息点击直达西瓜分模块' },
+    ],
+  },
+  {
     version: '1.9.41',
     date: '2026-10-18',
     title: '自定义题抽到后才揭晓',

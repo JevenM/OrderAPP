@@ -2402,6 +2402,11 @@ export async function deleteCoupleWatermelonLogs(ids: string[]): Promise<void> {
   if (error && !isMissingTable(error)) fail(error, '删除西瓜分明细')
 }
 
+/**
+ * 对方给我加减西瓜分后落一条铃铛提醒。
+ * 这里一定要写库、不能按在线分流：西瓜分没有「在线时前端弹窗」的替代路径，
+ * 在线的一方拿不到铃铛记录就等于完全收不到提醒。
+ */
 export async function notifyWatermelonScore(recipient: string, senderName: string, delta: number, reason: string): Promise<void> {
   if (!recipient) return
   const sign = delta > 0 ? `+${delta}` : String(delta)
@@ -2950,8 +2955,10 @@ async function insertFeedNotices(
 ): Promise<void> {
   const unique = [...new Set(recipients.filter(Boolean))]
   if (!unique.length) return
-  // 游戏类（board / mines / wufu / gomoku / dice）通知：在线用户跳过写铃铛（前端弹窗已提示）
-  const gameTypes: ReadonlySet<string> = new Set(['board', 'mines', 'wufu', 'gomoku', 'watermelon', 'dice'])
+  // 对局类（board / mines / wufu / gomoku / dice）通知：在线用户跳过写铃铛（前端弹窗已提示）。
+  // 注意不要把 watermelon 放进来 —— 西瓜分是「对方给我加减分」的结果变更，没有对应的前端弹窗
+  // （CouplePage 只静默刷新分数和明细），一旦按在线分流，在线的一方就既没弹窗也没铃铛记录。
+  const gameTypes: ReadonlySet<string> = new Set(['board', 'mines', 'wufu', 'gomoku', 'dice'])
   const filtered = gameTypes.has(notice.type)
     ? await Promise.all(
         unique.map(async (id) => {
