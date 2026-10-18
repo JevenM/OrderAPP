@@ -4255,10 +4255,10 @@ export default function CouplePage() {
                             <span className="min-w-0 flex-1 text-slate-400">你出的题，等 TA 抽到后才公开</span>
                             <button className="shrink-0 text-rose-500" onClick={() => void (isTruthBank ? removeTruthPrompt(item.id) : removeDarePrompt(item.id))}>删除</button>
                           </div>
-                        ))}
+                        ))} */}
                         {pendingPeer > 0 && (
                           <p className="text-[10px] text-slate-400">还有 {pendingPeer} 道 TA 出的题，等你抽到后揭晓</p>
-                        )} */}
+                        )}
                       </div>
                     )}
                   </div>
