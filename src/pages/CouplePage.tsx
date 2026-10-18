@@ -1469,14 +1469,17 @@ export default function CouplePage() {
   const [scratchHistoryPage, setScratchHistoryPage] = useState(0)
   const [messageHistoryPage, setMessageHistoryPage] = useState(0)
 
-  const questionPool = questionKind === '自定义'
-    ? customQuestions
-    : (managedQuestions ?? ALL_QUESTIONS).filter((question) => question.kind === questionKind && (pairQuestionIds === null || pairQuestionIds.includes(question.id)))
   /* 同步抉择总进度：总题库 = 题库全部题目（含轻松版/走心版）+ 双方自定义题；
      已做 = 历史记录里做过的题（进行中、还没双方答完的那道不计入，保证两边数字一致） */
   const quizTotalQuestions = useMemo(
     () => [...(managedQuestions ?? ALL_QUESTIONS), ...customQuestions],
     [managedQuestions, customQuestions]
+  )
+  /* 自定义题在「被出到」之前不公开：新加的题不计入「已出过」的数量，
+     等这道题真的被出到、双方都看到题面了才算数（抽题本身不受影响）。 */
+  const customRevealedCount = useMemo(
+    () => customQuestions.filter((question) => usedQuestionIds.has(question.id)).length,
+    [customQuestions, usedQuestionIds]
   )
   const activeUnrevealedQuizId = quiz.question && !quiz.revealed ? quiz.question.id : null
   const quizDoneCount = useMemo(
@@ -4129,7 +4132,7 @@ export default function CouplePage() {
                 <div className="flex min-w-0 items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <h3 className="font-semibold">🎲真心话大冒险</h3>
-                    <p className="text-xs text-slate-400">真心话要写下答案，提交后对方立刻知晓；题目和答案都会留档。</p>
+                    <p className="text-xs text-slate-400">真心话要写下答案；题目和答案都会留档。</p>
                   </div>
                   <span className="chip shrink-0 border-rose-200 bg-rose-50 text-rose-600">
                     已答 {truthDoneCount}/{truthPromptPool.length}
@@ -4185,11 +4188,17 @@ export default function CouplePage() {
                 const bank = isTruthBank ? truthPromptBank : darePromptBank
                 const text = isTruthBank ? truthPromptText : darePromptText
                 const saving = isTruthBank ? truthPromptSaving : darePromptSaving
+                /* 自定义题在「对方抽到」之前不公开：
+                   只有出现在记录里的题才显示题面，没被抽到的一律不露内容，
+                   双方抽题都保留悬念；自己新加的题留一条遮罩，方便发现写错了能撤回。 */
+                const revealed = bank.filter((item) => usedTruthPrompts.has(item.prompt))
+                const pendingMine = bank.filter((item) => !usedTruthPrompts.has(item.prompt) && item.created_by === memberId)
+                const pendingPeer = bank.length - revealed.length - pendingMine.length
                 return (
                   <div className="space-y-2 rounded-xl bg-slate-50 p-3">
                     <div className="text-xs font-semibold text-slate-600">加入你们的题库</div>
                     <p className="text-[11px] leading-relaxed text-slate-400">
-                      你出的题只有 TA 能抽到，你不会抽到自己出的题；TA 出的题会优先被你抽到。
+                      你出的题只有 TA 能抽到，你不会抽到自己出的题；TA 出的题会优先被你抽到。题目在对方抽到之前不公开。
                     </p>
                     {/* 两个题库共用一块面板，用分段按钮切换要维护的题库 */}
                     <div className="grid grid-cols-2 gap-1 rounded-lg bg-white p-1">
@@ -4225,10 +4234,10 @@ export default function CouplePage() {
                       </button>
                     </div>
                     {bank.length === 0 ? (
-                      <p className="text-[11px] text-slate-400">这个题库还是空的，写下第一道吧～</p>
+                      <p className="text-[11px] text-slate-400">这个题库还是空的，加入第一道吧～</p>
                     ) : (
                       <div className="space-y-1 text-[11px] text-slate-500">
-                        {bank.map((item) => {
+                        {revealed.map((item) => {
                           const fromMe = item.created_by === memberId
                           return (
                             <div key={item.id} className="flex items-start gap-2 rounded-lg bg-white p-2">
@@ -4240,6 +4249,16 @@ export default function CouplePage() {
                             </div>
                           )
                         })}
+                        {/* {pendingMine.map((item) => (
+                          <div key={item.id} className="flex items-start gap-2 rounded-lg bg-white p-2">
+                            <span className="shrink-0 rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-400">🔒 待揭晓</span>
+                            <span className="min-w-0 flex-1 text-slate-400">你出的题，等 TA 抽到后才公开</span>
+                            <button className="shrink-0 text-rose-500" onClick={() => void (isTruthBank ? removeTruthPrompt(item.id) : removeDarePrompt(item.id))}>删除</button>
+                          </div>
+                        ))}
+                        {pendingPeer > 0 && (
+                          <p className="text-[10px] text-slate-400">还有 {pendingPeer} 道 TA 出的题，等你抽到后揭晓</p>
+                        )} */}
                       </div>
                     )}
                   </div>
@@ -4411,7 +4430,7 @@ export default function CouplePage() {
                     <button className="btn-ghost w-full" onClick={() => setBoardSetup(false)}>返回当前棋局</button>
                   )}
                   <p className="text-center text-[11px] leading-relaxed text-slate-400">
-                    开局双方各掷一次骰子定先手（大点数先走）；格子任务做给对方，🎁福利自己享受。
+                    开局双方各掷一次骰子定先手；格子任务做给对方，🎁福利自己享受。
                   </p>
                 </>
               ) : boardState ? (
@@ -6150,7 +6169,9 @@ export default function CouplePage() {
             <button className="btn-soft w-full" onClick={addCustomQuestion}>
               加入自定义题库
             </button>
-            <p className="text-center text-[11px] text-slate-400">已有 {questionPool.length} 道自定义题</p>
+            <p className="text-center text-[11px] text-slate-400">
+              已出过 {customRevealedCount} 道自定义题{customQuestions.length > customRevealedCount ? ` · ${customQuestions.length - customRevealedCount} 道待揭晓` : ''}
+            </p>
           </div>
         )}
       </section>

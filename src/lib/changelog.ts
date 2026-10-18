@@ -25,6 +25,16 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.41',
+    date: '2026-10-18',
+    title: '自定义题抽到后才揭晓',
+    items: [
+      { kind: 'improve', text: '真心话 / 大冒险：自定义题在被抽到之前不再显示题面，双方都看不到，抽到后才公开' },
+      // { kind: 'improve', text: '自己新加的题显示成「🔒 待揭晓」遮罩，写错了还能撤回删除' },
+      { kind: 'improve', text: '同步抉择：自定义题在出到之前不计入「已出过」的数量，只显示「N 道待揭晓」' },
+    ],
+  },
+  {
     version: '1.9.40',
     date: '2026-10-18',
     title: '大冒险自定义出题与「我们的下一步」专题',
