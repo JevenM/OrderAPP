@@ -2772,15 +2772,15 @@ export default function CouplePage() {
     }
   }
 
-  const removeTruthPrompt = async (id: string) => {
-    try {
-      await deleteCoupleTruthPrompt(id)
-      setTruthPromptBank((prev) => prev.filter((item) => item.id !== id))
-      toast.show('已从自定义题库移除')
-    } catch (error) {
-      toast.show((error as Error).message, 'err')
-    }
-  }
+  // const removeTruthPrompt = async (id: string) => {
+  //   try {
+  //     await deleteCoupleTruthPrompt(id)
+  //     setTruthPromptBank((prev) => prev.filter((item) => item.id !== id))
+  //     toast.show('已从自定义题库移除')
+  //   } catch (error) {
+  //     toast.show((error as Error).message, 'err')
+  //   }
+  // }
 
   const addDarePrompt = async () => {
     const prompt = darePromptText.trim()
