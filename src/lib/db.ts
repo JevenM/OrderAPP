@@ -1274,6 +1274,58 @@ export async function deleteCoupleTruthPrompt(id: string): Promise<void> {
   if (error) fail(error, '删除自定义真心话题目')
 }
 
+/** 大冒险自定义题库：字段与抽取口径和真心话题库保持一致 */
+export interface CoupleDarePromptRow {
+  id: string
+  member_a: string
+  member_b: string
+  prompt: string
+  created_by: string
+  created_at: string
+}
+
+export async function listCoupleDarePromptBank(userA: string, userB: string): Promise<CoupleDarePromptRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_dare_prompts')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .order('created_at', { ascending: false })
+    .limit(300)
+  if (error) fail(error, '加载自定义大冒险题库')
+  return (data ?? []) as CoupleDarePromptRow[]
+}
+
+export async function addCoupleDarePrompt(userA: string, userB: string, createdBy: string, prompt: string): Promise<CoupleDarePromptRow> {
+  const clean = prompt.trim().slice(0, 300)
+  if (!clean) throw new Error('题目不能为空')
+  const [memberA, memberB] = couplePair(userA, userB)
+  /* 已存在时保留原出题人：归属决定了谁能抽到这道题，被覆盖会让对方抽不到 */
+  const { data: exists, error: existError } = await supabase
+    .from('couple_dare_prompts')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .eq('prompt', clean)
+    .maybeSingle()
+  if (existError) fail(existError, '保存自定义大冒险题目')
+  if (exists) return exists as CoupleDarePromptRow
+  const { data, error } = await supabase
+    .from('couple_dare_prompts')
+    .insert({ member_a: memberA, member_b: memberB, created_by: createdBy, prompt: clean })
+    .select()
+    .single()
+  if (error || !data) fail(error, '保存自定义大冒险题目')
+  return data as CoupleDarePromptRow
+}
+
+export async function deleteCoupleDarePrompt(id: string): Promise<void> {
+  const { error } = await supabase.from('couple_dare_prompts').delete().eq('id', id)
+  if (error) fail(error, '删除自定义大冒险题目')
+}
+
 export async function listCoupleQuizHistory(userA: string, userB: string, limit = 200): Promise<CoupleQuizHistoryRow[]> {
   if (!userA || !userB || userA === userB) return []
   const [memberA, memberB] = couplePair(userA, userB)
@@ -2330,6 +2382,18 @@ export async function deleteCoupleTruthPrompts(ids: string[]): Promise<void> {
   if (!ids.length) return
   const { error } = await supabase.from('couple_truth_prompts').delete().in('id', ids)
   if (error && !isMissingTable(error)) fail(error, '删除自定义真心话题目')
+}
+
+export async function listAllCoupleDarePromptBank(limit = 500): Promise<CoupleDarePromptRow[]> {
+  const { data, error } = await supabase.from('couple_dare_prompts').select('*').order('created_at', { ascending: false }).limit(limit)
+  if (error && !isMissingTable(error)) fail(error, '加载全部自定义大冒险题库')
+  return (data ?? []) as CoupleDarePromptRow[]
+}
+
+export async function deleteCoupleDarePrompts(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { error } = await supabase.from('couple_dare_prompts').delete().in('id', ids)
+  if (error && !isMissingTable(error)) fail(error, '删除自定义大冒险题目')
 }
 
 export async function deleteCoupleWatermelonLogs(ids: string[]): Promise<void> {

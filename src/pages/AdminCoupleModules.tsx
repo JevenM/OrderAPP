@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   deleteCoupleTruthPrompts,
+  deleteCoupleDarePrompts,
   listAllCoupleCountdown,
   listAllCoupleScratch,
   listAllCoupleTruthPromptBank,
+  listAllCoupleDarePromptBank,
   listAllCoupleWatermelonLogs,
   type CoupleCountdownRow,
+  type CoupleDarePromptRow,
   type CoupleScratchRow,
   type CoupleTruthPromptRow,
   type CoupleWatermelonLogRow,
@@ -25,10 +28,12 @@ export default function AdminCoupleModules() {
   const [countdowns, setCountdowns] = useState<CoupleCountdownRow[]>([])
   const [scratches, setScratches] = useState<CoupleScratchRow[]>([])
   const [prompts, setPrompts] = useState<CoupleTruthPromptRow[]>([])
+  const [darePrompts, setDarePrompts] = useState<CoupleDarePromptRow[]>([])
   const [loading, setLoading] = useState(true)
   /* 长列表分页：内部滚动条在苹果设备上划不动，改为翻页 */
   const [watermelonPage, setWatermelonPage] = useState(0)
   const [promptsPage, setPromptsPage] = useState(0)
+  const [darePromptsPage, setDarePromptsPage] = useState(0)
 
   const nameOf = (id: string) => members.find((member) => member.id === id)?.name ?? '未知成员'
   const pairLabel = (a: string, b: string) => `${nameOf(a)} ↔ ${nameOf(b)}`
@@ -36,16 +41,18 @@ export default function AdminCoupleModules() {
   const reload = useCallback(async () => {
     setLoading(true)
     try {
-      const [scoreLogs, countdownRows, scratchRows, promptRows] = await Promise.all([
+      const [scoreLogs, countdownRows, scratchRows, promptRows, darePromptRows] = await Promise.all([
         listAllCoupleWatermelonLogs(),
         listAllCoupleCountdown(),
         listAllCoupleScratch(),
         listAllCoupleTruthPromptBank(),
+        listAllCoupleDarePromptBank(),
       ])
       setWatermelon(scoreLogs)
       setCountdowns(countdownRows)
       setScratches(scratchRows)
       setPrompts(promptRows)
+      setDarePrompts(darePromptRows)
     } catch (error) {
       toast.show((error as Error).message, 'err')
     } finally {
@@ -60,6 +67,19 @@ export default function AdminCoupleModules() {
     try {
       await deleteCoupleTruthPrompts(prompts.map((row) => row.id))
       setPrompts([])
+      setPromptsPage(0)
+      toast.show('自定义题库已清空')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    }
+  }
+
+  const removeDarePrompts = async () => {
+    if (!darePrompts.length || !window.confirm(`确定删除全部 ${darePrompts.length} 条自定义大冒险题目吗？`)) return
+    try {
+      await deleteCoupleDarePrompts(darePrompts.map((row) => row.id))
+      setDarePrompts([])
+      setDarePromptsPage(0)
       toast.show('自定义题库已清空')
     } catch (error) {
       toast.show((error as Error).message, 'err')
@@ -72,7 +92,7 @@ export default function AdminCoupleModules() {
         <div className="flex items-start justify-between gap-2">
           <div>
             <h2 className="font-semibold">🧩 新增互动模块管理</h2>
-            <p className="mt-1 text-xs text-slate-400">管理西瓜分、重要日、刮刮乐和情侣自定义真心话题库。</p>
+            <p className="mt-1 text-xs text-slate-400">管理西瓜分、重要日、刮刮乐，以及情侣自定义的真心话 / 大冒险题库。</p>
           </div>
           <button className="btn-ghost px-2 py-1 text-xs" disabled={loading} onClick={() => void reload()}>{loading ? '加载中…' : '刷新'}</button>
         </div>
@@ -132,6 +152,23 @@ export default function AdminCoupleModules() {
             </div>
           ))}
             <Pager page={promptsPage} total={prompts.length} pageSize={ADMIN_PAGE_SIZE} onChange={setPromptsPage} />
+          </div>
+        )}
+      </section>
+
+      <section className="card space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-slate-700">🔥 自定义大冒险题库（{darePrompts.length}）</h3>
+          <button className="btn-ghost px-2 py-1 text-[11px] text-rose-600" disabled={!darePrompts.length} onClick={() => void removeDarePrompts()}>清空题库</button>
+        </div>
+        {darePrompts.length === 0 ? <p className="text-xs text-slate-400">暂无自定义题目</p> : (
+          <div className="space-y-2">{darePrompts.slice(darePromptsPage * ADMIN_PAGE_SIZE, (darePromptsPage + 1) * ADMIN_PAGE_SIZE).map((row) => (
+            <div key={row.id} className="rounded-xl bg-slate-50 p-3 text-xs">
+              <div className="break-words text-slate-700">{row.prompt}</div>
+              <div className="mt-1 text-[10px] text-slate-400">{pairLabel(row.member_a, row.member_b)} · {nameOf(row.created_by)} · {fmt(row.created_at)}</div>
+            </div>
+          ))}
+            <Pager page={darePromptsPage} total={darePrompts.length} pageSize={ADMIN_PAGE_SIZE} onChange={setDarePromptsPage} />
           </div>
         )}
       </section>

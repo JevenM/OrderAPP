@@ -25,6 +25,19 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.40',
+    date: '2026-10-18',
+    title: '大冒险自定义出题与「我们的下一步」专题',
+    items: [
+      { kind: 'new', text: '大冒险支持自定义出题：新增 couple_dare_prompts 表，抽出规则与真心话一致' },
+      { kind: 'new', text: '大冒险自定义题同样按出题人隔离：自己出的题只有对方能抽到，自己绝对抽不到' },
+      { kind: 'improve', text: '题库管理面板改为「真心话 / 大冒险」分段切换，题目标注「我出的 / TA 出的」' },
+      { kind: 'improve', text: '后台新增自定义大冒险题库管理，支持清空' },
+      { kind: 'new', text: '真心话新增 64 道「我们的下一步」题目' },
+      { kind: 'new', text: '同步抉择新增 52 道同主题题目：轻松版 18 道、走心版 20 道、深度版 14 道' },
+    ],
+  },
+  {
     version: '1.9.39',
     date: '2026-10-17',
     title: '真心话出题归属与对局日志分页',

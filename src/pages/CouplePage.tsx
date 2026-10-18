@@ -63,6 +63,9 @@ import {
   listCoupleTruthPromptBank,
   addCoupleTruthPrompt,
   deleteCoupleTruthPrompt,
+  listCoupleDarePromptBank,
+  addCoupleDarePrompt,
+  deleteCoupleDarePrompt,
   listCoupleWishes,
   countCoupleWishes,
   countCoupleMessages,
@@ -89,6 +92,7 @@ import {
   type CoupleQuizRow,
   type CoupleTruthDareRow,
   type CoupleTruthPromptRow,
+  type CoupleDarePromptRow,
   type CoupleWufuHistoryRow,
   type CoupleWufuRow,
   type CoupleWufuState,
@@ -111,7 +115,7 @@ import {
 } from '../lib/db'
 import { markActive, useIsPeerOnline } from '../lib/presence'
 import { todayStr } from '../lib/date'
-import { DEEP_COUPLE_QUESTIONS, EXTRA_COUPLE_QUESTIONS, TRUTH_PROMPTS } from '../lib/coupleQuestions'
+import { DEEP_COUPLE_QUESTIONS, EXTRA_COUPLE_QUESTIONS, MILESTONE_QUESTIONS, TRUTH_PROMPTS } from '../lib/coupleQuestions'
 import { useRealtime } from '../lib/realtime'
 import { SLOT_LABEL, type Meal, type MealSlot } from '../lib/types'
 import { COUPLE_MODULE_KEYS, type ModuleKey } from '../lib/modules'
@@ -597,7 +601,7 @@ const BUILT_IN_QUESTIONS: Question[] = [
   { id: 'heart-60', title: '我们最棒的一天', a: '在一起的第一个日子', b: '一起熬过难关的日子', kind: '走心版' },
 ]
 
-export const ALL_QUESTIONS = [...BUILT_IN_QUESTIONS, ...EXTRA_COUPLE_QUESTIONS, ...DEEP_COUPLE_QUESTIONS]
+export const ALL_QUESTIONS = [...BUILT_IN_QUESTIONS, ...EXTRA_COUPLE_QUESTIONS, ...DEEP_COUPLE_QUESTIONS, ...MILESTONE_QUESTIONS]
 let managedQuestionsCache: Question[] | null = null
 const DARES = [
   '用三个具体细节夸夸对方，不能只说“很好”。',
@@ -1348,6 +1352,12 @@ export default function CouplePage() {
   const [truthPromptBank, setTruthPromptBank] = useState<CoupleTruthPromptRow[]>([])
   const [truthPromptText, setTruthPromptText] = useState('')
   const [truthPromptSaving, setTruthPromptSaving] = useState(false)
+  /* 大冒险自定义题库：结构与抽取规则同真心话题库 */
+  const [darePromptBank, setDarePromptBank] = useState<CoupleDarePromptRow[]>([])
+  const [darePromptText, setDarePromptText] = useState('')
+  const [darePromptSaving, setDarePromptSaving] = useState(false)
+  /* 题库管理面板当前维护的题库类型 */
+  const [bankKind, setBankKind] = useState<'truth' | 'dare'>('truth')
 
   /* ------------------------------ 联网飞行棋 ------------------------------ */
   const [boardGame, setBoardGame] = useState<CoupleBoardGameRow | null>(null)
@@ -1483,6 +1493,11 @@ export default function CouplePage() {
     () => [...new Set([...TRUTH_PROMPTS, ...peerTruthPrompts])],
     [peerTruthPrompts]
   )
+  /* 大冒险同理：自己出的题不给自抽，对方出的题优先抽 */
+  const peerDarePrompts = useMemo(
+    () => darePromptBank.filter((row) => row.created_by !== memberId).map((row) => row.prompt),
+    [darePromptBank, memberId]
+  )
   /* 已答过的题：情侣对共享，任一方答过就不再重复出现 */
   const usedTruthPrompts = useMemo(() => new Set(truthHistory.map((row) => row.prompt)), [truthHistory])
   const truthDoneCount = useMemo(
@@ -1591,12 +1606,14 @@ export default function CouplePage() {
   const reloadTruthHistory = useCallback(async () => {
     if (!memberId || !friendId) return
     try {
-      const [history, prompts] = await Promise.all([
+      const [history, prompts, darePrompts] = await Promise.all([
         listCoupleTruthDare(memberId, friendId, 100),
         listCoupleTruthPromptBank(memberId, friendId),
+        listCoupleDarePromptBank(memberId, friendId),
       ])
       setTruthHistory(history)
       setTruthPromptBank(prompts)
+      setDarePromptBank(darePrompts)
     } catch (error) {
       console.warn('加载真心话记录失败', error)
     }
@@ -2122,6 +2139,8 @@ export default function CouplePage() {
       { table: 'couple_truth_dare', event: 'INSERT', on: () => void reloadTruthHistory() },
       { table: 'couple_truth_prompts', event: 'INSERT', on: () => void reloadTruthHistory() },
       { table: 'couple_truth_prompts', event: 'DELETE', on: () => void reloadTruthHistory() },
+      { table: 'couple_dare_prompts', event: 'INSERT', on: () => void reloadTruthHistory() },
+      { table: 'couple_dare_prompts', event: 'DELETE', on: () => void reloadTruthHistory() },
       // 联网飞行棋：对方掷骰 / 暂停 / 继续后，棋局即时同步
       // （只订阅 INSERT / UPDATE；DELETE 事件不带行数据、无法区分是谁的棋局，交由轮询兜底同步）
       { table: 'couple_board_games', event: 'INSERT', on: (p) => applyBoardRow(p.new as CoupleBoardGameRow) },
@@ -2611,11 +2630,45 @@ export default function CouplePage() {
     }
   }
 
+  const addDarePrompt = async () => {
+    const prompt = darePromptText.trim()
+    if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+    if (!prompt) return toast.show('先写下大冒险内容再加入题库', 'err')
+    if (darePromptBank.some((item) => item.prompt === prompt)) return toast.show('这道题已经在题库里啦', 'err')
+    setDarePromptSaving(true)
+    try {
+      const row = await addCoupleDarePrompt(memberId, friendId, memberId, prompt)
+      setDarePromptBank((prev) => [row, ...prev.filter((item) => item.prompt !== row.prompt)])
+      setDarePromptText('')
+      toast.show('已加入题库，这个挑战只有 TA 能抽到 🎯')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    } finally {
+      setDarePromptSaving(false)
+    }
+  }
+
+  const removeDarePrompt = async (id: string) => {
+    try {
+      await deleteCoupleDarePrompt(id)
+      setDarePromptBank((prev) => prev.filter((item) => item.id !== id))
+      toast.show('已从自定义题库移除')
+    } catch (error) {
+      toast.show((error as Error).message, 'err')
+    }
+  }
+
+  /* 抽大冒险：与真心话同口径 —— 自己出的题不进自己的池子，对方出的题优先抽 */
   const drawDare = async () => {
-    const usedPrompts = new Set(truthHistory.map((row) => row.prompt))
-    const pool = DARES.filter((p) => !usedPrompts.has(p))
-    const list = pool.length ? pool : DARES
-    const prompt = list[Math.floor(Math.random() * list.length)]
+    const peerUnused = peerDarePrompts.filter((p) => !usedTruthPrompts.has(p))
+    let prompt: string
+    if (peerUnused.length) {
+      prompt = peerUnused[Math.floor(Math.random() * peerUnused.length)]
+    } else {
+      const pool = DARES.filter((p) => !usedTruthPrompts.has(p))
+      const list = pool.length ? pool : DARES
+      prompt = list[Math.floor(Math.random() * list.length)]
+    }
     setTruthDraw({ type: 'dare', prompt })
     // 大冒险抽到即记录，双方在历史里都能看到
     if (memberId && friendId) {
@@ -4127,32 +4180,71 @@ export default function CouplePage() {
                   <button className="btn-primary" onClick={() => void drawDare()}>抽大冒险</button>
                 </div>
               )}
-              <div className="space-y-2 rounded-xl bg-slate-50 p-3">
-                <div className="text-xs font-semibold text-slate-600">加入你们的真心话题库</div>
-                <p className="text-[11px] leading-relaxed text-slate-400">
-                  你出的题只有 TA 能抽到，你不会抽到自己出的题；TA 出的题会优先被你抽到。
-                </p>
-                <div className="flex gap-2">
-                  <input className="input min-w-0 flex-1" maxLength={300} value={truthPromptText} onChange={(e) => setTruthPromptText(e.target.value)} placeholder="写一道只有你们懂的题…" />
-                  <button className="btn-primary shrink-0 px-3" disabled={truthPromptSaving || !truthPromptText.trim()} onClick={() => void addTruthPrompt()}>{truthPromptSaving ? '保存中…' : '加入'}</button>
-                </div>
-                {truthPromptBank.length > 0 && (
-                  <div className="space-y-1 text-[11px] text-slate-500">
-                    {truthPromptBank.map((item) => {
-                      const fromMe = item.created_by === memberId
-                      return (
-                        <div key={item.id} className="flex items-start gap-2 rounded-lg bg-white p-2">
-                          <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] ${fromMe ? 'bg-rose-50 text-rose-500' : 'bg-brand-50 text-brand-600'}`}>
-                            {fromMe ? '我出的' : 'TA 出的'}
-                          </span>
-                          <span className="min-w-0 flex-1 break-words">{item.prompt}</span>
-                          <button className="shrink-0 text-rose-500" onClick={() => void removeTruthPrompt(item.id)}>删除</button>
-                        </div>
-                      )
-                    })}
+              {(() => {
+                const isTruthBank = bankKind === 'truth'
+                const bank = isTruthBank ? truthPromptBank : darePromptBank
+                const text = isTruthBank ? truthPromptText : darePromptText
+                const saving = isTruthBank ? truthPromptSaving : darePromptSaving
+                return (
+                  <div className="space-y-2 rounded-xl bg-slate-50 p-3">
+                    <div className="text-xs font-semibold text-slate-600">加入你们的题库</div>
+                    <p className="text-[11px] leading-relaxed text-slate-400">
+                      你出的题只有 TA 能抽到，你不会抽到自己出的题；TA 出的题会优先被你抽到。
+                    </p>
+                    {/* 两个题库共用一块面板，用分段按钮切换要维护的题库 */}
+                    <div className="grid grid-cols-2 gap-1 rounded-lg bg-white p-1">
+                      <button
+                        type="button"
+                        className={`rounded-md py-1 text-[11px] transition ${isTruthBank ? 'bg-rose-50 font-semibold text-rose-600' : 'text-slate-400'}`}
+                        onClick={() => setBankKind('truth')}
+                      >
+                        💬 真心话 {truthPromptBank.length}
+                      </button>
+                      <button
+                        type="button"
+                        className={`rounded-md py-1 text-[11px] transition ${!isTruthBank ? 'bg-orange-50 font-semibold text-orange-600' : 'text-slate-400'}`}
+                        onClick={() => setBankKind('dare')}
+                      >
+                        🔥 大冒险 {darePromptBank.length}
+                      </button>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        className="input min-w-0 flex-1"
+                        maxLength={300}
+                        value={text}
+                        onChange={(e) => (isTruthBank ? setTruthPromptText(e.target.value) : setDarePromptText(e.target.value))}
+                        placeholder={isTruthBank ? '写一道只有你们懂的题…' : '写一个想让 TA 完成的小挑战…'}
+                      />
+                      <button
+                        className="btn-primary shrink-0 px-3"
+                        disabled={saving || !text.trim()}
+                        onClick={() => void (isTruthBank ? addTruthPrompt() : addDarePrompt())}
+                      >
+                        {saving ? '保存中…' : '加入'}
+                      </button>
+                    </div>
+                    {bank.length === 0 ? (
+                      <p className="text-[11px] text-slate-400">这个题库还是空的，写下第一道吧～</p>
+                    ) : (
+                      <div className="space-y-1 text-[11px] text-slate-500">
+                        {bank.map((item) => {
+                          const fromMe = item.created_by === memberId
+                          return (
+                            <div key={item.id} className="flex items-start gap-2 rounded-lg bg-white p-2">
+                              <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] ${fromMe ? 'bg-rose-50 text-rose-500' : 'bg-brand-50 text-brand-600'}`}>
+                                {fromMe ? '我出的' : 'TA 出的'}
+                              </span>
+                              <span className="min-w-0 flex-1 break-words">{item.prompt}</span>
+                              <button className="shrink-0 text-rose-500" onClick={() => void (isTruthBank ? removeTruthPrompt(item.id) : removeDarePrompt(item.id))}>删除</button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                )
+              })()}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <h4 className="text-sm font-semibold text-slate-600">我们的记录</h4>
