@@ -23,6 +23,10 @@ import {
   notifyGomokuTurn,
   notifyGomokuNew,
   notifyWatermelonScore,
+  fetchCoupleWedding,
+  upsertCoupleWedding,
+  type CoupleWeddingRow,
+  type CoupleWeddingState,
   createCoupleWatermelonLog,
   fetchCoupleWatermelon,
   listCoupleWatermelonLogs,
@@ -116,6 +120,7 @@ import {
 import { markActive, useIsPeerOnline } from '../lib/presence'
 import { todayStr } from '../lib/date'
 import { DEEP_COUPLE_QUESTIONS, EXTRA_COUPLE_QUESTIONS, MILESTONE_QUESTIONS, TRUTH_PROMPTS } from '../lib/coupleQuestions'
+import { WEDDING_STEPS, WEDDING_TOTAL, weddingItemKey, type WeddingItemKind } from '../lib/weddingSteps'
 import { useRealtime } from '../lib/realtime'
 import { SLOT_LABEL, type Meal, type MealSlot } from '../lib/types'
 import { COUPLE_MODULE_KEYS, type ModuleKey } from '../lib/modules'
@@ -128,6 +133,9 @@ type DrawnWish = Wish & { drawer: string }
 type ChatItem = { id: string; sender_id: string; receiver_id: string; content: string; created_at: string }
 
 const HISTORY_PAGE_SIZE = 10
+/** 备婚流程还没落库时的空值：保持引用稳定，避免每次渲染都重算派生值 */
+const EMPTY_WEDDING_DONE: string[] = []
+const EMPTY_WEDDING_CHECKED: Record<string, boolean> = {}
 const safeDisplayText = (value: unknown, fallback = ''): string =>
   typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value) : fallback
 
@@ -180,6 +188,43 @@ function LogList({
           <button type="button" className="text-brand-600 disabled:text-slate-300" disabled={safePage >= pages - 1} onClick={() => onPage(safePage + 1)}>下一页</button>
         </div>
       )}
+    </div>
+  )
+}
+
+/** 备婚流程：某一步里可勾选的待办清单（要做的事 / 要准备的东西） */
+function WeddingCheckList({
+  title,
+  items,
+  stepId,
+  kind,
+  checked,
+  onToggle,
+  disabled,
+}: {
+  title: string
+  items: string[]
+  stepId: string
+  kind: WeddingItemKind
+  checked: Record<string, boolean>
+  onToggle: (key: string) => void
+  disabled?: boolean
+}) {
+  return (
+    <div className="rounded-lg bg-slate-50 p-2">
+      <div className="text-[11px] font-semibold text-slate-600">{title}</div>
+      <div className="mt-1 space-y-1">
+        {items.map((item, index) => {
+          const key = weddingItemKey(stepId, kind, index)
+          const on = Boolean(checked[key])
+          return (
+            <label key={key} className="flex cursor-pointer items-start gap-2 text-[11px] text-slate-600">
+              <input className="mt-0.5" type="checkbox" checked={on} disabled={disabled} onChange={() => onToggle(key)} />
+              <span className={`min-w-0 flex-1 break-words ${on ? 'text-slate-400 line-through' : ''}`}>{item}</span>
+            </label>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -1444,6 +1489,82 @@ export default function CouplePage() {
   const [scratchLoaded, setScratchLoaded] = useState(false)
   const [scratchSaving, setScratchSaving] = useState(false)
 
+  /* ------------------------------ 备婚流程 ------------------------------ */
+  const [weddingRow, setWeddingRow] = useState<CoupleWeddingRow | null>(null)
+  const [weddingLoaded, setWeddingLoaded] = useState(false)
+  const [weddingSaving, setWeddingSaving] = useState(false)
+  /** 步骤条视图：跟着当前步骤看 / 全部步骤总览 */
+  const [weddingView, setWeddingView] = useState<'stepper' | 'overview'>('stepper')
+  /** 步骤条里被展开的步骤 id；null 表示只展开当前那一步 */
+  const [weddingOpenStep, setWeddingOpenStep] = useState<string | null>(null)
+
+  /* 备婚流程派生值：步骤是内置模板，云上只存「哪几步完成」和「哪几条待办勾好了」 */
+  const weddingDone = weddingRow?.state.done ?? EMPTY_WEDDING_DONE
+  const weddingChecked = weddingRow?.state.checked ?? EMPTY_WEDDING_CHECKED
+  const weddingDoneCount = weddingDone.length
+  const weddingAllDone = weddingDoneCount >= WEDDING_TOTAL
+  /** 当前步骤 = 第一个还没完成的；全部完成时停在最后一步 */
+  const weddingCurrentIndex = useMemo(() => {
+    const index = WEDDING_STEPS.findIndex((step) => !weddingDone.includes(step.id))
+    return index < 0 ? WEDDING_STEPS.length - 1 : index
+  }, [weddingDone])
+  const weddingCurrentStep = WEDDING_STEPS[weddingCurrentIndex]
+  /** 每步待办勾了几条，总览里显示「待办 x/y」 */
+  const weddingItemStats = useMemo(
+    () =>
+      WEDDING_STEPS.map((step) => {
+        const total = step.todo.length + step.prepare.length
+        let ticked = 0
+        for (let i = 0; i < step.todo.length; i += 1) if (weddingChecked[weddingItemKey(step.id, 'todo', i)]) ticked += 1
+        for (let i = 0; i < step.prepare.length; i += 1) if (weddingChecked[weddingItemKey(step.id, 'prepare', i)]) ticked += 1
+        return { total, ticked }
+      }),
+    [weddingChecked]
+  )
+
+  const saveWeddingState = useCallback(
+    async (next: CoupleWeddingState) => {
+      if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+      setWeddingSaving(true)
+      try {
+        await upsertCoupleWedding(memberId, friendId, next)
+        const [a, b] = orderedPair(memberId, friendId)
+        setWeddingRow({ member_a: a, member_b: b, state: next, updated_at: new Date().toISOString() })
+      } catch (error) {
+        toast.show((error as Error).message, 'err')
+      } finally {
+        setWeddingSaving(false)
+      }
+    },
+    [memberId, friendId, toast]
+  )
+
+  /** 完成 / 撤回某一步。完成后收起手动展开，让步骤条自动跟着走到下一步 */
+  const toggleWeddingStep = useCallback(
+    async (stepId: string) => {
+      const wasDone = weddingDone.includes(stepId)
+      const done = wasDone ? weddingDone.filter((id) => id !== stepId) : [...weddingDone, stepId]
+      if (!wasDone) setWeddingOpenStep(null)
+      await saveWeddingState({ done, checked: weddingChecked })
+    },
+    [weddingDone, weddingChecked, saveWeddingState]
+  )
+
+  const toggleWeddingItem = useCallback(
+    async (key: string) => {
+      const checked = { ...weddingChecked }
+      if (checked[key]) delete checked[key]
+      else checked[key] = true
+      await saveWeddingState({ done: weddingDone, checked })
+    },
+    [weddingDone, weddingChecked, saveWeddingState]
+  )
+
+  /** 点步骤：展开 / 收起；收起时回到「跟着当前步骤」 */
+  const toggleWeddingOpen = useCallback((stepId: string, isOpen: boolean, isCurrent: boolean) => {
+    setWeddingOpenStep(isOpen && !isCurrent ? null : stepId)
+  }, [])
+
   /* ------------------------------ 联网扫雷 ------------------------------ */
   const [minesGame, setMinesGame] = useState<CoupleMinesRow | null>(null)
   const [minesLoaded, setMinesLoaded] = useState(false)
@@ -1917,6 +2038,27 @@ export default function CouplePage() {
     [memberId, friendId, scratchLoaded]
   )
 
+  const reloadWedding = useCallback(
+    async (force = false) => {
+      if (!memberId || !friendId) return
+      if (!force && weddingLoaded) return
+      try {
+        const row = await fetchCoupleWedding(memberId, friendId)
+        if (!row) {
+          setWeddingRow(null)
+        } else {
+          const [a, b] = orderedPair(memberId, friendId)
+          if (row.member_a === a && row.member_b === b) setWeddingRow(row)
+        }
+      } catch (error) {
+        console.warn('加载备婚流程失败', error)
+      } finally {
+        setWeddingLoaded(true)
+      }
+    },
+    [memberId, friendId, weddingLoaded]
+  )
+
   const reloadWishes = useCallback(async () => {
     if (!memberId || !friendId) return
     try {
@@ -2092,10 +2234,12 @@ export default function CouplePage() {
       throttled('countdown', () => reloadCountdown(true))
     } else if (m === 'scratch') {
       throttled('scratch', () => reloadScratch(true))
+    } else if (m === 'wedding') {
+      throttled('wedding', () => reloadWedding(true))
     } else if (m === 'love') throttled('meals', reloadMeals)
     // 停在入口页：只刷新卡片计数（4 个 count 请求，正文一概不下载）
     else throttled('gridCounts', reloadGridCounts)
-  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadCountdown, reloadScratch, reloadMeals, reloadGridCounts])
+  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadCountdown, reloadScratch, reloadWedding, reloadMeals, reloadGridCounts])
 
   /* 切到某个模块时立即拉一次；棋局类（飞行棋/扫雷/摆方）走各自动作里的缓存，
      只在本地还没有该模块数据时补拉一次，来回切 Tab 不再重复打网络 */
@@ -2129,8 +2273,10 @@ export default function CouplePage() {
       void reloadCountdown(countdownLoaded ? undefined : true)
     } else if (m === 'scratch') {
       void reloadScratch(scratchLoaded ? undefined : true)
+    } else if (m === 'wedding') {
+      void reloadWedding(weddingLoaded ? undefined : true)
     } else if (m === 'love') void reloadMeals()
-  }, [activeModule, ready, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadCountdown, reloadScratch, reloadMeals, boardLoaded, minesLoaded, wufuLoaded, gomokuLoaded, diceLoaded, countdownLoaded, scratchLoaded])
+  }, [activeModule, ready, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadCountdown, reloadScratch, reloadWedding, reloadMeals, boardLoaded, minesLoaded, wufuLoaded, gomokuLoaded, diceLoaded, countdownLoaded, scratchLoaded, weddingLoaded])
 
   useRealtime(
     channelKey,
@@ -2176,6 +2322,9 @@ export default function CouplePage() {
       { table: 'couple_countdown', event: 'UPDATE', on: (p) => setCountdownGame(p.new as CoupleCountdownRow) },
       { table: 'couple_scratch', event: 'INSERT', on: (p) => setScratchGame(p.new as CoupleScratchRow) },
       { table: 'couple_scratch', event: 'UPDATE', on: (p) => setScratchGame(p.new as CoupleScratchRow) },
+      // 备婚流程：谁勾了待办、谁完成了某一步，对方立刻看到
+      { table: 'couple_wedding', event: 'INSERT', on: (p) => setWeddingRow(p.new as CoupleWeddingRow) },
+      { table: 'couple_wedding', event: 'UPDATE', on: (p) => setWeddingRow(p.new as CoupleWeddingRow) },
       // 飞行棋对局历史：一局结束落库后即时刷新
       { table: 'couple_board_game_history', event: 'INSERT', on: () => void reloadBoardHistory() },
       // 扫雷对局历史：一局通关落库后即时刷新
@@ -4118,6 +4267,12 @@ export default function CouplePage() {
             { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分，看专属甜蜜分变化' },
             { id: 'dice', icon: '🎲', title: '骰子比大小', detail: '3个骰子押大小，围骰庄家通吃' },
             { id: 'countdown', icon: '⏳', title: '重要日倒计时', detail: '纪念日、生日倒数还有多少天' },
+            {
+              id: 'wedding',
+              icon: '💍',
+              title: '备婚流程',
+              detail: weddingDoneCount ? `已完成 ${weddingDoneCount}/${WEDDING_TOTAL} 步` : `从定心意到结完婚共 ${WEDDING_TOTAL} 步`,
+            },
             { id: 'scratch', icon: '🎫', title: '情侣刮刮乐', detail: '刮开卡片赢甜蜜奖励' },
           ]}
           isEnabled={isEnabled}
@@ -4185,20 +4340,20 @@ export default function CouplePage() {
               )}
               {(() => {
                 const isTruthBank = bankKind === 'truth'
-                const bank = isTruthBank ? truthPromptBank : darePromptBank
+                // const bank = isTruthBank ? truthPromptBank : darePromptBank
                 const text = isTruthBank ? truthPromptText : darePromptText
                 const saving = isTruthBank ? truthPromptSaving : darePromptSaving
                 /* 自定义题在「对方抽到」之前不公开：
                    只有出现在记录里的题才显示题面，没被抽到的一律不露内容，
                    双方抽题都保留悬念；自己新加的题留一条遮罩，方便发现写错了能撤回。 */
-                const revealed = bank.filter((item) => usedTruthPrompts.has(item.prompt))
-                const pendingMine = bank.filter((item) => !usedTruthPrompts.has(item.prompt) && item.created_by === memberId)
-                const pendingPeer = bank.length - revealed.length - pendingMine.length
+                // const revealed = bank.filter((item) => usedTruthPrompts.has(item.prompt))
+                // const pendingMine = bank.filter((item) => !usedTruthPrompts.has(item.prompt) && item.created_by === memberId)
+                // const pendingPeer = bank.length - revealed.length - pendingMine.length
                 return (
                   <div className="space-y-2 rounded-xl bg-slate-50 p-3">
                     <div className="text-xs font-semibold text-slate-600">加入你们的题库</div>
                     <p className="text-[11px] leading-relaxed text-slate-400">
-                      你出的题只有 TA 能抽到，你不会抽到自己出的题；TA 出的题会优先被你抽到。题目在对方抽到之前不公开。
+                      你出的题只有 TA 能抽到，你不会抽到自己出的题。
                     </p>
                     {/* 两个题库共用一块面板，用分段按钮切换要维护的题库 */}
                     <div className="grid grid-cols-2 gap-1 rounded-lg bg-white p-1">
@@ -4233,7 +4388,7 @@ export default function CouplePage() {
                         {saving ? '保存中…' : '加入'}
                       </button>
                     </div>
-                    {bank.length === 0 ? (
+                    {/* {bank.length === 0 ? (
                       <p className="text-[11px] text-slate-400">这个题库还是空的，加入第一道吧～</p>
                     ) : (
                       <div className="space-y-1 text-[11px] text-slate-500">
@@ -4249,18 +4404,18 @@ export default function CouplePage() {
                             </div>
                           )
                         })}
-                        {/* {pendingMine.map((item) => (
+                        {pendingMine.map((item) => (
                           <div key={item.id} className="flex items-start gap-2 rounded-lg bg-white p-2">
                             <span className="shrink-0 rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-400">🔒 待揭晓</span>
                             <span className="min-w-0 flex-1 text-slate-400">你出的题，等 TA 抽到后才公开</span>
                             <button className="shrink-0 text-rose-500" onClick={() => void (isTruthBank ? removeTruthPrompt(item.id) : removeDarePrompt(item.id))}>删除</button>
                           </div>
-                        ))} */}
+                        ))}
                         {pendingPeer > 0 && (
                           <p className="text-[10px] text-slate-400">还有 {pendingPeer} 道 TA 出的题，等你抽到后揭晓</p>
                         )}
                       </div>
-                    )}
+                    )} */}
                   </div>
                 )
               })()}
@@ -5765,6 +5920,200 @@ export default function CouplePage() {
                         <span className={`chip shrink-0 ${days === 0 ? 'border-rose-200 bg-rose-50 text-rose-600' : soon ? 'border-amber-200 bg-amber-50 text-amber-600' : 'border-brand-200 bg-brand-50 text-brand-600'}`}>{label}</span>
                         <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs text-rose-500" disabled={countdownSaving} onClick={() => void removeCountdown(itemId)}>删除</button>
                       </div>
+                    )
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* 💍 备婚流程 */}
+          {activeModule === 'wedding' && (
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
+              <div>
+                <div className="flex min-w-0 items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-semibold">💍备婚流程</h3>
+                  </div>
+                  <span className="chip shrink-0 border-rose-200 bg-rose-50 text-rose-600">
+                    已完成 {weddingDoneCount}/{WEDDING_TOTAL}
+                  </span>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-rose-400 to-orange-400 transition-all duration-500"
+                    style={{ width: `${(weddingDoneCount / WEDDING_TOTAL) * 100}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* 下一步：一眼看到接下来要做什么 */}
+              {weddingAllDone ? (
+                <div className="rounded-2xl bg-rose-50 p-3 text-center">
+                  <div className="text-2xl">🎉</div>
+                  <p className="mt-1 text-sm font-semibold text-rose-700">{WEDDING_TOTAL} 步都走完啦，祝你们一直这么甜</p>
+                  <p className="mt-1 text-[11px] text-rose-500">想改的话，在下面点开任意一步可以撤回</p>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-rose-100 bg-rose-50/60 p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="chip border-rose-200 bg-white text-rose-600">下一步</span>
+                    <span className="text-[11px] text-slate-400">{weddingCurrentStep.timing}</span>
+                  </div>
+                  <h4 className="mt-2 flex items-center gap-2 font-semibold text-slate-700">
+                    <span>{weddingCurrentStep.emoji}</span>
+                    <span className="min-w-0 break-words">{weddingCurrentStep.title}</span>
+                  </h4>
+                  <ul className="mt-1 space-y-0.5 text-[11px] text-slate-500">
+                    {weddingCurrentStep.todo.map((item) => (
+                      <li key={item} className="break-words">· {item}</li>
+                    ))}
+                  </ul>
+                  <button
+                    className="btn-primary mt-3 w-full"
+                    disabled={weddingSaving}
+                    onClick={() => void toggleWeddingStep(weddingCurrentStep.id)}
+                  >
+                    {weddingSaving ? '保存中…' : '完成这一步'}
+                  </button>
+                </div>
+              )}
+
+              {/* 步骤条 / 总览 两种看法 */}
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-50 p-1">
+                <button
+                  type="button"
+                  className={`rounded-md py-1 text-[11px] transition ${weddingView === 'stepper' ? 'bg-white font-semibold text-rose-600' : 'text-slate-400'}`}
+                  onClick={() => setWeddingView('stepper')}
+                >
+                  🧭 步骤条
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-md py-1 text-[11px] transition ${weddingView === 'overview' ? 'bg-white font-semibold text-rose-600' : 'text-slate-400'}`}
+                  onClick={() => setWeddingView('overview')}
+                >
+                  📋 步骤总览
+                </button>
+              </div>
+
+              {weddingView === 'stepper' ? (
+                /* 步骤条：整条路都铺开，当前那一步自动展开要做什么 / 要准备什么 */
+                <ol>
+                  {WEDDING_STEPS.map((step, index) => {
+                    const done = weddingDone.includes(step.id)
+                    const isCurrent = index === weddingCurrentIndex && !weddingAllDone
+                    const isOpen = weddingOpenStep ? weddingOpenStep === step.id : isCurrent
+                    const isLast = index === WEDDING_STEPS.length - 1
+                    return (
+                      <li key={step.id} className="flex gap-3">
+                        <div className="flex flex-col items-center">
+                          <button
+                            type="button"
+                            aria-label={step.title}
+                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-sm transition ${
+                              done
+                                ? 'border-rose-300 bg-rose-100 text-rose-600'
+                                : isCurrent
+                                  ? 'border-rose-400 bg-white text-base ring-2 ring-rose-200'
+                                  : 'border-slate-200 bg-white text-base'
+                            }`}
+                            onClick={() => toggleWeddingOpen(step.id, isOpen, isCurrent)}
+                          >
+                            {done ? '✓' : step.emoji}
+                          </button>
+                          {!isLast && <span className={`w-px flex-1 ${done ? 'bg-rose-200' : 'bg-slate-200'}`} />}
+                        </div>
+                        <div className={`min-w-0 flex-1 ${isLast ? 'pb-0' : 'pb-4'}`}>
+                          <button
+                            type="button"
+                            className="flex w-full items-start justify-between gap-2 text-left"
+                            onClick={() => toggleWeddingOpen(step.id, isOpen, isCurrent)}
+                          >
+                            <span
+                              className={`min-w-0 flex-1 break-words text-sm ${
+                                done ? 'text-slate-400 line-through' : isCurrent ? 'font-semibold text-slate-700' : 'text-slate-600'
+                              }`}
+                            >
+                              {index + 1}. {step.title}
+                            </span>
+                            <span className="shrink-0 text-[10px] text-slate-400">
+                              {done ? '已完成' : isCurrent ? '进行中' : '未开始'}
+                            </span>
+                          </button>
+                          <p className="mt-0.5 text-[11px] text-slate-400">{step.timing}</p>
+                          {isOpen && (
+                            <div className="mt-2 space-y-2">
+                              <WeddingCheckList
+                                title="要做的事"
+                                items={step.todo}
+                                stepId={step.id}
+                                kind="todo"
+                                checked={weddingChecked}
+                                onToggle={(key) => void toggleWeddingItem(key)}
+                                disabled={weddingSaving}
+                              />
+                              <WeddingCheckList
+                                title="要准备的东西"
+                                items={step.prepare}
+                                stepId={step.id}
+                                kind="prepare"
+                                checked={weddingChecked}
+                                onToggle={(key) => void toggleWeddingItem(key)}
+                                disabled={weddingSaving}
+                              />
+                              <button
+                                className="btn-ghost w-full text-xs"
+                                disabled={weddingSaving}
+                                onClick={() => void toggleWeddingStep(step.id)}
+                              >
+                                {done ? '撤回这一步' : '标记这一步完成'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ol>
+              ) : (
+                /* 总览：不展开细节，一眼看完全程的状态与待办进度 */
+                <div className="space-y-1">
+                  {WEDDING_STEPS.map((step, index) => {
+                    const done = weddingDone.includes(step.id)
+                    const isCurrent = index === weddingCurrentIndex && !weddingAllDone
+                    const stat = weddingItemStats[index]
+                    return (
+                      <button
+                        key={step.id}
+                        type="button"
+                        className={`flex w-full items-center gap-2 rounded-lg p-2 text-left ${isCurrent ? 'bg-rose-50' : done ? 'bg-slate-50' : 'bg-white'}`}
+                        onClick={() => {
+                          setWeddingOpenStep(step.id)
+                          setWeddingView('stepper')
+                        }}
+                      >
+                        <span className="w-6 shrink-0 text-center text-sm">{done ? '✓' : step.emoji}</span>
+                        <span className="min-w-0 flex-1">
+                          <span
+                            className={`block break-words text-xs ${
+                              done ? 'text-slate-400 line-through' : isCurrent ? 'font-semibold text-slate-700' : 'text-slate-600'
+                            }`}
+                          >
+                            {index + 1}. {step.title}
+                          </span>
+                          <span className="block text-[10px] text-slate-400">
+                            {step.timing} · 待办 {stat.ticked}/{stat.total}
+                          </span>
+                        </span>
+                        <span
+                          className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${
+                            done ? 'bg-rose-50 text-rose-500' : isCurrent ? 'bg-white text-rose-600' : 'bg-slate-50 text-slate-400'
+                          }`}
+                        >
+                          {done ? '已完成' : isCurrent ? '进行中' : '未开始'}
+                        </span>
+                      </button>
                     )
                   })}
                 </div>

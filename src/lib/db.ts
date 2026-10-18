@@ -2419,6 +2419,60 @@ export async function notifyWatermelonScore(recipient: string, senderName: strin
   })
 }
 
+/* ------------------------------ 备婚流程 ------------------------------ */
+
+/**
+ * 备婚流程的进度状态（每对情侣共享一份）。
+ * 步骤本身是内置模板（src/lib/weddingSteps.ts），这里只存「完成了哪几步」和「勾好了哪几条待办」。
+ */
+export interface CoupleWeddingState {
+  /** 已完成的步骤 id */
+  done: string[]
+  /** 勾好的待办项：key 见 weddingItemKey(stepId, kind, index) */
+  checked: Record<string, boolean>
+}
+
+export interface CoupleWeddingRow {
+  member_a: string
+  member_b: string
+  state: CoupleWeddingState
+  updated_at: string
+}
+
+export async function fetchCoupleWedding(userA: string, userB: string): Promise<CoupleWeddingRow | null> {
+  if (!userA || !userB || userA === userB) return null
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_wedding')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .maybeSingle()
+  if (error) {
+    if (isMissingTable(error)) return null
+    fail(error, '加载备婚流程')
+  }
+  return (data as CoupleWeddingRow | null) ?? null
+}
+
+export async function upsertCoupleWedding(userA: string, userB: string, state: CoupleWeddingState): Promise<void> {
+  if (!userA || !userB || userA === userB) throw new Error('请先添加好友再使用备婚流程')
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_wedding').upsert({
+    member_a: memberA,
+    member_b: memberB,
+    state,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'member_a,member_b' })
+  if (error) fail(error, '同步备婚流程')
+}
+
+export async function listAllCoupleWedding(limit = 200): Promise<CoupleWeddingRow[]> {
+  const { data, error } = await supabase.from('couple_wedding').select('*').order('updated_at', { ascending: false }).limit(limit)
+  if (error && !isMissingTable(error)) fail(error, '加载全部备婚流程')
+  return (data ?? []) as CoupleWeddingRow[]
+}
+
 /* ------------------------------ 订单 ------------------------------ */
 
 export async function createOrder(input: {

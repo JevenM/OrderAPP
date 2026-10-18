@@ -25,6 +25,18 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.43',
+    date: '2026-10-19',
+    title: '新增备婚流程步骤条',
+    items: [
+      { kind: 'new', text: '新增「💍 备婚流程」模块：从确定心意到结完婚的 16 个节点，用步骤条串起你们还要走的路' },
+      { kind: 'new', text: '每一步列出「要做的事」和「要准备的东西」，可以逐条勾选' },
+      { kind: 'new', text: '顶部直接给出下一步是什么，以及每步的大致时间安排' },
+      { kind: 'new', text: '支持「步骤条 / 步骤总览」两种看法，总览里能一眼看到全程状态和待办进度' },
+      { kind: 'new', text: '完成进度双方实时同步：谁完成了一步、谁勾好了哪条待办，对方立刻看到' },
+    ],
+  },
+  {
     version: '1.9.42',
     date: '2026-10-18',
     title: '西瓜分变动补上铃铛提醒',
