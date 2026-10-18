@@ -66,10 +66,10 @@ import {
   listCoupleTruthPrompts,
   listCoupleTruthPromptBank,
   addCoupleTruthPrompt,
-  deleteCoupleTruthPrompt,
+  // deleteCoupleTruthPrompt,
   listCoupleDarePromptBank,
   addCoupleDarePrompt,
-  deleteCoupleDarePrompt,
+  // deleteCoupleDarePrompt,
   listCoupleWishes,
   countCoupleWishes,
   countCoupleMessages,
@@ -2800,15 +2800,15 @@ export default function CouplePage() {
     }
   }
 
-  const removeDarePrompt = async (id: string) => {
-    try {
-      await deleteCoupleDarePrompt(id)
-      setDarePromptBank((prev) => prev.filter((item) => item.id !== id))
-      toast.show('已从自定义题库移除')
-    } catch (error) {
-      toast.show((error as Error).message, 'err')
-    }
-  }
+  // const removeDarePrompt = async (id: string) => {
+  //   try {
+  //     await deleteCoupleDarePrompt(id)
+  //     setDarePromptBank((prev) => prev.filter((item) => item.id !== id))
+  //     toast.show('已从自定义题库移除')
+  //   } catch (error) {
+  //     toast.show((error as Error).message, 'err')
+  //   }
+  // }
 
   /* 抽大冒险：与真心话同口径 —— 自己出的题不进自己的池子，对方出的题优先抽 */
   const drawDare = async () => {
