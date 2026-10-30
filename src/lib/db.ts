@@ -821,9 +821,11 @@ export async function broadcastCoupleMessage(
 }
 
 /**
- * 最近 100 条甜蜜留言。
- * 注意要按时间倒序取「最新」100 条再翻正序：之前是正序 + limit(100)，
- * 留言超过 100 条后就永远只能拿到最早的那 100 条（新留言看不到）。
+ * 最近 100 条甜蜜留言，**按时间倒序返回（最新的在最前面）**。
+ * 两个要点：
+ * 1. 必须按时间倒序取「最新」100 条 —— 之前是正序 + limit(100)，
+ *    留言超过 100 条后就永远只能拿到最早的那 100 条（新留言看不到）。
+ * 2. 结果不再翻回正序 —— 留言板改成倒序展示，最新的在最上面。
  */
 export interface CoupleMessageRow {
   id: string
@@ -842,7 +844,7 @@ export async function listCoupleMessages(userA: string, userB: string): Promise<
       .or(`and(sender_id.eq.${userA},receiver_id.eq.${userB}),and(sender_id.eq.${userB},receiver_id.eq.${userA})`)
       .order('created_at', { ascending: false })
       .limit(100)
-    if (!error && data) return [...(data as CoupleMessageRow[])].reverse()
+    if (!error && data) return data as CoupleMessageRow[]
   } catch {
     // 降级返回空
   }
@@ -1958,6 +1960,8 @@ export interface CoupleGomokuState {
   turn: 0 | 1
   winner: 0 | 1 | null
   paused?: boolean
+  /** 棋局版本号，每次落子 / 暂停都要 +1：用来丢弃乱序到达的旧棋局，避免旧数据覆盖新数据 */
+  rev?: number
   log: { at: string; text: string }[]
 }
 

@@ -136,17 +136,47 @@ const HISTORY_PAGE_SIZE = 10
 /** 备婚流程还没落库时的空值：保持引用稳定，避免每次渲染都重算派生值 */
 const EMPTY_WEDDING_DONE: string[] = []
 const EMPTY_WEDDING_CHECKED: Record<string, boolean> = {}
+
+/**
+ * 五子棋：判断远端这一行棋局是不是比本地这份新。
+ *
+ * 只用双方都带 rev 的版本号判定；老数据（还没有 rev）一律放行 ——
+ * 否则版本混杂时会把对方的落子误判成旧数据丢掉，反而更糟。
+ */
+/** 留言统一按时间**倒序**存放（最新的在下标 0），留言板直接从上往下渲染 */
+const byCreatedAtDesc = (a: ChatItem, b: ChatItem) =>
+  new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+
+const isNewerGomokuRow = (incoming: CoupleGomokuRow, current: CoupleGomokuRow): boolean => {
+  const next = incoming.state?.rev
+  const prev = current.state?.rev
+  if (typeof next === 'number' && typeof prev === 'number') return next >= prev
+  return true
+}
 const safeDisplayText = (value: unknown, fallback = ''): string =>
   typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value) : fallback
 
-function HistoryPager({ page, total, onChange }: { page: number; total: number; onChange: (page: number) => void }) {
+function HistoryPager({
+  page,
+  total,
+  onChange,
+  prevLabel = '上一页',
+  nextLabel = '下一页',
+}: {
+  page: number
+  total: number
+  onChange: (page: number) => void
+  /** 倒序列表（如留言板）传「更新 / 更早」，语义才不会反 */
+  prevLabel?: string
+  nextLabel?: string
+}) {
   const pages = Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE))
   if (total <= HISTORY_PAGE_SIZE) return null
   return (
     <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-xs">
-      <button type="button" className="text-brand-600 disabled:text-slate-300" disabled={page === 0} onClick={() => onChange(page - 1)}>上一页</button>
+      <button type="button" className="text-brand-600 disabled:text-slate-300" disabled={page === 0} onClick={() => onChange(page - 1)}>{prevLabel}</button>
       <span className="text-slate-400">{Math.min(page + 1, pages)}/{pages} 页 · 共 {total} 条</span>
-      <button type="button" className="text-brand-600 disabled:text-slate-300" disabled={page >= pages - 1} onClick={() => onChange(page + 1)}>下一页</button>
+      <button type="button" className="text-brand-600 disabled:text-slate-300" disabled={page >= pages - 1} onClick={() => onChange(page + 1)}>{nextLabel}</button>
     </div>
   )
 }
@@ -1353,9 +1383,11 @@ export default function CouplePage() {
 
   /* ------------------------------ 留言板 ------------------------------ */
   const [messageText, setMessageText] = useState('')
-  const [messages, setMessages] = useState<ChatItem[]>(() =>
-    myId && friendId ? readCache<ChatItem[]>(key('chat', myId, friendId), []) : []
-  )
+  const [messages, setMessages] = useState<ChatItem[]>(() => {
+    const cached = myId && friendId ? readCache<ChatItem[]>(key('chat', myId, friendId), []) : []
+    // 老版本缓存存的是正序（旧的在前），恢复时统一排成倒序
+    return [...cached].sort(byCreatedAtDesc)
+  })
 
   /* ------------------------------ 同步抉择 ------------------------------ */
   const [questionKind, setQuestionKind] = useState<QuestionKind>('轻松版')
@@ -1381,7 +1413,6 @@ export default function CouplePage() {
   const [myMeals, setMyMeals] = useState<Meal[]>([])
   const [peerMeals, setPeerMeals] = useState<Meal[]>([])
 
-  const chatBottomRef = useRef<HTMLDivElement | null>(null)
   const [activeModule, setActiveModule] = useState<string | null>(() => {
     try {
       return sessionStorage.getItem('couple-active-module')
@@ -1458,6 +1489,8 @@ export default function CouplePage() {
   const [gomokuLoaded, setGomokuLoaded] = useState(false)
   const [gomokuSaving, setGomokuSaving] = useState(false)
   const [gomokuHistory, setGomokuHistory] = useState<CoupleGomokuHistoryRow[]>([])
+  /** 落子提交锁：gomokuSaving 是 state、异步生效，连点两下会放两个请求进来 */
+  const gomokuLockRef = useRef(false)
   const [gomokuHistoryOpenId, setGomokuHistoryOpenId] = useState<string | null>(null)
   const [gomokuLogPage, setGomokuLogPage] = useState(0)
 
@@ -1692,11 +1725,17 @@ export default function CouplePage() {
           changed = true
         }
       }
-      if (!changed) return prev
-      next.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+      // 老缓存可能是正序的，这里无条件重排一次，保证倒序
+      next.sort(byCreatedAtDesc)
+      if (!changed) {
+        // 没有新留言：只有顺序确实不对时才返回新数组，避免每次都触发重渲染
+        const alreadyDesc = prev.every((m, i) => i === 0 || byCreatedAtDesc(prev[i - 1], m) <= 0)
+        return alreadyDesc ? prev : next
+      }
       try {
         // 聊天内容只在当前标签页存最近 100 条；标签页关闭或退出登录即清除
-        sessionStorage.setItem(cacheKey, JSON.stringify(next.slice(-100)))
+        // 倒序下「最新 100 条」= 开头的 100 条
+        sessionStorage.setItem(cacheKey, JSON.stringify(next.slice(0, 100)))
       } catch {
         // 存储失败不影响展示
       }
@@ -1909,20 +1948,36 @@ export default function CouplePage() {
     }
     if (!memberId || !friendId) return
     const [a, b] = orderedPair(memberId, friendId)
-    if (row.member_a === a && row.member_b === b) setGomokuGame(row)
+    if (row.member_a !== a || row.member_b !== b) return
+    // 实时事件可能乱序到达：比本地还旧的棋局直接丢掉，否则会把刚落的子整盘回滚
+    setGomokuGame((prev) => (prev && !isNewerGomokuRow(row, prev) ? prev : row))
   }, [memberId, friendId])
 
-  const reloadGomoku = useCallback(async (force = false) => {
-    if (!memberId || !friendId) return
-    if (!force && gomokuLoaded) return
-    try {
-      applyGomokuRow(await fetchCoupleGomoku(memberId, friendId))
-    } catch (error) {
-      console.warn('加载五子棋棋局失败', error)
-    } finally {
-      setGomokuLoaded(true)
-    }
-  }, [memberId, friendId, applyGomokuRow, gomokuLoaded])
+  const reloadGomoku = useCallback(
+    async (force = false) => {
+      if (!memberId || !friendId) return
+      if (!force && gomokuLoaded) return
+      try {
+        const row = await fetchCoupleGomoku(memberId, friendId)
+        // 主动强拉（写完之后 / 发现冲突）一律以服务端为准，用来纠正本地的乐观状态；
+        // 被动刷新才走新旧比较，避免把更新的本地棋局回滚掉
+        if (force) {
+          if (!row || !memberId || !friendId) setGomokuGame(null)
+          else {
+            const [a, b] = orderedPair(memberId, friendId)
+            if (row.member_a === a && row.member_b === b) setGomokuGame(row)
+          }
+          return
+        }
+        applyGomokuRow(row)
+      } catch (error) {
+        console.warn('加载五子棋棋局失败', error)
+      } finally {
+        setGomokuLoaded(true)
+      }
+    },
+    [memberId, friendId, applyGomokuRow, gomokuLoaded]
+  )
 
   const reloadGomokuHistory = useCallback(async () => {
     if (!memberId || !friendId) return
@@ -2248,7 +2303,11 @@ export default function CouplePage() {
     const m = activeModule
     if (!m) void reloadGridCounts() // 从模块退回入口页：刷新卡片上的计数
     else if (m === 'wish') void reloadWishes()
-    else if (m === 'chat') void reloadMessages()
+    // 每次进入甜蜜留言都回到第 0 页：倒序下第 0 页就是最新的那几条
+    else if (m === 'chat') {
+      setMessageHistoryPage(0)
+      void reloadMessages()
+    }
     else if (m === 'quiz') void reloadQuiz()
     else if (m === 'truth') void reloadTruthHistory()
     else if (m === 'board') {
@@ -2363,7 +2422,9 @@ export default function CouplePage() {
       { table: 'meals', on: () => void reloadMeals() },
     ],
     {
-      enabled: ready && !(activeModule === 'wufu' && !!wufuGame?.state.paused) && !(activeModule === 'gomoku' && !!gomokuGame?.state.paused),
+      // 五子棋暂停时不再关掉整条实时通道：否则对方点了「继续游戏」，本端要等 60 秒兜底轮询才看得到。
+      // 暂停期间只是不再主动强刷（轮询档位降到 60 秒），被动事件照常接收。
+      enabled: ready && !(activeModule === 'wufu' && !!wufuGame?.state.paused),
       // 实时推送连不上时的兜底轮询：只刷当前正在看的模块（省流量）
       // —— 高实时模块（对局中）10 秒；飞行棋整局暂停 30 秒；
       // —— 摆方整局暂停：0（彻底停轮询，仅靠「继续游戏」主动拉取）
@@ -2371,7 +2432,10 @@ export default function CouplePage() {
       pollMs:
         (activeModule === 'board' && !boardGame?.state.gamePaused) ||
         (activeModule === 'mines' && !minesGame?.state.cleared) ||
-        (activeModule === 'wufu' && wufuGame?.state.winner === null && !wufuGame?.state.paused)
+        (activeModule === 'wufu' && wufuGame?.state.winner === null && !wufuGame?.state.paused) ||
+        // 五子棋也是对局中的高实时模块：以前漏了它，实时通道掉线时只能等 60 秒兜底轮询，
+        // 表现就是「对方落子半天才过来」
+        (activeModule === 'gomoku' && gomokuGame?.state.winner === null && !gomokuGame?.state.paused)
           ? 10_000
           : activeModule === 'board' && boardGame?.state.gamePaused
             ? 30_000
@@ -2406,6 +2470,7 @@ export default function CouplePage() {
       void reloadWishes()
       void reloadEvents()
     } else if (activeModuleRef.current === 'chat') {
+      setMessageHistoryPage(0)
       void reloadMessages()
     } else if (activeModuleRef.current === 'quiz') {
       void reloadQuiz()
@@ -2611,9 +2676,6 @@ export default function CouplePage() {
     }
   }, [boardCustomText, myId, friendId])
 
-  useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
 
   /* ------------------------------ 互动操作 ------------------------------ */
 
@@ -3341,19 +3403,30 @@ export default function CouplePage() {
   /** 开新棋局：双方掷骰定先手，先手摆 13 子、后手摆 12 子 */
   const startGomokuGame = async () => {
     if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
+    if (gomokuSaving || gomokuLockRef.current) return
+    const [a, b] = orderedPair(memberId, friendId)
     const at = new Date().toISOString()
     const names: [string, string] = memberId < friendId ? [memberName || '我', friendName] : [friendName, memberName || '我']
-    const state: CoupleGomokuState = {
-      board: Array(225).fill(0),
-      turn: 0,
-      winner: null,
-      paused: false,
-      log: [{ at, text: `⚫ 五子棋开局：${names[0]}执黑先手，横、竖或斜线连成五子获胜` }],
-    }
     setGomokuSaving(true)
     try {
+      // 开局前先确认服务端真的没有进行中的棋局：对方刚开的局可能还没推过来，
+      // 直接 upsert 会把人家那局整盘清掉
+      const existing = await fetchCoupleGomoku(memberId, friendId)
+      if (existing && existing.member_a === a && existing.member_b === b && existing.state.winner === null) {
+        setGomokuGame(existing)
+        setGomokuLoaded(true)
+        return toast.show('已经有一局进行中的五子棋啦，已同步最新棋局')
+      }
+      const state: CoupleGomokuState = {
+        board: Array(225).fill(0),
+        turn: 0,
+        winner: null,
+        paused: false,
+        // 版本号必须比上一局大，否则会被「旧棋局丢弃」逻辑当成过期数据拒掉
+        rev: (existing?.state.rev ?? gomokuState?.rev ?? 0) + 1,
+        log: [{ at, text: `⚫ 五子棋开局：${names[0]}执黑先手，横、竖或斜线连成五子获胜` }],
+      }
       await upsertCoupleGomoku(memberId, friendId, state)
-      const [a, b] = orderedPair(memberId, friendId)
       setGomokuGame({ member_a: a, member_b: b, state, updated_at: at })
       setGomokuLoaded(true)
       if (myGomokuIndex !== 0) {
@@ -3588,14 +3661,14 @@ export default function CouplePage() {
     if (!gomokuState || !memberId || !friendId || gomokuSaving) return
     if (gomokuState.winner !== null) return toast.show('本局已结束，无需暂停～')
     const paused = !gomokuState.paused
-    const next = { ...gomokuState, paused, log: paused ? [...gomokuState.log, { at: new Date().toISOString(), text: `⏸️${memberName || '我'} 暂停五子棋` }] : gomokuState.log }
+    const next = { ...gomokuState, paused, rev: (gomokuState.rev ?? 0) + 1, log: paused ? [...gomokuState.log, { at: new Date().toISOString(), text: `⏸️${memberName || '我'} 暂停五子棋` }] : gomokuState.log }
     setGomokuSaving(true)
     try {
       await upsertCoupleGomoku(memberId, friendId, next)
       const [a, b] = orderedPair(memberId, friendId)
       setGomokuGame({ member_a: a, member_b: b, state: next, updated_at: new Date().toISOString() })
       if (!paused) void reloadGomoku(true)
-      toast.show(paused ? '⏸️ 五子棋已暂停，网络同步已停止' : '▶️ 五子棋已继续')
+      toast.show(paused ? '⏸️ 五子棋已暂停，双方都先别落子' : '▶️ 五子棋已继续')
     } catch (error) {
       toast.show((error as Error).message, 'err')
     } finally {
@@ -3651,32 +3724,73 @@ export default function CouplePage() {
   }
 
   const placeGomoku = async (index: number) => {
-    if (!gomokuState || !gomokuGame || !memberId || !friendId || gomokuSaving) return
+    if (!gomokuState || !gomokuGame || !memberId || !friendId) return
+    if (gomokuSaving || gomokuLockRef.current) return
     if (gomokuState.paused) return toast.show('⏸️ 棋局已暂停，请先继续游戏')
     if (gomokuState.winner !== null) return toast.show('本局已结束，请重新开局')
     if (gomokuState.turn !== myGomokuIndex) return toast.show(`还没轮到你，等 ${friendName} 落子吧～`)
     if (gomokuState.board[index] !== 0) return
-    const board = [...gomokuState.board]
-    const piece = myGomokuIndex + 1
-    board[index] = piece
-    const win = gomokuWinner(board, index, piece)
-    const next: CoupleGomokuState = { ...gomokuState, board, winner: win ? myGomokuIndex : null, turn: (1 - myGomokuIndex) as 0 | 1, log: [...gomokuState.log, { at: new Date().toISOString(), text: `${myGomokuIndex === 0 ? '⚫' : '⚪'}${memberName || '我'} 落子 ${Math.floor(index / 15) + 1}行${index % 15 + 1}列${win ? '，五连获胜' : ''}` }] }
+    const [a, b] = orderedPair(memberId, friendId)
+
+    /** 按「给定的那份棋局」算出落这一子之后的状态（乐观快照和服务端基准共用） */
+    const buildNext = (base: CoupleGomokuState): CoupleGomokuState => {
+      const board = [...base.board]
+      const piece = myGomokuIndex + 1
+      board[index] = piece
+      const win = gomokuWinner(board, index, piece)
+      return {
+        ...base,
+        board,
+        winner: win ? myGomokuIndex : null,
+        turn: (1 - myGomokuIndex) as 0 | 1,
+        rev: (base.rev ?? 0) + 1,
+        log: [...base.log, { at: new Date().toISOString(), text: `${myGomokuIndex === 0 ? '⚫' : '⚪'}${memberName || '我'} 落子 ${Math.floor(index / 15) + 1}行${index % 15 + 1}列${win ? '，五连获胜' : ''}` }],
+      }
+    }
+
+    gomokuLockRef.current = true
     setGomokuSaving(true)
+    // 先按本地快照画上去：点下去立刻有反馈，不等网络
+    setGomokuGame({ member_a: a, member_b: b, state: buildNext(gomokuState), updated_at: new Date().toISOString() })
     try {
+      // 关键：落子前先抓一次服务端最新棋局，并以它为准重新校验。
+      // 以前直接拿本地快照整盘覆盖写，两人同时落子、或对方那步还没推过来时，
+      // 就会把对方刚下的子一起覆盖掉（表现为「我下的子丢了 / 对方下的子不见了」）。
+      let baseRow: CoupleGomokuRow | null = gomokuGame
+      let base = gomokuState
+      try {
+        const remote = await fetchCoupleGomoku(memberId, friendId)
+        if (remote && remote.member_a === a && remote.member_b === b) {
+          baseRow = remote
+          base = remote.state
+        }
+      } catch {
+        // 取不到最新棋局就退回本地快照，写失败时下面会重拉纠正
+      }
+      if (base.turn !== myGomokuIndex) {
+        if (baseRow) setGomokuGame(baseRow)
+        return toast.show(`${friendName} 刚落了子，已同步最新棋局`)
+      }
+      if (base.board[index] !== 0) {
+        if (baseRow) setGomokuGame(baseRow)
+        return toast.show('这个位置已经有子啦，已同步最新棋局')
+      }
+      const next = buildNext(base)
       await upsertCoupleGomoku(memberId, friendId, next)
-      const [a, b] = orderedPair(memberId, friendId)
       setGomokuGame({ member_a: a, member_b: b, state: next, updated_at: new Date().toISOString() })
       if (next.winner !== null) {
         await createCoupleGomokuHistory(memberId, friendId, next)
         toast.show('🏆 恭喜，你赢得了五子棋！')
-      } else if (next.turn !== myGomokuIndex) {
+      } else {
         // 对方在线只弹本地 toast，离线才落铃铛（下次登录可见），避免在线时铃铛刷屏
         if (peerOnline) toast.show(`⚫ ${memberName || '我'} 已落子，轮到 ${friendName} 了`)
         else void notifyGomokuTurn(friendId, memberName || '我')
       }
     } catch (error) {
+      void reloadGomoku(true)
       toast.show((error as Error).message, 'err')
     } finally {
+      gomokuLockRef.current = false
       setGomokuSaving(false)
     }
   }
@@ -4207,6 +4321,8 @@ export default function CouplePage() {
     try {
       const msg = await broadcastCoupleMessage(memberId, friendId, text)
       mergeMessages([msg], key('chat', memberId, friendId))
+      // 回到第 0 页，刚发出去的这条就在最上面，不用自己翻
+      setMessageHistoryPage(0)
       // 给对方落一条铃铛提醒：对方离线时，回来登录也能从铃铛看到新留言
       void notifyCoupleChatMessage(friendId, memberName || '我', text)
       setMessageText('')
@@ -4218,7 +4334,8 @@ export default function CouplePage() {
   // 收到对方新留言：不在留言板模块时弹 toast 提醒（在留言板上时消息实时可见，不打扰）
   const lastPeerMsgIdRef = useRef<string | null>(null)
   useEffect(() => {
-    const lastPeer = [...messages].reverse().find((m) => m.sender_id !== myId)
+    // 倒序存放：下标 0 就是最新的，直接取第一条对方的留言
+    const lastPeer = messages.find((m) => m.sender_id !== myId)
     if (!lastPeer) return
     if (lastPeerMsgIdRef.current === null) {
       // 首次加载：只记录位置，不把历史留言当新消息提醒
@@ -4234,6 +4351,7 @@ export default function CouplePage() {
 
   const clearMessages = () => {
     setMessages([])
+    setMessageHistoryPage(0)
     sessionStorage.removeItem(key('chat', myId, friendId))
     toast.show('已清空本地聊天记录')
   }
@@ -6338,9 +6456,8 @@ export default function CouplePage() {
               </div>
             )
           })}
-          <div ref={chatBottomRef} />
         </div>
-        <HistoryPager page={messageHistoryPage} total={messages.length} onChange={setMessageHistoryPage} />
+        <HistoryPager page={messageHistoryPage} total={messages.length} onChange={setMessageHistoryPage} prevLabel="← 更新" nextLabel="更早 →" />
         <div className="flex min-w-0 flex-col gap-2 min-[420px]:flex-row">
           <input
             className="input min-w-0 flex-1"
