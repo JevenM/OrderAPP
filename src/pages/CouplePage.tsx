@@ -75,6 +75,7 @@ import {
   countCoupleMessages,
   countCoupleQuizHistory,
   listMealsRange,
+  listMealCompletion,
   MINES_CELL,
   resetCoupleQuiz,
   saveCoupleQuizChoice,
@@ -121,6 +122,16 @@ import { markActive, useIsPeerOnline } from '../lib/presence'
 import { todayStr } from '../lib/date'
 import { DEEP_COUPLE_QUESTIONS, EXTRA_COUPLE_QUESTIONS, MILESTONE_QUESTIONS, TRUTH_PROMPTS } from '../lib/coupleQuestions'
 import { WEDDING_STEPS, WEDDING_TOTAL, weddingItemKey, type WeddingItemKind } from '../lib/weddingSteps'
+import LoveTree from '../components/LoveTree'
+import {
+  LOVE_TREE_LOOKBACK,
+  loveTreeNextGap,
+  loveTreeNextStage,
+  loveTreeStage,
+  loveTreeStageProgress,
+  recentDays,
+  type LoveTreeHistory,
+} from '../lib/loveTree'
 import { useRealtime } from '../lib/realtime'
 import { SLOT_LABEL, type Meal, type MealSlot } from '../lib/types'
 import { COUPLE_MODULE_KEYS, type ModuleKey } from '../lib/modules'
@@ -1410,6 +1421,11 @@ export default function CouplePage() {
   const quizLoadedRef = useRef(false)
 
   /* ------------------------------ 三餐解锁 ------------------------------ */
+  /** 爱心树的历史部分（只算到昨天）。今天的那份由当天打卡实时算出，不用等重新拉取 */
+  const [loveTreeHistory, setLoveTreeHistory] = useState<LoveTreeHistory>({ streak: 0, water: 0 })
+  /** 历史部分每次进模块最多拉一次：几十天的记录没必要反复下载 */
+  const loveTreeLoadedRef = useRef(false)
+
   const [myMeals, setMyMeals] = useState<Meal[]>([])
   const [peerMeals, setPeerMeals] = useState<Meal[]>([])
 
@@ -1664,6 +1680,18 @@ export default function CouplePage() {
   const loveMessage = LOVE_MESSAGES[dayNumber() % LOVE_MESSAGES.length]
   const mealDone = (list: Meal[]) => REQUIRED_SLOTS.filter((s) => list.some((m) => m.slot === s)).length
   const loveUnlocked = Boolean(friendId) && mealDone(myMeals) === 3 && mealDone(peerMeals) === 3
+
+  /* 爱心树：今天每人打完三餐各浇 1 次水，两人都打完才算「共同的一天」，连续天数才 +1 */
+  const treeWateredMine = mealDone(myMeals) === REQUIRED_SLOTS.length
+  const treeWateredPeer = mealDone(peerMeals) === REQUIRED_SLOTS.length
+  const treeStreak = loveTreeHistory.streak + (treeWateredMine && treeWateredPeer ? 1 : 0)
+  const treeWater = loveTreeHistory.water + (treeWateredMine ? 1 : 0) + (treeWateredPeer ? 1 : 0)
+  const treeStage = loveTreeStage(treeStreak)
+  const treeNext = loveTreeNextStage(treeStreak)
+  const treeNextGap = loveTreeNextGap(treeStreak)
+  const treeProgress = loveTreeStageProgress(treeStreak)
+  /** 断签了但以前浇过水：树会掉叶子，但树干留着 —— 一起走过的日子不会白费 */
+  const treeDormant = treeStreak === 0 && treeWater > 0
   const loveSeenKey = memberId && friendId ? key('love-seen', memberId, friendId) : ''
 
   /* ------------------------------ 揭晓动画 ------------------------------ */
@@ -2151,6 +2179,60 @@ export default function CouplePage() {
     }
   }, [memberId, friendId])
 
+  /**
+   * 爱心树：回溯最近 60 天的打卡，算出截至昨天的连续天数与累计浇水次数。
+   * 刻意不查今天 —— 今天那份由页面拿当天打卡实时加上去，
+   * 于是两人打完三餐的当下树就会长，而「今天还没打完不算断签」也自然成立。
+   */
+  const reloadLoveTree = useCallback(async (): Promise<boolean> => {
+    if (!memberId || !friendId) return false
+    const needed = REQUIRED_SLOTS.length
+    // recentDays 从今天开始，去掉头一个就是「昨天往前」
+    const days = recentDays(LOVE_TREE_LOOKBACK + 1).slice(1)
+    try {
+      const tally = new Map<string, { mine: Set<string>; peer: Set<string> }>()
+      for (const d of days) tally.set(d, { mine: new Set(), peer: new Set() })
+      for (const row of await listMealCompletion(days, [memberId, friendId])) {
+        // day 是 date 列，正常返回 'YYYY-MM-DD'；这里兜一下万一返回成 'YYYY-MM-DDTHH:mm:ss'，
+        // 否则 key 对不上会让所有行被当成「不在窗口内」丢掉，树永远停在 0
+        const bucket = tally.get(String(row.day).slice(0, 10))
+        if (!bucket) continue
+        if (row.member_id === memberId) bucket.mine.add(row.slot)
+        else if (row.member_id === friendId) bucket.peer.add(row.slot)
+      }
+      let streak = 0
+      for (const d of days) {
+        const bucket = tally.get(d)
+        if (!bucket || bucket.mine.size < needed || bucket.peer.size < needed) break
+        streak += 1
+      }
+      let water = 0
+      for (const d of days) {
+        const bucket = tally.get(d)
+        if (!bucket) continue
+        if (bucket.mine.size >= needed) water += 1
+        if (bucket.peer.size >= needed) water += 1
+      }
+      setLoveTreeHistory({ streak, water })
+      return true
+    } catch (error) {
+      console.warn('加载爱心树失败', error)
+      return false
+    }
+  }, [memberId, friendId])
+
+  /** 进模块时调一次就够了：几十天的打卡记录没必要每次切回来都重新下载 */
+  const loadLoveTreeOnce = useCallback(async () => {
+    if (loveTreeLoadedRef.current) return
+    // 好友关系还没就绪时绝不能占位：否则这次空转就把标记占了，
+    // 等 ready 之后再进模块就再也不会去拉历史，树永远停在 0 天
+    if (!memberId || !friendId) return
+    loveTreeLoadedRef.current = true
+    const ok = await reloadLoveTree()
+    // 拉取失败就放开标记，下次进模块还会再试一次
+    if (!ok) loveTreeLoadedRef.current = false
+  }, [memberId, friendId, reloadLoveTree])
+
   /** 应用远端同步抉择会话：双方永远基于同一行数据作答 */
   const applyQuizRow = useCallback(
     (row: CoupleQuizRow | null) => {
@@ -2291,10 +2373,13 @@ export default function CouplePage() {
       throttled('scratch', () => reloadScratch(true))
     } else if (m === 'wedding') {
       throttled('wedding', () => reloadWedding(true))
-    } else if (m === 'love') throttled('meals', reloadMeals)
+    } else if (m === 'love') {
+      throttled('meals', reloadMeals)
+      void loadLoveTreeOnce()
+    }
     // 停在入口页：只刷新卡片计数（4 个 count 请求，正文一概不下载）
     else throttled('gridCounts', reloadGridCounts)
-  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadCountdown, reloadScratch, reloadWedding, reloadMeals, reloadGridCounts])
+  }, [reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadCountdown, reloadScratch, reloadWedding, reloadMeals, loadLoveTreeOnce, reloadGridCounts])
 
   /* 切到某个模块时立即拉一次；棋局类（飞行棋/扫雷/摆方）走各自动作里的缓存，
      只在本地还没有该模块数据时补拉一次，来回切 Tab 不再重复打网络 */
@@ -2334,8 +2419,11 @@ export default function CouplePage() {
       void reloadScratch(scratchLoaded ? undefined : true)
     } else if (m === 'wedding') {
       void reloadWedding(weddingLoaded ? undefined : true)
-    } else if (m === 'love') void reloadMeals()
-  }, [activeModule, ready, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadCountdown, reloadScratch, reloadWedding, reloadMeals, boardLoaded, minesLoaded, wufuLoaded, gomokuLoaded, diceLoaded, countdownLoaded, scratchLoaded, weddingLoaded])
+    } else if (m === 'love') {
+      void reloadMeals()
+      void loadLoveTreeOnce()
+    }
+  }, [activeModule, ready, reloadWishes, reloadMessages, reloadQuiz, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory, reloadCountdown, reloadScratch, reloadWedding, reloadMeals, loadLoveTreeOnce, boardLoaded, minesLoaded, wufuLoaded, gomokuLoaded, diceLoaded, countdownLoaded, scratchLoaded, weddingLoaded])
 
   useRealtime(
     channelKey,
@@ -2478,12 +2566,13 @@ export default function CouplePage() {
       void reloadTruthHistory()
     } else if (activeModuleRef.current === 'love') {
       void reloadMeals()
+      void loadLoveTreeOnce()
     } else {
       // 无模块参数（停留在模块网格页）：只拉入口卡片要的计数，
       // 心愿 / 留言 / 答题 / 真心话的正文留到真正打开那个模块时再下载
       void reloadGridCounts()
     }
-  }, [ready, reloadGridCounts, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory])
+  }, [ready, reloadGridCounts, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, loadLoveTreeOnce, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory])
 
   useEffect(() => {
     try {
@@ -6370,6 +6459,62 @@ export default function CouplePage() {
             )}
           </div>
         )}
+      </section>
+
+      {/* 🌳 爱心树：树冠看连续天数（断签会凋零），树干看累计浇水（只增不减） */}
+      <section className="card space-y-3">
+        <div className="flex min-w-0 items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <h3 className="break-words font-semibold">🌳我们的爱心树</h3>
+            <p className="text-[11px] text-slate-400">每天两人都打完三餐，就能给树浇两次水</p>
+          </div>
+          <span className="chip shrink-0 border-rose-200 bg-rose-50 text-rose-600">连续 {treeStreak} 天</span>
+        </div>
+
+        <LoveTree streak={treeStreak} water={treeWater} wateredMine={treeWateredMine} wateredPeer={treeWateredPeer} />
+
+        <div className="space-y-2 rounded-xl bg-slate-50 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="min-w-0 truncate text-sm font-semibold text-slate-700">
+              {treeStage.emoji} {treeStage.name}
+            </span>
+            <span className="shrink-0 text-[11px] text-slate-400">
+              {treeNext && treeNextGap !== null ? `再连续 ${treeNextGap} 天 → ${treeNext.name}` : '已经长到最高阶段'}
+            </span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-white">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-rose-400 to-pink-500 transition-all duration-500"
+              style={{ width: `${Math.round(treeProgress * 100)}%` }}
+            />
+          </div>
+          <p className="text-[11px] leading-relaxed text-slate-400">
+            {treeDormant ? '连续中断了，叶子就落了，树干还在，重新连起来就又会枝繁叶茂。' : treeStage.hint}
+          </p>
+        </div>
+
+        {/* 今日浇水：两滴水，谁打完三餐谁那滴就亮起来往下落 */}
+        <div className="flex gap-2">
+          {(
+            [
+              { label: '我', on: treeWateredMine },
+              { label: friendName || 'TA', on: treeWateredPeer },
+            ] as const
+          ).map(({ label, on }, i) => (
+            <div
+              key={i}
+              className={`flex min-w-0 flex-1 items-center justify-center gap-1 rounded-xl px-2 py-2 text-[11px] ${
+                on ? 'bg-sky-50 text-sky-600' : 'bg-slate-50 text-slate-400'
+              }`}
+            >
+              <span className="shrink-0">{on ? '💧' : '🍃'}</span>
+              <span className="min-w-0 truncate">{label}今日{on ? '已浇水' : '还没浇水'}</span>
+            </div>
+          ))}
+        </div>
+        <p className="text-center text-[11px] text-slate-400">
+          累计浇水 {treeWater} 次 · 连续 {treeStreak} 天两人都打完三餐
+        </p>
       </section>
 
       </> : null}

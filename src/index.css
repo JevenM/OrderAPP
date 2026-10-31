@@ -110,6 +110,68 @@ body {
   }
 }
 
+/* 爱心树：飘落的爱心与花瓣。容器高度由 SVG 按比例撑开，
+   落点给个固定大值，超出部分被 overflow-hidden 裁掉，视觉上等于落出画面 */
+@keyframes lt-fall {
+  0% {
+    transform: translateY(-16px) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.95;
+  }
+  85% {
+    opacity: 0.65;
+  }
+  100% {
+    transform: translateY(300px) rotate(260deg);
+    opacity: 0;
+  }
+}
+.lt-petal {
+  top: -16px;
+  line-height: 1;
+  animation-name: lt-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+
+/* 爱心树：今日浇水的那滴水滴 */
+@keyframes lt-drop-fall {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(30px);
+    opacity: 0;
+  }
+}
+.lt-drop {
+  animation: lt-drop-fall 2.6s ease-in infinite;
+}
+
+/* 爱心树：星星与萤火虫的呼吸闪烁 */
+@keyframes lt-twinkle {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.lt-twinkle {
+  animation: lt-twinkle 2.4s ease-in-out infinite;
+}
+
 /* 系统开启「减弱动态效果」时关掉动画，照顾晕动/省电场景 */
 @media (prefers-reduced-motion: reduce) {
   *,

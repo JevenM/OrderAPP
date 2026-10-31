@@ -2553,6 +2553,27 @@ export async function listMealsRange(days: string[], memberId?: string | null): 
   return (data ?? []) as Meal[]
 }
 
+export interface MealCompletionRow {
+  day: string
+  slot: MealSlot
+  member_id: string
+}
+
+/**
+ * 爱心树用：一次取「多天 × 两个人」的打卡完成情况。
+ * 只 select 三个小字段 —— 这里一查就是几十天，用 listMealsRange 会把每餐的图文内容
+ * 全部带回来，流量白白翻好几倍，而树的计算根本用不到那些内容。
+ */
+export async function listMealCompletion(days: string[], members: string[]): Promise<MealCompletionRow[]> {
+  if (!days.length || !members.length) return []
+  const { data, error } = await supabase.from('meals').select('day, slot, member_id').in('day', days).in('member_id', members)
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载打卡记录')
+  }
+  return (data ?? []) as MealCompletionRow[]
+}
+
 export async function upsertMeal(input: {
   day: string
   slot: MealSlot
