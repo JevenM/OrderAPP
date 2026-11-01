@@ -25,6 +25,17 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.46',
+    date: '2026-11-01',
+    title: '爱心树按年纪定阶段 · 闲置自动退出',
+    items: [
+      { kind: 'fix', text: '爱心树阶段改为按「累计浇水次数」判定：断签后不再退回「沉睡的种子」，阶段名和画面上那棵树对得上了' },
+      { kind: 'improve', text: '连续中断时叶子掉一大半而不是全掉：长成的大树是「休眠」，不是光杆' },
+      { kind: 'improve', text: '爱心树画面重做：树皮纹理、多级枝条、叶子分层与高光、花与爱心果，另加云、远山、草地层次和地面投影' },
+      { kind: 'new', text: '长时间不操作会自动退出登录（默认 30 分钟），回到登录页会说明是被自动退出的' },
+    ],
+  },
+  {
     version: '1.9.45',
     date: '2026-10-31',
     title: '三餐打卡养一棵爱心树',

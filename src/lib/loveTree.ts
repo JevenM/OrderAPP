@@ -3,19 +3,14 @@ import { toDayStr } from './date'
 /**
  * 爱心树的成长模型。
  *
- * 两条独立的成长线，合起来才是「慢慢长大」：
- * - **树干** = 累计浇水次数，只增不减。断签也不消失 —— 你们一起走过的日子不会白费。
- * - **树冠** = 连续共同打卡天数。断签就凋零，重新连续打卡再长回来。
- *
- * 所以断签后看到的是一棵「光秃但粗壮」的树，而不是一夜回到种子。
+ * 两条线，分工明确：
+ * - **树的大小与阶段** = 累计浇水次数。只增不减，断签也不缩回去 ——
+ *   一起攒出来的树不会因为断一天就变回种子，阶段名必须反映树的真实年纪。
+ * - **繁茂程度（叶 / 花 / 果）** = 连续共同打卡天数。断签就往下掉，
+ *   但留一个由累计浇水撑起来的下限，所以大树是「掉了大半叶子」而不是「光杆」。
  */
 
-/**
- * 连续共同打卡天数 → 树冠成长 0~1（断签会凋零）。
- *
- * 最高阶段的门槛必须 <= LOVE_TREE_LOOKBACK，否则回溯窗口不够长，
- * 那个阶段永远达不到（树会卡在次高阶段不动）。
- */
+/** 连续共同打卡天数 → 繁茂度 0~1（断签会往下掉） */
 const CANOPY_CURVE: [number, number][] = [
   [0, 0],
   [1, 0.1],
@@ -27,14 +22,19 @@ const CANOPY_CURVE: [number, number][] = [
   [60, 1],
 ]
 
-/** 累计浇水次数 → 树干成长 0~1（只增不减） */
-const TRUNK_CURVE: [number, number][] = [
+/**
+ * 累计浇水次数 → 树的大小 0~1（只增不减）。
+ * 阶段门槛也用这条轴的阈值，所以最高阶段的门槛必须 <= 2 * LOVE_TREE_LOOKBACK，
+ * 否则回溯窗口不够长，那个阶段永远达不到。
+ */
+const SIZE_CURVE: [number, number][] = [
   [0, 0],
-  [2, 0.14],
-  [8, 0.32],
-  [20, 0.5],
-  [40, 0.66],
-  [70, 0.8],
+  [2, 0.12],
+  [8, 0.3],
+  [16, 0.46],
+  [30, 0.62],
+  [50, 0.76],
+  [80, 0.88],
   [120, 1],
 ]
 
@@ -51,11 +51,19 @@ const interp = (curve: [number, number][], x: number): number => {
   return curve[curve.length - 1][1]
 }
 
-export const canopyGrowthOf = (streak: number): number => interp(CANOPY_CURVE, streak)
-export const trunkGrowthOf = (water: number): number => interp(TRUNK_CURVE, water)
+/** 树的整体大小：树干高度/粗细、枝条级数。只由累计浇水决定 */
+export const treeSizeOf = (water: number): number => interp(SIZE_CURVE, water)
+
+/**
+ * 繁茂度：主力是连续天数，断签就往下掉。
+ * 用累计浇水撑一个下限（0.22），长成的大树断签后是「掉了大半叶子」而不是「光杆」——
+ * 不然视觉上会和「树已经长出来了」矛盾。
+ */
+export const canopyGrowthOf = (streak: number, water: number): number =>
+  Math.max(interp(CANOPY_CURVE, streak), treeSizeOf(water) * 0.22)
 
 export interface LoveTreeStage {
-  /** 进入这个阶段所需的连续天数 */
+  /** 进入这个阶段所需的**累计浇水次数** */
   min: number
   name: string
   emoji: string
@@ -64,45 +72,49 @@ export interface LoveTreeStage {
 
 export const LOVE_TREE_STAGES: LoveTreeStage[] = [
   { min: 0, name: '沉睡的种子', emoji: '🌰', hint: '两人都打完今天的三餐，就能浇上第一滴水' },
-  { min: 1, name: '破土嫩芽', emoji: '🌱', hint: '连续 3 天，嫩芽会长成小树苗' },
-  { min: 3, name: '小小树苗', emoji: '🌿', hint: '连续 7 天，会长出第一片爱心叶' },
-  { min: 7, name: '爱心小树', emoji: '🍃', hint: '连续 14 天，树冠会变得枝繁叶茂' },
-  { min: 14, name: '枝繁叶茂', emoji: '🌳', hint: '连续 25 天，树上会开满花' },
-  { min: 25, name: '满树繁花', emoji: '🌸', hint: '连续 40 天，会结出红红的爱心果' },
-  { min: 40, name: '爱心结果', emoji: '💗', hint: '连续 60 天，它就是你们的永恒爱心树' },
-  { min: 60, name: '永恒爱心树', emoji: '✨', hint: '已经长到最高阶段，继续陪它长下去吧' },
+  { min: 2, name: '破土嫩芽', emoji: '🌱', hint: '继续一起打卡，嫩芽会长成小树苗' },
+  { min: 6, name: '小小树苗', emoji: '🌿', hint: '再攒一些水，树上就会冒出第一片爱心叶' },
+  { min: 16, name: '爱心小树', emoji: '🍃', hint: '树冠长稳之后，枝条会越来越舒展' },
+  { min: 30, name: '枝繁叶茂', emoji: '🌳', hint: '浇到 50 次，树上会开满花' },
+  { min: 50, name: '满树繁花', emoji: '🌸', hint: '再浇 30 次，会结出红红的爱心果' },
+  { min: 80, name: '爱心结果', emoji: '💗', hint: '再浇 40 次，它就是你们的永恒爱心树' },
+  { min: 120, name: '永恒爱心树', emoji: '✨', hint: '已经长到最高阶段，继续陪它长下去吧' },
 ]
 
-export const loveTreeStageIndex = (streak: number): number => {
+/** 以下四个都以**累计浇水次数**为轴：阶段名反映的是树的年纪，不是当前的连续天数 */
+export const loveTreeStageIndex = (water: number): number => {
   let index = 0
-  for (let i = 0; i < LOVE_TREE_STAGES.length; i += 1) if (streak >= LOVE_TREE_STAGES[i].min) index = i
+  for (let i = 0; i < LOVE_TREE_STAGES.length; i += 1) if (water >= LOVE_TREE_STAGES[i].min) index = i
   return index
 }
 
-export const loveTreeStage = (streak: number): LoveTreeStage => LOVE_TREE_STAGES[loveTreeStageIndex(streak)]
+export const loveTreeStage = (water: number): LoveTreeStage => LOVE_TREE_STAGES[loveTreeStageIndex(water)]
 
-/** 距离下一阶段还差几天；已是最后阶段返回 null */
-export const loveTreeNextGap = (streak: number): number | null => {
-  const index = loveTreeStageIndex(streak)
+/** 距离下一阶段还差几次水；已是最后阶段返回 null */
+export const loveTreeNextGap = (water: number): number | null => {
+  const index = loveTreeStageIndex(water)
   if (index >= LOVE_TREE_STAGES.length - 1) return null
-  return LOVE_TREE_STAGES[index + 1].min - streak
+  return LOVE_TREE_STAGES[index + 1].min - water
 }
 
 /** 下一个阶段；已是最后阶段返回 null */
-export const loveTreeNextStage = (streak: number): LoveTreeStage | null => {
-  const index = loveTreeStageIndex(streak)
+export const loveTreeNextStage = (water: number): LoveTreeStage | null => {
+  const index = loveTreeStageIndex(water)
   if (index >= LOVE_TREE_STAGES.length - 1) return null
   return LOVE_TREE_STAGES[index + 1]
 }
 
 /** 当前阶段内的进度 0~1（最后阶段恒为 1） */
-export const loveTreeStageProgress = (streak: number): number => {
-  const index = loveTreeStageIndex(streak)
+export const loveTreeStageProgress = (water: number): number => {
+  const index = loveTreeStageIndex(water)
   if (index >= LOVE_TREE_STAGES.length - 1) return 1
   const from = LOVE_TREE_STAGES[index].min
   const to = LOVE_TREE_STAGES[index + 1].min
-  return Math.min(1, Math.max(0, (streak - from) / (to - from)))
+  return Math.min(1, Math.max(0, (water - from) / (to - from)))
 }
+
+/** 树已经长起来了，但连续中断：叶子大半掉了，树还在 */
+export const isDormantTree = (streak: number, water: number): boolean => streak === 0 && water > 0
 
 /** 最近 count 天（含今天）的 day 字符串，从今天往前倒序 */
 export function recentDays(count: number): string[] {

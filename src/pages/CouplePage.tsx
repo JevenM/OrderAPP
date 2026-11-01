@@ -125,6 +125,7 @@ import { WEDDING_STEPS, WEDDING_TOTAL, weddingItemKey, type WeddingItemKind } fr
 import LoveTree from '../components/LoveTree'
 import {
   LOVE_TREE_LOOKBACK,
+  isDormantTree,
   loveTreeNextGap,
   loveTreeNextStage,
   loveTreeStage,
@@ -1686,12 +1687,14 @@ export default function CouplePage() {
   const treeWateredPeer = mealDone(peerMeals) === REQUIRED_SLOTS.length
   const treeStreak = loveTreeHistory.streak + (treeWateredMine && treeWateredPeer ? 1 : 0)
   const treeWater = loveTreeHistory.water + (treeWateredMine ? 1 : 0) + (treeWateredPeer ? 1 : 0)
-  const treeStage = loveTreeStage(treeStreak)
-  const treeNext = loveTreeNextStage(treeStreak)
-  const treeNextGap = loveTreeNextGap(treeStreak)
-  const treeProgress = loveTreeStageProgress(treeStreak)
-  /** 断签了但以前浇过水：树会掉叶子，但树干留着 —— 一起走过的日子不会白费 */
-  const treeDormant = treeStreak === 0 && treeWater > 0
+  /* 阶段按「累计浇水」算，不看连续天数：树长到多大是你们一起攒出来的，
+     断一天签不该让阶段名退回种子，那样和画面的树对不上。
+     连续天数只决定叶子花果实时的繁茂程度（见 LoveTree）。 */
+  const treeStage = loveTreeStage(treeWater)
+  const treeNext = loveTreeNextStage(treeWater)
+  const treeNextGap = loveTreeNextGap(treeWater)
+  const treeProgress = loveTreeStageProgress(treeWater)
+  const treeDormant = isDormantTree(treeStreak, treeWater)
   const loveSeenKey = memberId && friendId ? key('love-seen', memberId, friendId) : ''
 
   /* ------------------------------ 揭晓动画 ------------------------------ */
@@ -6479,7 +6482,7 @@ export default function CouplePage() {
               {treeStage.emoji} {treeStage.name}
             </span>
             <span className="shrink-0 text-[11px] text-slate-400">
-              {treeNext && treeNextGap !== null ? `再连续 ${treeNextGap} 天 → ${treeNext.name}` : '已经长到最高阶段'}
+              {treeNext && treeNextGap !== null ? `再浇 ${treeNextGap} 次水 → ${treeNext.name}` : '已经长到最高阶段'}
             </span>
           </div>
           <div className="h-1.5 overflow-hidden rounded-full bg-white">
@@ -6489,7 +6492,9 @@ export default function CouplePage() {
             />
           </div>
           <p className="text-[11px] leading-relaxed text-slate-400">
-            {treeDormant ? '连续中断了，叶子就落了，树干还在，重新连起来就又会枝繁叶茂。' : treeStage.hint}
+            {treeDormant
+              ? '连续中断了，叶子掉了一大半 —— 树还在这儿，也已经长这么大了，重新连起来就又会枝繁叶茂。'
+              : treeStage.hint}
           </p>
         </div>
 
@@ -6513,7 +6518,7 @@ export default function CouplePage() {
           ))}
         </div>
         <p className="text-center text-[11px] text-slate-400">
-          累计浇水 {treeWater} 次 · 连续 {treeStreak} 天两人都打完三餐
+          累计浇水 {treeWater} 次 · 树的大小和阶段都按它算，不会因断签倒退
         </p>
       </section>
 

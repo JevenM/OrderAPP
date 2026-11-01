@@ -1,15 +1,22 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { APP_TITLE, configured, probeSupabase } from '../lib/supabase'
-import { useSession } from '../store/session'
+import { SESSION_IDLE_TIMEOUT, useSession } from '../store/session'
 
 export default function Login() {
-  const { enter } = useSession()
+  const { enter, idleExpired, clearIdleExpired } = useSession()
   const [code, setCode] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   /** 出错时才做的连通性自检：把「连不上」说清楚 */
   const [probe, setProbe] = useState<string>('')
   const [probing, setProbing] = useState(false)
+  /** 因长时间未操作被自动退出登录时，进来提示一次（读完就清掉标记，避免以后误提示） */
+  const [idleNotice, setIdleNotice] = useState('')
+  useEffect(() => {
+    if (!idleExpired) return
+    setIdleNotice(`超过 ${Math.round(SESSION_IDLE_TIMEOUT / 60_000)} 分钟没有操作，已自动退出登录`)
+    clearIdleExpired()
+  }, [idleExpired, clearIdleExpired])
 
   const runProbe = async () => {
     setProbing(true)
@@ -81,6 +88,12 @@ export default function Login() {
             onKeyDown={(e) => e.key === 'Enter' && submit()}
           />
         </div>
+
+        {idleNotice && (
+          <div className="animate-fade rounded-xl bg-amber-50 p-2.5">
+            <p className="text-xs leading-relaxed text-amber-700">⏱️ {idleNotice}</p>
+          </div>
+        )}
 
         {err && (
           <div className="animate-fade rounded-xl bg-rose-50 p-2.5">
