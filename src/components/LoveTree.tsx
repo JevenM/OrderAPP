@@ -61,14 +61,21 @@ const GRASS_TUFTS: [number, number, number][] = [
 
 /** 飘落粒子的固定参数：位置/延时都写死，避免每次渲染重新随机导致闪烁 */
 const PETALS = [
-  { left: '7%', delay: '0s', dur: '7.5s', glyph: '💗', size: '13px' },
+  // 🍏🍐🍋🍇🍒🍑🌽🌶️🍭🥭🥦🥜
+  { left: '7%', delay: '0s', dur: '7.5s', glyph: '🌺', size: '13px' },
+  { left: '14%', delay: '1s', dur: '5.5s', glyph: '🍂', size: '13px' },
   { left: '21%', delay: '2.6s', dur: '9s', glyph: '🌸', size: '12px' },
+  { left: '28%', delay: '4.6s', dur: '7s', glyph: '🍁', size: '12px' },
   { left: '35%', delay: '1.2s', dur: '8.2s', glyph: '✨', size: '11px' },
+  { left: '42%', delay: '4.2s', dur: '5.2s', glyph: '🍎', size: '12px' },
   { left: '49%', delay: '4.1s', dur: '7.8s', glyph: '💕', size: '13px' },
+  { left: '56%', delay: '6.1s', dur: '5.8s', glyph: '🍊', size: '13px' },
   { left: '63%', delay: '0.7s', dur: '8.8s', glyph: '💗', size: '12px' },
-  { left: '77%', delay: '3.3s', dur: '9.4s', glyph: '🌸', size: '12px' },
-  { left: '88%', delay: '1.9s', dur: '8s', glyph: '✨', size: '11px' },
-  { left: '94%', delay: '5s', dur: '7.2s', glyph: '💕', size: '12px' },
+  { left: '70%', delay: '3.7s', dur: '4.8s', glyph: '🍅', size: '12px' },
+  { left: '77%', delay: '3.3s', dur: '9.4s', glyph: '🌼', size: '12px' },
+  { left: '83%', delay: '7.3s', dur: '6.4s', glyph: '🍓', size: '12px' },
+  { left: '88%', delay: '1.9s', dur: '8s', glyph: '🏵️', size: '11px' },
+  { left: '94%', delay: '5s', dur: '7.2s', glyph: '🌻', size: '12px' },
 ]
 
 export default function LoveTree({

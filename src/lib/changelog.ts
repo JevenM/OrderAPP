@@ -25,6 +25,17 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.47',
+    date: '2026-11-03',
+    title: '刮刮乐记录不再丢 · 记录分页',
+    items: [
+      { kind: 'fix', text: '修复刮刮乐历史记录会被清空的问题：以前写数据时拿本地那份整块覆盖，只要本地还没加载完，抽一次卡就会把对方的卡和历史一起抹掉' },
+      { kind: 'improve', text: '刮刮乐记录改为每页 5 条，第一页就是最近刮出的 5 条，可以往回翻' },
+      { kind: 'improve', text: '刮刮乐记录最多保留 200 条（原来只留 20 条），写入前会先对齐服务端最新状态，并自动去重' },
+      { kind: 'improve', text: '爱心树去掉左侧那颗飘落的爱心，画面更干净' },
+    ],
+  },
+  {
     version: '1.9.46',
     date: '2026-11-01',
     title: '爱心树按年纪定阶段 · 闲置自动退出',

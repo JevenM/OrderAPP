@@ -145,6 +145,13 @@ type DrawnWish = Wish & { drawer: string }
 type ChatItem = { id: string; sender_id: string; receiver_id: string; content: string; created_at: string }
 
 const HISTORY_PAGE_SIZE = 10
+/** 刮刮乐记录单独按 5 条一页：第一页正好是最近刮出的 5 条 */
+const SCRATCH_PAGE_SIZE = 5
+/**
+ * 刮刮乐记录最多保留多少条。原来是 20 条，分页只剩 4 页没什么意义；
+ * 而这份 log 是一整块 jsonb，写坏一次就整块没了，多留一些更抗折腾。
+ */
+const SCRATCH_LOG_LIMIT = 200
 /** 备婚流程还没落库时的空值：保持引用稳定，避免每次渲染都重算派生值 */
 const EMPTY_WEDDING_DONE: string[] = []
 const EMPTY_WEDDING_CHECKED: Record<string, boolean> = {}
@@ -168,22 +175,39 @@ const isNewerGomokuRow = (incoming: CoupleGomokuRow, current: CoupleGomokuRow): 
 const safeDisplayText = (value: unknown, fallback = ''): string =>
   typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value) : fallback
 
+/**
+ * 往刮刮乐记录里追加一条：按时间升序保存（末尾最新），并用 at+text 判重。
+ * 两个人同时刮、或本地状态过期重写时，同一条记录不会被插两次。
+ */
+const mergeScratchLog = (
+  log: Array<{ at: string; text: string }>,
+  entry: { at: string; text: string }
+): Array<{ at: string; text: string }> => {
+  const key = (e: { at: string; text: string }) => `${e.at}|${e.text}`
+  const merged = new Set(log.map(key)).has(key(entry)) ? [...log] : [...log, entry]
+  merged.sort((a, b) => a.at.localeCompare(b.at))
+  return merged.slice(-SCRATCH_LOG_LIMIT)
+}
+
 function HistoryPager({
   page,
   total,
   onChange,
+  pageSize = HISTORY_PAGE_SIZE,
   prevLabel = '上一页',
   nextLabel = '下一页',
 }: {
   page: number
   total: number
   onChange: (page: number) => void
+  /** 每页条数，默认跟 HISTORY_PAGE_SIZE 走；个别列表（刮刮乐）用更小的密度 */
+  pageSize?: number
   /** 倒序列表（如留言板）传「更新 / 更早」，语义才不会反 */
   prevLabel?: string
   nextLabel?: string
 }) {
-  const pages = Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE))
-  if (total <= HISTORY_PAGE_SIZE) return null
+  const pages = Math.max(1, Math.ceil(total / pageSize))
+  if (total <= pageSize) return null
   return (
     <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-xs">
       <button type="button" className="text-brand-600 disabled:text-slate-300" disabled={page === 0} onClick={() => onChange(page - 1)}>{prevLabel}</button>
@@ -2124,6 +2148,20 @@ export default function CouplePage() {
     [memberId, friendId, scratchLoaded]
   )
 
+  /**
+   * 实时推送来的刮刮乐行：couple_scratch 是所有情侣共用的一张表，
+   * 不核对 member_a/member_b 就直接塞进 state，会把别人的卡显示成自己的。
+   */
+  const absorbScratchRow = useCallback(
+    (row: CoupleScratchRow) => {
+      if (!memberId || !friendId) return
+      const [a, b] = orderedPair(memberId, friendId)
+      if (row.member_a !== a || row.member_b !== b) return
+      setScratchGame(row)
+    },
+    [memberId, friendId]
+  )
+
   const reloadWedding = useCallback(
     async (force = false) => {
       if (!memberId || !friendId) return
@@ -2470,8 +2508,8 @@ export default function CouplePage() {
       // 重要日倒计时 / 刮刮乐：对方改动时即时同步（DELETE 交由轮询兜底）
       { table: 'couple_countdown', event: 'INSERT', on: (p) => setCountdownGame(p.new as CoupleCountdownRow) },
       { table: 'couple_countdown', event: 'UPDATE', on: (p) => setCountdownGame(p.new as CoupleCountdownRow) },
-      { table: 'couple_scratch', event: 'INSERT', on: (p) => setScratchGame(p.new as CoupleScratchRow) },
-      { table: 'couple_scratch', event: 'UPDATE', on: (p) => setScratchGame(p.new as CoupleScratchRow) },
+      { table: 'couple_scratch', event: 'INSERT', on: (p) => absorbScratchRow(p.new as CoupleScratchRow) },
+      { table: 'couple_scratch', event: 'UPDATE', on: (p) => absorbScratchRow(p.new as CoupleScratchRow) },
       // 备婚流程：谁勾了待办、谁完成了某一步，对方立刻看到
       { table: 'couple_wedding', event: 'INSERT', on: (p) => setWeddingRow(p.new as CoupleWeddingRow) },
       { table: 'couple_wedding', event: 'UPDATE', on: (p) => setWeddingRow(p.new as CoupleWeddingRow) },
@@ -4164,28 +4202,39 @@ export default function CouplePage() {
 
   /* ------------------------------ 情侣刮刮乐 ------------------------------ */
 
+  /**
+   * 以服务端为准取一份最新的刮刮乐状态。
+   *
+   * 这份 state 是整个 jsonb 一起写的，所以绝不能拿本地的旧对象去覆盖：本地可能还没加载完
+   * （刚进模块）、也可能对方刚写过。原来直接用 `scratchGame?.state` 拼新状态，只要本地是
+   * null 就会把对方的卡和历史记录一起抹成空 —— 这就是「记录突然没了」的成因。
+   */
+  const loadScratchBase = async (me: string, peer: string): Promise<CoupleScratchState> => {
+    const latest = await fetchCoupleScratch(me, peer)
+    return { cards: latest?.state?.cards ?? {}, log: latest?.state?.log ?? [] }
+  }
+
   /** 抽一张只属于自己的新卡：约 1/3 概率谢谢惠顾，其余随机甜蜜奖励；抽卡动作不进记录 */
   const drawScratchCard = async () => {
     if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
     if (scratchSaving) return
-    const mine = scratchGame?.state.cards?.[myId]
-    const today = scratchDay(new Date().toISOString())
-    if (mine && !mine.revealed_at) return toast.show('先把当前这张刮开再抽新的吧～')
-    if (mine && (scratchDay(mine.created_at) === today || (mine.revealed_at && scratchDay(mine.revealed_at) === today))) {
-      return toast.show('今天已经刮过啦，明天再来吧～')
-    }
     setScratchSaving(true)
     try {
+      const base = await loadScratchBase(memberId, friendId)
+      const mine = base.cards[myId]
+      const today = scratchDay(new Date().toISOString())
+      if (mine && !mine.revealed_at) return toast.show('先把当前这张刮开再抽新的吧～')
+      if (mine && (scratchDay(mine.created_at) === today || (mine.revealed_at && scratchDay(mine.revealed_at) === today))) {
+        return toast.show('今天已经刮过啦，明天再来吧～')
+      }
       const miss = SCRATCH_PRIZES.filter((p) => p.startsWith('谢谢惠顾'))
       const prizes = SCRATCH_PRIZES.filter((p) => !p.startsWith('谢谢惠顾'))
       // 中奖率约 80%，谢谢惠顾约 20%
       const prize = Math.random() < 0.20 ? miss[Math.floor(Math.random() * miss.length)] : prizes[Math.floor(Math.random() * prizes.length)]
       const at = new Date().toISOString()
       const card: CoupleScratchCard = { id: crypto.randomUUID(), prize, created_by: myId, created_at: at, revealed_at: null, revealed_by: null }
-      const state: CoupleScratchState = {
-        cards: { ...(scratchGame?.state.cards ?? {}), [myId]: card },
-        log: scratchGame?.state.log ?? [],
-      }
+      // 只替换自己这张卡，对方的卡和历史记录原样带过去
+      const state: CoupleScratchState = { cards: { ...base.cards, [myId]: card }, log: base.log }
       await upsertCoupleScratch(memberId, friendId, state)
       const [a, b] = orderedPair(memberId, friendId)
       setScratchGame({ member_a: a, member_b: b, state, updated_at: at })
@@ -4199,14 +4248,20 @@ export default function CouplePage() {
 
   /** 刮开自己的卡揭晓：刮到一半以上自动触发；记录里写「谁刮的 + 结果」，结果双方可见 */
   const revealScratch = async () => {
-    const card = scratchGame?.state.cards?.[myId]
-    if (!card || card.revealed_at || !memberId || !friendId || scratchSaving) return
+    if (!memberId || !friendId || scratchSaving) return
     setScratchSaving(true)
     try {
+      // 同样以服务端为准：本地这张卡可能已经被别的标签页或对方刮开了
+      const base = await loadScratchBase(memberId, friendId)
+      const card = base.cards[myId]
+      if (!card || card.revealed_at) return
       const at = new Date().toISOString()
       const state: CoupleScratchState = {
-        cards: { ...(scratchGame?.state.cards ?? {}), [myId]: { ...card, revealed_at: at, revealed_by: myId } },
-        log: [...(scratchGame?.state.log ?? []), { at, text: `${memberName || '我'} 刮了刮刮乐：${card.prize.startsWith('谢谢惠顾') ? '谢谢惠顾，没刮中～' : `刮中了「${card.prize}」`}` }].slice(-20),
+        cards: { ...base.cards, [myId]: { ...card, revealed_at: at, revealed_by: myId } },
+        log: mergeScratchLog(base.log, {
+          at,
+          text: `${memberName || '我'} 刮了刮刮乐：${card.prize.startsWith('谢谢惠顾') ? '谢谢惠顾，没刮中～' : `刮中了「${card.prize}」`}`,
+        }),
       }
       await upsertCoupleScratch(memberId, friendId, state)
       const [a, b] = orderedPair(memberId, friendId)
@@ -5553,7 +5608,7 @@ export default function CouplePage() {
             <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h3 className="font-semibold">⚫ 情侣五子棋</h3>
+                  <h3 className="font-semibold">⚫情侣五子棋</h3>
                   {/* <p className="mt-1 text-xs text-slate-500">标准 15×15 棋盘，黑棋先手，横竖斜任意方向连成五子获胜。</p> */}
                 </div>
                 <span className="chip shrink-0 border-slate-200 bg-slate-50 text-slate-600">{gomokuHistory.length} 局历史</span>
@@ -5561,7 +5616,7 @@ export default function CouplePage() {
               
               {!gomokuGame ? (
                 <button type="button" className="btn-primary w-full" disabled={gomokuSaving || !ready} onClick={() => void startGomokuGame()}>
-                  {gomokuSaving ? '创建中…' : '⚫ 开始新棋局'}
+                  {gomokuSaving ? '创建中…' : '⚫开始新棋局'}
                 </button>
               ) : gomokuState ? (
                 <>
@@ -5575,7 +5630,7 @@ export default function CouplePage() {
                     )}
                     {gomokuState.winner === null && (
                       <button type="button" className="btn-ghost ml-auto text-xs" disabled={gomokuSaving} onClick={() => void toggleGomokuPause()}>
-                        {gomokuState.paused ? '▶️ 继续游戏' : '⏸️ 暂停'}
+                        {gomokuState.paused ? '▶️继续' : '⏸️暂停'}
                       </button>
                     )}
                     {gomokuState.winner === null && (
@@ -5585,10 +5640,10 @@ export default function CouplePage() {
                     {gomokuState.winner !== null && (
                       <>
                         <button type="button" className="btn-primary ml-auto px-3 py-1 text-xs" disabled={gomokuSaving || !ready} onClick={() => void startGomokuGame()}>
-                          🔄 再来一局
+                        🔄再来
                         </button>
                         <button type="button" className="btn-ghost text-xs" disabled={gomokuSaving} onClick={() => void finishGomoku()}>
-                          🏁 结束本局
+                        🏁结束
                         </button>
                       </>
                     )}
@@ -5735,7 +5790,7 @@ export default function CouplePage() {
             <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h3 className="font-semibold">🍉 情侣西瓜分</h3>
+                  <h3 className="font-semibold">🍉情侣西瓜分</h3>
                   <p className="mt-1 text-xs text-slate-500">信用分：给 {friendName} 加分或减分。</p>
                 </div>
                 <span className="chip shrink-0 border-emerald-200 bg-emerald-50 text-emerald-700">{watermelonLogs.length} 条记录</span>
@@ -6398,20 +6453,46 @@ export default function CouplePage() {
                   </div>
                 )
               })()}
-              {(scratchGame?.state.log ?? []).length > 0 && (
-                <div className="space-y-2 border-t border-slate-100 pt-3">
-                  <h4 className="text-xs font-semibold text-slate-600">🎫 刮刮乐记录</h4>
-                  <div className="space-y-1 text-[11px]">
-                    {[...(scratchGame?.state.log ?? [])].reverse().slice(scratchHistoryPage * HISTORY_PAGE_SIZE, (scratchHistoryPage + 1) * HISTORY_PAGE_SIZE).map((entry, i) => (
-                      <div key={`${entry.at}-${i}`} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-2">
-                        <span className="min-w-0 flex-1 break-words text-slate-600">{entry.text}</span>
-                        <span className="shrink-0 text-slate-300">                    {new Date(entry.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                      </div>
-                    ))}
-                    <HistoryPager page={scratchHistoryPage} total={(scratchGame?.state.log ?? []).length} onChange={setScratchHistoryPage} />
+              {(() => {
+                // 记录按时间升序存，倒过来才是「最新的在前」——第一页正好是最近刮出的 5 条
+                const log = [...(scratchGame?.state.log ?? [])].reverse()
+                if (log.length === 0) return null
+                // 记录可能被裁短，页码先收敛回有效范围，免得越界翻出空白页
+                const pages = Math.max(1, Math.ceil(log.length / SCRATCH_PAGE_SIZE))
+                const page = Math.min(Math.max(scratchHistoryPage, 0), pages - 1)
+                return (
+                  <div className="space-y-2 border-t border-slate-100 pt-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-xs font-semibold text-slate-600">🎫 刮刮乐记录</h4>
+                      <span className="chip shrink-0 border-slate-200 bg-slate-50 text-slate-500">{log.length} 条</span>
+                    </div>
+                    <div className="space-y-1 text-[11px]">
+                      {log.slice(page * SCRATCH_PAGE_SIZE, (page + 1) * SCRATCH_PAGE_SIZE).map((entry) => (
+                        <div
+                          key={`${entry.at}-${entry.text}`}
+                          className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-2"
+                        >
+                          <span className="min-w-0 flex-1 break-words text-slate-600">{entry.text}</span>
+                          <span className="shrink-0 text-slate-300">
+                            {new Date(entry.at).toLocaleString('zh-CN', {
+                              month: 'numeric',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                      ))}
+                      <HistoryPager
+                        page={page}
+                        total={log.length}
+                        pageSize={SCRATCH_PAGE_SIZE}
+                        onChange={setScratchHistoryPage}
+                      />
+                    </div>
                   </div>
-                </div>
-              )}
+                )
+              })()}
             </section>
           )}
 
