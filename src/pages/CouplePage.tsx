@@ -123,6 +123,8 @@ import { todayStr } from '../lib/date'
 import { DEEP_COUPLE_QUESTIONS, EXTRA_COUPLE_QUESTIONS, MILESTONE_QUESTIONS, TRUTH_PROMPTS } from '../lib/coupleQuestions'
 import { WEDDING_STEPS, WEDDING_TOTAL, weddingItemKey, type WeddingItemKind } from '../lib/weddingSteps'
 import LoveTree from '../components/LoveTree'
+import Star2048 from '../components/Star2048'
+import MatchCats from '../components/MatchCats'
 import {
   LOVE_TREE_LOOKBACK,
   isDormantTree,
@@ -4529,7 +4531,7 @@ export default function CouplePage() {
             { id: 'mines', icon: '💣', title: '情侣扫雷', detail: '轮流拆雷，踩雷做任务' },
             { id: 'wufu', icon: '♟️', title: '摆方五福棋', detail: '摆子提子走子，吃到剩2子' },
             { id: 'gomoku', icon: '⚫', title: '情侣五子棋', detail: '联网轮流落子，五连获胜' },
-            { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分，看专属甜蜜分变化' },
+            { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分' },
             { id: 'dice', icon: '🎲', title: '骰子比大小', detail: '3个骰子押大小，围骰庄家通吃' },
             { id: 'countdown', icon: '⏳', title: '重要日倒计时', detail: '纪念日、生日倒数还有多少天' },
             {
@@ -4539,6 +4541,8 @@ export default function CouplePage() {
               detail: weddingDoneCount ? `已完成 ${weddingDoneCount}/${WEDDING_TOTAL} 步` : `从定心意到结完婚共 ${WEDDING_TOTAL} 步`,
             },
             { id: 'scratch', icon: '🎫', title: '情侣刮刮乐', detail: '刮开卡片赢甜蜜奖励' },
+            { id: 'star2048', icon: '✨', title: '星尘 2048', detail: '滑动合并方块' },
+            { id: 'matchcats', icon: '🐈', title: '合成猫猫', detail: '相同猫猫合成' },
           ]}
           isEnabled={isEnabled}
           onSelect={setActiveModule}
@@ -6493,6 +6497,28 @@ export default function CouplePage() {
                   </div>
                 )
               })()}
+            </section>
+          )}
+
+          {/* ✨ 星尘 2048：单机小游戏，进度与最高分存在本机 */}
+          {activeModule === 'star2048' && (
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
+              <div>
+                <h3 className="font-semibold">✨ 星尘 2048</h3>
+                <p className="mt-1 text-xs text-slate-400">星空配色的 2048：滑动合并方块，合出 2048 通关，还能继续往大合。</p>
+              </div>
+              <Star2048 />
+            </section>
+          )}
+
+          {/* 🐈 合成猫猫：单机小游戏，图鉴跨局留存 */}
+          {activeModule === 'matchcats' && (
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
+              <div>
+                <h3 className="font-semibold">🐈 合成猫猫</h3>
+                <p className="mt-1 text-xs text-slate-400">点手牌放到棋盘，三只相同猫猫横、竖、斜连成一线就合成消失，集齐猫猫图鉴！</p>
+              </div>
+              <MatchCats />
             </section>
           )}
 
