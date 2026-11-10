@@ -122,7 +122,7 @@ import { markActive, useIsPeerOnline } from '../lib/presence'
 import {
   DEFAULT_THEME_ID,
   SCRATCH_THEMES,
-  drawScratchResult,
+  drawScratchCells,
   fallbackTicketNo,
   makeTicketNo,
   themeOf,
@@ -4151,7 +4151,8 @@ export default function CouplePage() {
         return toast.show('今天已经刮过啦，明天再来吧～')
       }
       const theme = themeOf(scratchTheme)
-      const { tier, prize } = drawScratchResult()
+      // 出票这一刻就把整张票定死：中奖号码、每个格子下的号码与文字、整票结果
+      const { tier, prize, lucky, cells } = drawScratchCells()
       const at = new Date().toISOString()
       const card: CoupleScratchCard = {
         id: crypto.randomUUID(),
@@ -4163,13 +4164,15 @@ export default function CouplePage() {
         theme: theme.id,
         ticket_no: makeTicketNo(theme, new Date(at)),
         tier,
+        lucky,
+        cells,
       }
       // 只替换自己这张票，对方的票和历史记录原样带过去
       const state: CoupleScratchState = { cards: { ...base.cards, [myId]: card }, log: base.log }
       await upsertCoupleScratch(memberId, friendId, state)
       const [a, b] = orderedPair(memberId, friendId)
       setScratchGame({ member_a: a, member_b: b, state, updated_at: at })
-      toast.show(`🎫「${theme.name}」出票啦，用手指刮开吧`)
+      toast.show(`🎫「${theme.name}」出票啦，中奖号码是 ${lucky}，开刮！`)
     } catch (error) {
       toast.show((error as Error).message, 'err')
     } finally {
@@ -6330,7 +6333,7 @@ export default function CouplePage() {
                 <div>
                   <h3 className="font-semibold">🎫 情侣刮刮乐</h3>
                   <p className="mt-1 text-xs text-slate-400">
-                    每天各抽一张，手指刮开银色涂层，刮满 60% 自动揭晓。
+                    每天各抽一张，票面上印着「中奖号码」，刮奖区有 9 个小涂层格——刮出和它相同的号码，就能赢得那格下的奖励；全刮开整票揭晓。纯娱乐，不涉及真实金钱。
                   </p>
                 </div>
                 <button
@@ -6423,7 +6426,7 @@ export default function CouplePage() {
                               hour: '2-digit',
                               minute: '2-digit',
                             })}`
-                          : '刮满 60% 自动揭晓'}
+                          : '逐格刮开，对上中奖号码'}
                       </span>
                     </div>
                     {/* key 用票 id：换新票时整张票重建，涂层才会重新铺满，不会沿用上一张刮过的状态 */}
@@ -6435,6 +6438,8 @@ export default function CouplePage() {
                       prize={mine.prize}
                       revealed={!!mine.revealed_at}
                       onReveal={() => void revealScratch()}
+                      lucky={mine.lucky}
+                      cells={mine.cells}
                     />
                     {mine.revealed_at ? (
                       <button
@@ -6446,7 +6451,11 @@ export default function CouplePage() {
                         {drewToday ? '🎫 明天再来' : `🎫 抽明天的「${themeOf(scratchTheme).name}」`}
                       </button>
                     ) : (
-                      <p className="text-center text-[10px] text-slate-400">用手指在银色涂层上来回刮开</p>
+                      <p className="text-center text-[10px] text-slate-400">
+                        {mine.cells?.length
+                          ? '逐格刮开涂层，号码对上「中奖号码」的那格就是奖励'
+                          : '用手指在银色涂层上来回刮开'}
+                      </p>
                     )}
                   </div>
                 )
@@ -6477,6 +6486,8 @@ export default function CouplePage() {
                       revealed={!!theirs.revealed_at}
                       onReveal={() => undefined}
                       locked={!theirs.revealed_at}
+                      lucky={theirs.lucky}
+                      cells={theirs.cells}
                     />
                   </div>
                 )

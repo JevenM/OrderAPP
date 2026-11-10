@@ -238,3 +238,75 @@ export function fallbackTicketNo(cardId: string, theme: ScratchTheme): string {
   const digits = cardId.replace(/[^0-9]/g, '').slice(0, 4) || '0000'
   return `${theme.code}-${digits}`
 }
+
+/* ============================================================================
+ *  多格刮奖配置区（仿纸质刮刮乐的「对号码」玩法）
+ * ----------------------------------------------------------------------------
+ *  玩法：票面上印着一个「中奖号码」（0-9），刮奖区是 3×3 个小涂层格，
+ *  每格下面藏着一组「号码 + 文字」；刮开后号码 == 中奖号码的那格就是奖励，
+ *  其余格子是安慰小字。全部格子刮开，整票才揭晓并记入历史。
+ * ========================================================================== */
+
+export interface ScratchCell {
+  /** 印在这格涂层下的号码（0-9） */
+  n: number
+  /** 涂层下的文字：中奖格是奖品，其余是安慰话 */
+  prize: string
+  /** 号码是否等于中奖号码：等于就赢得这格 */
+  win: boolean
+}
+
+/** 刮奖区格子数量（3×3）。改成 12 就会自动排成 4×3，布局自适应 */
+export const SCRATCH_CELL_COUNT = 9
+
+/** 号码取值范围：0 ~ SCRATCH_CELL_MAX（含） */
+export const SCRATCH_CELL_MAX = 9
+
+/** 单格刮开多少比例算「这格刮开了」 */
+export const CELL_REVEAL_RATIO = 0.6
+
+/** 没中奖的格子里刮出来的安慰小字（等概率随机，尽量不重复） */
+export const SCRATCH_CELL_FILLER: string[] = [
+  '好运攒一攒', '差一点点～', '再接再厉', '甜蜜在路上', '下次一定',
+  '谢谢惠顾', '继续刮刮看', '好运排队中', '小小的遗憾', '甜味预告',
+]
+
+/**
+ * 出一整张票：先按 SCRATCH_ODDS 掷档位，再摆格子。
+ * - big / small：恰有一格号码命中，文案取对应奖池
+ * - none：没有任何格命中，整票结果是谢谢参与
+ * - prize 是整票结果（历史记录、通知里显示的就是它）
+ */
+export function drawScratchCells(): {
+  tier: ScratchTier
+  prize: string
+  lucky: number
+  cells: ScratchCell[]
+} {
+  const roll = Math.random()
+  const tier: ScratchTier =
+    roll < SCRATCH_ODDS.big ? 'big' : roll < SCRATCH_ODDS.big + SCRATCH_ODDS.small ? 'small' : 'none'
+  const lucky = Math.floor(Math.random() * (SCRATCH_CELL_MAX + 1))
+
+  const cells: ScratchCell[] = Array.from({ length: SCRATCH_CELL_COUNT }, () => ({ n: 0, prize: '', win: false }))
+  const winPrize = tier === 'big' ? pickOne(SCRATCH_POOL.big) : tier === 'small' ? pickOne(SCRATCH_POOL.small) : ''
+  if (tier !== 'none') {
+    // 中奖格随机放一个位置，刮的时候才有悬念
+    const idx = Math.floor(Math.random() * cells.length)
+    cells[idx] = { n: lucky, prize: winPrize, win: true }
+  }
+
+  // 其余格子：号码必须避开中奖号码；安慰话洗一遍牌，格与格不重复
+  const fillers = [...SCRATCH_CELL_FILLER].sort(() => Math.random() - 0.5)
+  let fi = 0
+  for (const cell of cells) {
+    if (cell.win) continue
+    let n = lucky
+    while (n === lucky) n = Math.floor(Math.random() * (SCRATCH_CELL_MAX + 1))
+    cell.n = n
+    cell.prize = fillers[fi % fillers.length]
+    fi += 1
+  }
+
+  return { tier, prize: tier === 'none' ? pickOne(SCRATCH_POOL.none) : winPrize, lucky, cells }
+}

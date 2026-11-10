@@ -2217,6 +2217,10 @@ export interface CoupleScratchCard {
   ticket_no?: string
   /** 奖项档位：big 大奖 / small 小奖 / none 谢谢参与（老数据按文案推断） */
   tier?: 'big' | 'small' | 'none'
+  /** 多格玩法的中奖号码（0-9）；老卡没有，走单格涂层模式 */
+  lucky?: number
+  /** 多格玩法：每个涂层格下的「号码 + 文字 + 是否中奖」；出票时就定死 */
+  cells?: { n: number; prize: string; win: boolean }[]
 }
 
 /**

@@ -116,6 +116,10 @@ function noise(dur: number, vol: number, freq: number) {
 export const sfx = {
   /** 刮刮乐刮擦：短促沙沙声，调用方自己控制节奏 */
   scratch: () => noise(0.08, 0.05, 2600),
+  /** 刮刮乐单格揭开：轻快两连音，比整票揭晓轻 */
+  cellReveal: () => {
+    ;[880, 1180].forEach((f, i) => tone(f, 0.1, { type: 'sine', vol: 0.08, delay: i * 0.05 }))
+  },
   /** 刮刮乐整张揭开：小上行琶音 */
   reveal: () => {
     ;[660, 880, 1180].forEach((f, i) => tone(f, 0.16, { type: 'sine', vol: 0.11, delay: i * 0.07 }))
