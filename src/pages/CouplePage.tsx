@@ -4468,8 +4468,8 @@ export default function CouplePage() {
             { id: 'wufu', icon: '♟️', title: '摆方五福棋', detail: '摆子提子走子，吃到剩2子' },
             { id: 'gomoku', icon: '⚫', title: '情侣五子棋', detail: '联网轮流落子，五连获胜' },
             { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分' },
-            { id: 'dice', icon: '🎲', title: '骰子比大小', detail: '3个骰子押大小，围骰庄家通吃' },
-            { id: 'countdown', icon: '⏳', title: '重要日倒计时', detail: '纪念日、生日倒数还有多少天' },
+            { id: 'dice', icon: '🎲', title: '骰子比大小', detail: '骰子押大小，围骰庄家通吃' },
+            { id: 'countdown', icon: '⏳', title: '重要日倒计时', detail: '倒数还有多少天' },
             {
               id: 'wedding',
               icon: '💍',
@@ -6556,7 +6556,7 @@ export default function CouplePage() {
               <div>
                 <h3 className="font-semibold">🐾 动物世界消消乐</h3>
                 <p className="mt-1 text-xs text-slate-400">
-                  点没被压住的牌收进 7 个卡槽，同种凑三张就消掉；卡槽塞满即结束。第 1 关新手必通关，第 2 关多层嵌套，通关率感人～
+                  点没被压住的牌收进 7 个卡槽，同种凑三张就消掉；卡槽塞满即结束。
                 </p>
               </div>
               <AnimalMatch

@@ -12,7 +12,8 @@ import GameLeaderboard from './GameLeaderboard'
  * - 卡槽 7 格全满且无三消 → 失败；场上牌全部消完 → 通关
  * - 只有最上层没被覆盖的牌能点，上层清掉后下层自动解锁
  * - 道具：移出（卡槽末尾 3 张回棋盘）、撤销（回退一步）、洗牌（场上图案重排）、复活（满槽时救一次）
- * - 两关：第 1 关单层平铺必通关；第 2 关多层交叉堆叠、图案混杂，保留随机死局
+ * - 8 关：层数、牌数、图案种数逐关递增，高关卡道具还会被砍，难度阶梯式上升；
+ *   第 5 关就是原来的「地狱」，它上面还有 3 关更难的
  * - 每日重置：牌局用「日期 + 关卡」做种子，同一天布局固定，跨天换新
  */
 
@@ -51,9 +52,35 @@ interface LevelDef {
   viewCols: number
   viewRows: number
   winBonus: number
+  /** 本关道具配置（存档接口 Items 在下面定义，类型提前引用没问题） */
+  items: Items
 }
 
-const LEVELS: Record<1 | 2, LevelDef> = {
+type LevelId = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
+
+const LEVEL_IDS: LevelId[] = [1, 2, 3, 4, 5, 6, 7, 8]
+
+/**
+ * 金字塔层：第 i 层从坐标 i 开始每 2 格一张，到 span-i 结束，
+ * 层层中心对称、半格错位——上层牌正好压在下层四张的交叉点上。
+ * span = 2 × (层数 - 1)，总位置数 = 1²+2²+…+层数²。
+ */
+function pyramidLayers(total: number): LayerDef[] {
+  const span = 2 * (total - 1)
+  const line = (start: number, end: number) => {
+    const out: number[] = []
+    for (let c = start; c <= end; c += 2) out.push(c)
+    return out
+  }
+  return Array.from({ length: total }, (_, i) => ({ cols: line(i, span - i), rows: line(i, span - i) }))
+}
+
+/**
+ * 关卡难度表：想加新关就往后填，层数用 pyramidLayers(n) 生成。
+ * 总牌数不用凑 3 的倍数，buildLevel 会自动从底层角上拿掉多余的几张。
+ * 难度三件套：层数（遮挡）→ 图案种数（凑三概率）→ 道具（高关被砍）。
+ */
+const LEVELS: Record<LevelId, LevelDef> = {
   1: {
     name: '第 1 关 · 新手',
     tag: '必通关',
@@ -63,23 +90,87 @@ const LEVELS: Record<1 | 2, LevelDef> = {
     viewCols: 8,
     viewRows: 8,
     winBonus: 200,
+    items: { remove: 1, undo: 1, shuffle: 1, revive: 1 },
   },
   2: {
-    name: '第 2 关 · 地狱',
-    tag: '多层嵌套',
-    desc: '6 层交叉堆叠、10 种图案，牌压牌，容易走进死局',
-    speciesCount: 10,
+    name: '第 2 关 · 入门',
+    tag: '双层错位',
+    desc: '4×4 压着错位的 3×3，24 张 6 种图案，开始要动脑了',
+    speciesCount: 6,
     layers: [
-      { cols: [0, 2, 4, 6, 8, 10], rows: [0, 2, 4, 6, 8, 10] },
-      { cols: [1, 3, 5, 7, 9], rows: [1, 3, 5, 7, 9] },
-      { cols: [2, 4, 6, 8], rows: [2, 4, 6, 8] },
-      { cols: [3, 5, 7], rows: [3, 5, 7] },
-      { cols: [4, 6], rows: [4, 6] },
-      { cols: [5], rows: [5] },
+      { cols: [0, 2, 4, 6], rows: [0, 2, 4, 6] },
+      { cols: [1, 3, 5], rows: [1, 3, 5] },
     ],
+    viewCols: 8,
+    viewRows: 8,
+    winBonus: 500,
+    items: { remove: 1, undo: 1, shuffle: 1, revive: 1 },
+  },
+  3: {
+    name: '第 3 关 · 进阶',
+    tag: '金字塔',
+    desc: '4 层金字塔 30 张、6 种图案，深埋的牌要一层层挖出来',
+    speciesCount: 6,
+    layers: pyramidLayers(4),
+    viewCols: 8,
+    viewRows: 8,
+    winBonus: 800,
+    items: { remove: 1, undo: 1, shuffle: 1, revive: 1 },
+  },
+  4: {
+    name: '第 4 关 · 熟练',
+    tag: '无复活',
+    desc: '5 层金字塔 54 张、8 种图案，复活用不上了——因为根本没有',
+    speciesCount: 8,
+    layers: pyramidLayers(5),
+    viewCols: 10,
+    viewRows: 10,
+    winBonus: 1000,
+    items: { remove: 1, undo: 1, shuffle: 1, revive: 0 },
+  },
+  5: {
+    name: '第 5 关 · 地狱',
+    tag: '经典',
+    desc: '6 层金字塔 90 张、10 种图案，原来的「地狱」只是这里的中场',
+    speciesCount: 10,
+    layers: pyramidLayers(6),
     viewCols: 12,
     viewRows: 12,
     winBonus: 1500,
+    items: { remove: 1, undo: 1, shuffle: 1, revive: 0 },
+  },
+  6: {
+    name: '第 6 关 · 噩梦',
+    tag: '无洗牌',
+    desc: '7 层金字塔 138 张、12 种图案，洗牌没了，走错就得认',
+    speciesCount: 12,
+    layers: pyramidLayers(7),
+    viewCols: 14,
+    viewRows: 14,
+    winBonus: 2500,
+    items: { remove: 1, undo: 1, shuffle: 0, revive: 0 },
+  },
+  7: {
+    name: '第 7 关 · 深渊',
+    tag: '无撤销',
+    desc: '7 层金字塔 138 张、15 种图案，撤销也没了，只剩一个移出',
+    speciesCount: 15,
+    layers: pyramidLayers(7),
+    viewCols: 14,
+    viewRows: 14,
+    winBonus: 3500,
+    items: { remove: 1, undo: 0, shuffle: 0, revive: 0 },
+  },
+  8: {
+    name: '第 8 关 · 传奇',
+    tag: '终极',
+    desc: '7 层金字塔 138 张、18 种图案，道具只剩一个移出，敢来吗',
+    speciesCount: 18,
+    layers: pyramidLayers(7),
+    viewCols: 14,
+    viewRows: 14,
+    winBonus: 5000,
+    items: { remove: 1, undo: 0, shuffle: 0, revive: 0 },
   },
 }
 
@@ -128,19 +219,32 @@ interface BuiltLevel {
   viewRows: number
 }
 
-function buildLevel(level: 1 | 2, day: string): BuiltLevel {
+function buildLevel(level: LevelId, day: string): BuiltLevel {
   const def = LEVELS[level]
   const rand = mulberry32(hashStr(`${day}-${level}`))
-  const positions: Array<{ layer: number; col: number; row: number }> = []
+  let positions: Array<{ layer: number; col: number; row: number }> = []
   def.layers.forEach((layerDef, layer) => {
     for (const row of layerDef.rows) {
       for (const col of layerDef.cols) {
-        // 第 2 关 91 个位置去掉最底层一个角，凑成 90（必须是 3 的倍数）
-        if (level === 2 && layer === 0 && col === 10 && row === 10) continue
         positions.push({ layer, col, row })
       }
     }
   })
+
+  // 总牌数必须是 3 的倍数（每种 3 张一组）：差几张就从最底层角上拿掉几张。
+  // 金字塔底层的四个角只被斜向压住，拿掉不影响堆叠关系
+  const overflow = positions.length % 3
+  if (overflow > 0) {
+    const bottom = def.layers[0]
+    const corners: Array<{ col: number; row: number }> = [
+      { col: bottom.cols[0], row: bottom.rows[0] },
+      { col: bottom.cols[bottom.cols.length - 1], row: bottom.rows[0] },
+      { col: bottom.cols[0], row: bottom.rows[bottom.rows.length - 1] },
+      { col: bottom.cols[bottom.cols.length - 1], row: bottom.rows[bottom.rows.length - 1] },
+    ].slice(0, overflow)
+    const doomed = new Set(corners.map((c) => `0-${c.col}-${c.row}`))
+    positions = positions.filter((p) => !doomed.has(`${p.layer}-${p.col}-${p.row}`))
+  }
 
   // 每 3 张同种为一组，分组轮转取图案保证分布均匀，再整体洗牌
   const groups = Math.floor(positions.length / 3)
@@ -220,7 +324,7 @@ interface Items {
 
 interface SaveData {
   day: string
-  level: 1 | 2
+  level: number
   cards: Card[]
   slot: Card[]
   score: number
@@ -230,7 +334,8 @@ interface SaveData {
 const SAVE_KEY = 'couple-animal-save'
 const BEST_KEY = 'couple-animal-best'
 
-const freshItems = (): Items => ({ remove: 1, undo: 1, shuffle: 1, revive: 1 })
+/** 本关的道具：由关卡表配置，高关卡会被砍 */
+const freshItems = (level: LevelId): Items => ({ ...LEVELS[level].items })
 
 const loadSave = (): SaveData | null => {
   try {
@@ -239,8 +344,9 @@ const loadSave = (): SaveData | null => {
     const s = JSON.parse(raw) as SaveData
     // 跨天作废：每日关卡重置
     if (s?.day !== dayKey()) return null
+    if (!LEVELS[s.level as LevelId]) return null
     if (!Array.isArray(s.cards) || !Array.isArray(s.slot)) return null
-    return { ...s, items: { ...freshItems(), ...s.items } }
+    return { ...s, items: { ...freshItems(s.level as LevelId), ...s.items } }
   } catch {
     return null
   }
@@ -262,11 +368,11 @@ interface Props {
 
 export default function AnimalMatch({ myId, friendId, names }: Props) {
   const [phase, setPhase] = useState<'home' | 'play'>('home')
-  const [level, setLevel] = useState<1 | 2>(1)
+  const [level, setLevel] = useState<LevelId>(1)
   const [cards, setCards] = useState<Card[]>([])
   const [slot, setSlot] = useState<Card[]>([])
   const [score, setScore] = useState(0)
-  const [items, setItems] = useState<Items>(freshItems)
+  const [items, setItems] = useState<Items>(() => freshItems(1))
   const [result, setResult] = useState<null | 'win' | 'lose'>(null)
   const [view, setView] = useState({ cols: 12, rows: 12 })
   const [best, setBest] = useState(loadBest)
@@ -307,15 +413,15 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
     }
   }, [score, best])
 
-  /** 开局：第 1 关必通关，第 2 关随机死局；同一天同一关的布局固定 */
-  const startLevel = useCallback((next: 1 | 2) => {
+  /** 开局：牌局由「日期 + 关卡」种子决定，同一天同一关布局固定 */
+  const startLevel = useCallback((next: LevelId) => {
     const built = buildLevel(next, dayKey())
     setLevel(next)
     setCards(built.cards)
     setView({ cols: built.viewCols, rows: built.viewRows })
     setSlot([])
     setScore(0)
-    setItems(freshItems())
+    setItems(freshItems(next))
     setResult(null)
     setTip('')
     undoRef.current = null
@@ -332,7 +438,8 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
   const resume = useCallback(() => {
     const s = loadSave()
     if (!s) return
-    setLevel(s.level)
+    const lv = s.level as LevelId
+    setLevel(lv)
     setCards(s.cards)
     setSlot(s.slot)
     setScore(s.score)
@@ -341,7 +448,7 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
     setTip('')
     undoRef.current = null
     reportedRef.current = false
-    const built = buildLevel(s.level, dayKey())
+    const built = buildLevel(lv, dayKey())
     setView({ cols: built.viewCols, rows: built.viewRows })
     setPhase('play')
   }, [])
@@ -514,8 +621,17 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
           </button>
         )}
 
-        {([1, 2] as const).map((lv) => {
+        {/* 关卡按难度分四档配色：绿（新手）→ 黄（熟练）→ 橙（硬核）→ 红（终极） */}
+        {LEVEL_IDS.map((lv) => {
           const def = LEVELS[lv]
+          const chip =
+            lv <= 3
+              ? 'bg-emerald-50 text-emerald-600'
+              : lv <= 5
+                ? 'bg-amber-50 text-amber-600'
+                : lv <= 7
+                  ? 'bg-orange-50 text-orange-600'
+                  : 'bg-rose-50 text-rose-600'
           return (
             <button
               key={lv}
@@ -525,13 +641,7 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-semibold text-slate-700">{def.name}</span>
-                <span
-                  className={`chip shrink-0 border-0 ${
-                    lv === 1 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
-                  }`}
-                >
-                  {def.tag}
-                </span>
+                <span className={`chip shrink-0 border-0 ${chip}`}>{def.tag}</span>
               </div>
               <p className="mt-1 text-[11px] leading-relaxed text-slate-400">{def.desc}</p>
             </button>
