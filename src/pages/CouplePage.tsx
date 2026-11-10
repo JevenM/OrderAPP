@@ -124,7 +124,7 @@ import { DEEP_COUPLE_QUESTIONS, EXTRA_COUPLE_QUESTIONS, MILESTONE_QUESTIONS, TRU
 import { WEDDING_STEPS, WEDDING_TOTAL, weddingItemKey, type WeddingItemKind } from '../lib/weddingSteps'
 import LoveTree from '../components/LoveTree'
 import Star2048 from '../components/Star2048'
-import MatchCats from '../components/MatchCats'
+import AnimalMatch from '../components/AnimalMatch'
 import {
   LOVE_TREE_LOOKBACK,
   isDormantTree,
@@ -1018,7 +1018,7 @@ const SCRATCH_PRIZES: string[] = [
   '今晚家务对方全包', '许一个对方必须答应的小愿望', '一个爱心早餐', '晚安吻一个', '看电影选片权一次',
   '抱抱举高高十秒', '对方夸你三句', '财政小金库加 10 元', '免吵小金牌一次', '一起散步半小时',
   '对方亲手做一道菜', '一起吃一顿火锅', '获得今日零食优先选择权', '对方给你捶背十分钟', '一起拍一张合照',
-  '一杯咖啡兑换券', '周末睡懒觉一次', '对方帮你整理桌面', '一起听完一张专辑', '获得一个专属昵称',
+  '一杯咖啡兑换券', 
   '对方讲一个冷笑话', '一起做一次甜点', '晚餐由你决定', '对方为你写一句情话', '一起看一部老电影',
   '获得一次摸头奖励', '对方帮你吹头发', '一起散步看晚霞', '一份秘密小礼物', '对方替你跑腿一次',
   '一起吃一份甜品', '获得一次撒娇特权', '对方给你一个惊喜拥抱', '一起玩桌游一小时', '一张手写便签',
@@ -4542,7 +4542,7 @@ export default function CouplePage() {
             },
             { id: 'scratch', icon: '🎫', title: '情侣刮刮乐', detail: '刮开卡片赢甜蜜奖励' },
             { id: 'star2048', icon: '✨', title: '星尘 2048', detail: '滑动合并方块' },
-            { id: 'matchcats', icon: '🐈', title: '合成猫猫', detail: '相同猫猫合成' },
+            { id: 'animalmatch', icon: '🐾', title: '动物世界消消乐', detail: '7 卡槽三消，多层堆叠' },
           ]}
           isEnabled={isEnabled}
           onSelect={setActiveModule}
@@ -6505,20 +6505,30 @@ export default function CouplePage() {
             <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
               <div>
                 <h3 className="font-semibold">✨ 星尘 2048</h3>
-                <p className="mt-1 text-xs text-slate-400">星空配色的 2048：滑动合并方块，合出 2048 通关，还能继续往大合。</p>
+                <p className="mt-1 text-xs text-slate-400">滑动合并方块，合出 2048 通关，还能继续往大合。</p>
               </div>
-              <Star2048 />
+              <Star2048
+                myId={myId ?? ''}
+                friendId={friendId ?? ''}
+                names={{ [myId ?? '']: memberName, [friendId ?? '']: friendName }}
+              />
             </section>
           )}
 
-          {/* 🐈 合成猫猫：单机小游戏，图鉴跨局留存 */}
-          {activeModule === 'matchcats' && (
+          {/* 🐾 动物世界消消乐：羊了个羊式多层遮挡三消，单机 */}
+          {activeModule === 'animalmatch' && (
             <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
               <div>
-                <h3 className="font-semibold">🐈 合成猫猫</h3>
-                <p className="mt-1 text-xs text-slate-400">点手牌放到棋盘，三只相同猫猫横、竖、斜连成一线就合成消失，集齐猫猫图鉴！</p>
+                <h3 className="font-semibold">🐾 动物世界消消乐</h3>
+                <p className="mt-1 text-xs text-slate-400">
+                  点没被压住的牌收进 7 个卡槽，同种凑三张就消掉；卡槽塞满即结束。第 1 关新手必通关，第 2 关多层嵌套，通关率感人～
+                </p>
               </div>
-              <MatchCats />
+              <AnimalMatch
+                myId={myId ?? ''}
+                friendId={friendId ?? ''}
+                names={{ [myId ?? '']: memberName, [friendId ?? '']: friendName }}
+              />
             </section>
           )}
 

@@ -2264,6 +2264,78 @@ export async function notifyScratchRevealed(recipient: string, senderName: strin
   })
 }
 
+/* ------------------------------ 离线小游戏成绩榜 ------------------------------ */
+
+/** 离线小游戏：星尘 2048 / 动物世界消消乐 */
+export type CoupleGameKey = 'star2048' | 'animalmatch'
+
+export interface CoupleGameScoreRow {
+  id: string
+  member_a: string
+  member_b: string
+  game: CoupleGameKey
+  player_id: string
+  score: number
+  /** 这一局的关键信息，如「6×6 · 128 步」「第 2 关 · 通关」 */
+  detail: string
+  created_at: string
+}
+
+/**
+ * 取一对情侣某个游戏的前 N 名：按分数降序，同分先打出的人排前面。
+ * 表还没建时返回空数组 —— 排行榜缺数据不该把游戏本身搞崩。
+ */
+export async function listCoupleGameScores(
+  userA: string,
+  userB: string,
+  game: CoupleGameKey,
+  limit = 10
+): Promise<CoupleGameScoreRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_game_scores')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .eq('game', game)
+    .order('score', { ascending: false })
+    .order('created_at', { ascending: true })
+    .limit(limit)
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载游戏排行榜')
+  }
+  return (data ?? []) as CoupleGameScoreRow[]
+}
+
+/** 每局结束上传一条成绩；0 分或没配对时直接跳过，不打扰玩家 */
+export async function addCoupleGameScore(input: {
+  userA: string
+  userB: string
+  game: CoupleGameKey
+  playerId: string
+  score: number
+  detail: string
+}): Promise<void> {
+  const { userA, userB, game, playerId, score, detail } = input
+  if (!userA || !userB || userA === userB) return
+  if (!Number.isFinite(score) || score <= 0) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_game_scores').insert({
+    member_a: memberA,
+    member_b: memberB,
+    game,
+    player_id: playerId,
+    score: Math.round(score),
+    detail: detail.slice(0, 60),
+  })
+  if (error) {
+    if (isMissingTable(error)) return
+    fail(error, '上传游戏成绩')
+  }
+}
+
 /* ------------------------------ 情侣西瓜分 ------------------------------ */
 
 export interface CoupleWatermelonScoreRow {

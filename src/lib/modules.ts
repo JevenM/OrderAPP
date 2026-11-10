@@ -15,7 +15,7 @@ export type ModuleKey =
   | 'wedding'
   | 'scratch'
   | 'star2048'
-  | 'matchcats'
+  | 'animalmatch'
   | 'changelog'
   | 'about'
 
@@ -51,7 +51,7 @@ export const MODULE_DEFS: ModuleDef[] = [
   { key: 'wedding', icon: '💍', title: '备婚流程', desc: '从确定心意到结完婚的 16 个节点，记录你们走到哪一步', group: 'couple' },
   { key: 'scratch', icon: '🎫', title: '情侣刮刮乐', desc: '手指刮开卡片赢奖励', group: 'game' },
   { key: 'star2048', icon: '✨', title: '星尘 2048', desc: '星空配色 2048，滑动合并方块，支持键盘 / 触摸 / 按钮，能撤销一步', group: 'game' },
-  { key: 'matchcats', icon: '🐈', title: '合成猫猫', desc: '点手牌放到棋盘，三只相同猫猫横竖斜连成一线就合成，还有猫猫图鉴', group: 'game' },
+  { key: 'animalmatch', icon: '🐾', title: '动物世界消消乐', desc: '羊了个羊式多层遮挡三消：7 卡槽、三道具、两关难度，每日重置', group: 'game' },
   { key: 'changelog', icon: '📋', title: '更新日志', desc: '右上角「更多」里的更新日志入口与自动弹窗', group: 'app' },
   { key: 'about', icon: '💕', title: '关于我们', desc: '右上角「更多」里的关于我们页面入口', group: 'app' },
 ]
