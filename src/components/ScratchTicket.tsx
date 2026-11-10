@@ -305,9 +305,18 @@ export default function ScratchTicket({
       className="relative flex aspect-[3/4] flex-col overflow-hidden rounded-2xl shadow-[0_12px_28px_-14px_rgba(15,23,42,0.55)] ring-1 ring-black/10"
       style={{ background: theme.fallback }}
     >
-      {/* 背景图：放进 public/scratch-themes/ 后把路径填到主题配置里即可 */}
+      {/* 背景图：放进 public/scratch-themes/ 后把路径填到主题配置里即可。
+          图加载失败时隐藏 img，露出容器的主题渐变兜底，不会留下破图图标 */}
       {theme.image && (
-        <img src={theme.image} alt="" className="absolute inset-0 h-full w-full object-cover" aria-hidden />
+        <img
+          src={theme.image}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          aria-hidden
+          onError={(event) => {
+            event.currentTarget.style.display = 'none'
+          }}
+        />
       )}
 
       {/* 没有背景图时的暗纹兜底：两层点阵，位置错开一点更像印花 */}
