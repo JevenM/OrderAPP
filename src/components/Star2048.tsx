@@ -171,7 +171,23 @@ function loadSaved(): Saved | null {
     if (!Number.isInteger(size) || size < MIN_SIZE || size > MAX_SIZE) return null
     if (!Array.isArray(saved.tiles) || !saved.tiles.length) return null
     if (saved.tiles.some((t) => !t || typeof t.value !== 'number' || t.row < 0 || t.col < 0 || t.row >= size || t.col >= size)) return null
-    return { ...saved, size, tiles: saved.tiles.map((t) => ({ ...t, isNew: false, merged: false })) }
+    /*
+     * 存档里的 id 是「上一次会话」发的，而 idSeed 会随机重载页面回到 1。
+     * 如果不重新编号，新生成的方块就会和老方块撞 id：React 的 key 重复，
+     * 表现正是「某个数字突然消失」，接着看到的盘面和真实局面错位，
+     * 又表现成「明明该合并的两个数却没合并」。恢复时统一重编号，并抬高发号器。
+     */
+    // 顺手清掉同格子重叠的脏数据：两个方块压在同一格时，视觉上就是一个数字被盖住
+    const used = new Set<string>()
+    const unique = saved.tiles.filter((t) => {
+      const key = `${t.row}-${t.col}`
+      if (used.has(key)) return false
+      used.add(key)
+      return true
+    })
+    const tiles: Tile[] = unique.map((t, index) => ({ ...t, id: index + 1, isNew: false, merged: false }))
+    idSeed = Math.max(idSeed, tiles.length + 1)
+    return { ...saved, size, tiles }
   } catch {
     return null
   }
@@ -366,13 +382,16 @@ export default function Star2048({ myId, friendId, names }: Props) {
       } satisfies Snapshot
       setCanUndo(true)
 
+      // ref 立刻更新：连续快滑时下一步必须基于这一步的结果算分，否则结算分数会偏低
       const nextScore = scoreRef.current + gained
       const nextMoves = movesRef.current + 1
+      scoreRef.current = nextScore
+      movesRef.current = nextMoves
       if (gained > 0) {
-        setScore((s) => s + gained)
+        setScore(nextScore)
         pushFloat(`+${gained}`)
       }
-      setMoves((m) => m + 1)
+      setMoves(nextMoves)
       if (merges > 0) {
         // 音高按本步最大合并值走：合得越大音越亮
         const top = Math.max(...movedTiles.filter((t) => t.merged).map((t) => t.value))
@@ -491,7 +510,6 @@ export default function Star2048({ myId, friendId, names }: Props) {
             >
               <div className="text-base font-bold text-indigo-600">{p.size}×{p.size}</div>
               <div className="text-[11px] font-semibold text-slate-600">{p.label}</div>
-              <div className="mt-0.5 text-[10px] text-slate-400">{p.hint}</div>
               <div className="mt-1 text-[10px] tabular-nums text-amber-500">最高 {loadBest(p.size)}</div>
             </button>
           ))}
@@ -546,7 +564,7 @@ export default function Star2048({ myId, friendId, names }: Props) {
         </div>
       </div>
       <div className="flex gap-2">
-        <button type="button" className="btn-ghost flex-1 py-1.5 text-xs" disabled={!canUndo || over} onClick={undo}>
+        <button type="button" className="btn-ghost flex-1 py-1.5 text-xs" disabled={!canUndo} onClick={undo}>
           ↩️ 撤销一步
         </button>
         <button type="button" className="btn-ghost flex-1 py-1.5 text-xs" onClick={reset}>
@@ -639,7 +657,7 @@ export default function Star2048({ myId, friendId, names }: Props) {
       </div>
 
       <p className="text-center text-[11px] leading-relaxed text-slate-400">
-        键盘方向键 / WASD、在棋盘上滑动、或点上方按钮都行 · 撤销只能回一步 · 每局结束自动上榜
+        键盘方向键 / WASD、在棋盘上滑动、或点上方按钮
       </p>
 
       <GameLeaderboard game="star2048" myId={myId} friendId={friendId} names={names} version={lbVersion} />

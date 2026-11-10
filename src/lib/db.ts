@@ -2211,6 +2211,12 @@ export interface CoupleScratchCard {
   created_at: string
   revealed_at: string | null
   revealed_by: string | null
+  /** 票面主题 id（老数据没有，回落到第一套主题） */
+  theme?: string
+  /** 彩票编号（老数据没有，用卡 id 派生一个稳定编号） */
+  ticket_no?: string
+  /** 奖项档位：big 大奖 / small 小奖 / none 谢谢参与（老数据按文案推断） */
+  tier?: 'big' | 'small' | 'none'
 }
 
 /**

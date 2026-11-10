@@ -119,10 +119,22 @@ import {
   type CoupleScratchState,
 } from '../lib/db'
 import { markActive, useIsPeerOnline } from '../lib/presence'
+import {
+  DEFAULT_THEME_ID,
+  SCRATCH_THEMES,
+  drawScratchResult,
+  fallbackTicketNo,
+  makeTicketNo,
+  themeOf,
+  tierOf,
+  type ScratchThemeId,
+} from '../lib/scratchThemes'
+import { setSfxEnabled, sfxEnabled, subscribeSfx } from '../lib/sfx'
 import { todayStr } from '../lib/date'
 import { DEEP_COUPLE_QUESTIONS, EXTRA_COUPLE_QUESTIONS, MILESTONE_QUESTIONS, TRUTH_PROMPTS } from '../lib/coupleQuestions'
 import { WEDDING_STEPS, WEDDING_TOTAL, weddingItemKey, type WeddingItemKind } from '../lib/weddingSteps'
 import LoveTree from '../components/LoveTree'
+import ScratchTicket from '../components/ScratchTicket'
 import Star2048 from '../components/Star2048'
 import AnimalMatch from '../components/AnimalMatch'
 import {
@@ -1004,7 +1016,7 @@ const MINES_TASK_POOL: string[] = [
   '给对方讲你们之间最尴尬的一件事',
 ]
 
-/** 刮刮乐奖池：100 种结果，中奖概率由抽取逻辑控制为约 80% */
+/** 刮刮乐「今天」的判定：按本地时区取 YYYY-MM-DD */
 const scratchDay = (time: string): string => {
   const date = new Date(time)
   const year = date.getFullYear()
@@ -1013,130 +1025,26 @@ const scratchDay = (time: string): string => {
   return `${year}-${month}-${day}`
 }
 
-const SCRATCH_PRIZES: string[] = [
-  '亲吻一个', '拥抱一分钟', '一起看一集想看的剧', '一杯奶茶兑换券', '按摩肩膀五分钟',
-  '今晚家务对方全包', '许一个对方必须答应的小愿望', '一个爱心早餐', '晚安吻一个', '看电影选片权一次',
-  '抱抱举高高十秒', '对方夸你三句', '财政小金库加 10 元', '免吵小金牌一次', '一起散步半小时',
-  '对方亲手做一道菜', '一起吃一顿火锅', '获得今日零食优先选择权', '对方给你捶背十分钟', '一起拍一张合照',
-  '一杯咖啡兑换券', 
-  '对方讲一个冷笑话', '一起做一次甜点', '晚餐由你决定', '对方为你写一句情话', '一起看一部老电影',
-  '获得一次摸头奖励', '对方帮你吹头发', '一起散步看晚霞', '一份秘密小礼物', '对方替你跑腿一次',
-  '一起吃一份甜品', '获得一次撒娇特权', '对方给你一个惊喜拥抱', '一起玩桌游一小时', '一张手写便签',
-  '对方为你拍九宫格', '一起逛一次超市', '获得一次选歌权', '对方为你泡一杯茶', '一起做拉伸运动',
-  '获得一次优先被哄权', '对方陪你聊天半小时', '一起看一集综艺', '一份水果拼盘', '对方给你发一段语音情话',
-  '一起完成一件小家务', '获得一次免洗碗券', '对方为你留一盏灯', '一起去附近走走', '一张电子表情包专属券',
-  '对方为你准备早餐', '一起玩猜谜游戏', '获得一次被夸奖加倍', '对方给你一个额头吻', '一起整理相册',
-  '获得一次晚安电话', '对方为你选一套穿搭', '一起尝试新饮料', '获得一次小脾气豁免', '对方给你讲睡前故事',
-  '一起做十分钟冥想', '一份热腾腾的夜宵', '对方替你充一次水杯', '一起看一场直播', '获得一次拥抱续杯',
-  '对方为你写三件优点', '一起做一次早餐', '获得一次先选座位权', '对方帮你按摩手腕', '一起玩成语接龙',
-  '一份你喜欢的零食', '获得一次不被催促券', '对方为你拍一张认真工作的照片', '一起规划下一次约会', '对方为你唱一首歌',
-  '一起吃一顿早餐', '获得一次菜单决定权', '对方替你收拾一次房间', '一起看旅行照片', '一份暖心饮品',
-  '获得一次抱怨倾听券', '对方为你准备睡前水', '一起做一次手工', '获得一次小愿望加倍', '对方给你发一张可爱自拍',
-  '一起看星星十分钟', '获得一次被宠爱宣言', '对方替你完成一次小任务', '一起吃一份冰淇淋', '对方说一句永远站你这边',
-  '谢谢惠顾，再接再厉～', '谢谢惠顾，刮个寂寞～', '谢谢惠顾，下次一定～', '谢谢惠顾，甜蜜正在路上～', '谢谢惠顾，今日好运攒下啦～',
-  '谢谢惠顾，差一点点～', '谢谢惠顾，抱歉没中奖～', '谢谢惠顾，留到明天吧～', '谢谢惠顾，空手也是一种浪漫～', '谢谢惠顾，下张会更甜～',
-]
+/* 奖池与概率已抽到 src/lib/scratchThemes.ts，那边是单独的配置区，改文案不用翻这个文件 */
+
+/** 票面主题存本机：抽卡用当前选中的那套，下次进来还记得 */
+const SCRATCH_THEME_KEY = 'couple-scratch-theme'
+
+function readScratchTheme(): ScratchThemeId {
+  try {
+    const saved = localStorage.getItem(SCRATCH_THEME_KEY)
+    if (saved && SCRATCH_THEMES.some((t) => t.id === saved)) return saved as ScratchThemeId
+  } catch {
+    // 隐私模式读不到就用默认主题
+  }
+  return DEFAULT_THEME_ID
+}
 
 /**
- * 刮刮乐涂层：canvas 覆盖层，手指/鼠标刮开；刮开面积超过一半自动揭晓。
- * 纯前端渲染，仅涂层在本地；卡片与结果状态由父组件同步到数据库。
+ * 单张票的票面与涂层都在 ScratchTicket 里：
+ * 主题背景、票头编号、刮奖区银粉涂层、60% 自动揭晓、刮擦音效。
+ * 这个页面只负责「抽卡 / 揭晓 / 同步」这三件事。
  */
-function ScratchCover({ revealed, onReveal }: { revealed: boolean; onReveal: () => void }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const scratchingRef = useRef(false)
-  const firedRef = useRef(false)
-  const lastPosRef = useRef<{ x: number; y: number } | null>(null)
-  const clearedRef = useRef(new Set<number>())
-
-  /* 挂载时铺一层银色涂层 + 提示文字 */
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.fillStyle = '#aeb8c6'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    // 涂层上的细碎「刮痕纹理」小方块，更像真票
-    ctx.fillStyle = '#98a4b4'
-    for (let i = 0; i < 40; i += 1) {
-      ctx.fillRect(Math.random() * canvas.width, Math.random() * canvas.height, 6, 6)
-    }
-    ctx.fillStyle = '#5c6b80'
-    ctx.font = 'bold 17px sans-serif'
-    ctx.textAlign = 'center'
-    ctx.fillText('🎫 用手指刮开', canvas.width / 2, canvas.height / 2 + 6)
-  }, [])
-
-  /* 刮开面积 ≥ 55% 时回调揭晓（只触发一次） */
-  const checkCleared = () => {
-    if (firedRef.current) return
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const cols = 12
-    const rows = 5
-    const cell = new Set<number>()
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    for (let r = 0; r < rows; r += 1) {
-      for (let c = 0; c < cols; c += 1) {
-        const x = Math.round(((c + 0.5) / cols) * canvas.width)
-        const y = Math.round(((r + 0.5) / rows) * canvas.height)
-        const data = ctx.getImageData(x, y, 1, 1).data
-        if (data[3] < 128) cell.add(r * cols + c)
-      }
-    }
-    clearedRef.current = cell
-    if (cell.size >= Math.floor(cols * rows * 0.55)) {
-      firedRef.current = true
-      onReveal()
-    }
-  }
-
-  const erase = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (firedRef.current || revealed) return
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    const rect = canvas.getBoundingClientRect()
-    const x = ((event.clientX - rect.left) / rect.width) * canvas.width
-    const y = ((event.clientY - rect.top) / rect.height) * canvas.height
-    ctx.globalCompositeOperation = 'destination-out'
-    // 从上一次位置到当前位置连一条粗线，快速滑动不断线
-    const last = lastPosRef.current
-    if (last && scratchingRef.current) {
-      ctx.lineWidth = 44
-      ctx.lineCap = 'round'
-      ctx.beginPath()
-      ctx.moveTo(last.x, last.y)
-      ctx.lineTo(x, y)
-      ctx.stroke()
-    }
-    ctx.beginPath()
-    ctx.arc(x, y, 22, 0, Math.PI * 2)
-    ctx.fill()
-    lastPosRef.current = { x, y }
-    checkCleared()
-  }
-
-  return (
-    <canvas
-      ref={canvasRef}
-      width={320}
-      height={128}
-      className={`h-32 w-full touch-none select-none rounded-xl ${revealed ? 'hidden' : 'cursor-pointer'}`}
-      onPointerDown={(event) => {
-        scratchingRef.current = true
-        lastPosRef.current = null
-        event.currentTarget.setPointerCapture(event.pointerId)
-        erase(event)
-      }}
-      onPointerMove={(event) => scratchingRef.current && erase(event)}
-      onPointerUp={() => { scratchingRef.current = false; lastPosRef.current = null }}
-      onPointerLeave={() => { scratchingRef.current = false; lastPosRef.current = null }}
-    />
-  )
-}
 
 /**
  * 点开一格的结算（纯函数）：经典扫雷的 0 格自动扩散属于同一次行动；
@@ -1564,6 +1472,14 @@ export default function CouplePage() {
   const [scratchGame, setScratchGame] = useState<CoupleScratchRow | null>(null)
   const [scratchLoaded, setScratchLoaded] = useState(false)
   const [scratchSaving, setScratchSaving] = useState(false)
+  /** 当前票面主题（抽卡时用）
+   *  - 「我的票」按卡片上存的主题显示，切主题不会把已抽的票换掉
+   *  - 只影响下一张新票 */
+  const [scratchTheme, setScratchTheme] = useState<ScratchThemeId>(() => readScratchTheme())
+  const [scratchSfxOn, setScratchSfxOn] = useState(sfxEnabled)
+
+  // 音效开关是全局的：别的游戏里切了，这里的铃铛也跟着变
+  useEffect(() => subscribeSfx(() => setScratchSfxOn(sfxEnabled())), [])
 
   /* ------------------------------ 备婚流程 ------------------------------ */
   const [weddingRow, setWeddingRow] = useState<CoupleWeddingRow | null>(null)
@@ -4216,7 +4132,12 @@ export default function CouplePage() {
     return { cards: latest?.state?.cards ?? {}, log: latest?.state?.log ?? [] }
   }
 
-  /** 抽一张只属于自己的新卡：约 1/3 概率谢谢惠顾，其余随机甜蜜奖励；抽卡动作不进记录 */
+  /**
+   * 抽一张只属于自己的新票：
+   * - 票面主题用当前选中的那套，概率与文案取 scratchThemes.ts 的配置区
+   * - 结果（档位 + 奖品 + 编号）在出票这一刻就定死，刮只是揭晓，不存在「刮到一半改结果」
+   * - 抽卡动作不进记录，刮开才记
+   */
   const drawScratchCard = async () => {
     if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
     if (scratchSaving) return
@@ -4229,18 +4150,26 @@ export default function CouplePage() {
       if (mine && (scratchDay(mine.created_at) === today || (mine.revealed_at && scratchDay(mine.revealed_at) === today))) {
         return toast.show('今天已经刮过啦，明天再来吧～')
       }
-      const miss = SCRATCH_PRIZES.filter((p) => p.startsWith('谢谢惠顾'))
-      const prizes = SCRATCH_PRIZES.filter((p) => !p.startsWith('谢谢惠顾'))
-      // 中奖率约 80%，谢谢惠顾约 20%
-      const prize = Math.random() < 0.20 ? miss[Math.floor(Math.random() * miss.length)] : prizes[Math.floor(Math.random() * prizes.length)]
+      const theme = themeOf(scratchTheme)
+      const { tier, prize } = drawScratchResult()
       const at = new Date().toISOString()
-      const card: CoupleScratchCard = { id: crypto.randomUUID(), prize, created_by: myId, created_at: at, revealed_at: null, revealed_by: null }
-      // 只替换自己这张卡，对方的卡和历史记录原样带过去
+      const card: CoupleScratchCard = {
+        id: crypto.randomUUID(),
+        prize,
+        created_by: myId,
+        created_at: at,
+        revealed_at: null,
+        revealed_by: null,
+        theme: theme.id,
+        ticket_no: makeTicketNo(theme, new Date(at)),
+        tier,
+      }
+      // 只替换自己这张票，对方的票和历史记录原样带过去
       const state: CoupleScratchState = { cards: { ...base.cards, [myId]: card }, log: base.log }
       await upsertCoupleScratch(memberId, friendId, state)
       const [a, b] = orderedPair(memberId, friendId)
       setScratchGame({ member_a: a, member_b: b, state, updated_at: at })
-      toast.show('🎫 新卡已就绪，用手指刮开吧')
+      toast.show(`🎫「${theme.name}」出票啦，用手指刮开吧`)
     } catch (error) {
       toast.show((error as Error).message, 'err')
     } finally {
@@ -4248,28 +4177,32 @@ export default function CouplePage() {
     }
   }
 
-  /** 刮开自己的卡揭晓：刮到一半以上自动触发；记录里写「谁刮的 + 结果」，结果双方可见 */
+  /** 刮开自己的票揭晓：刮满 60% 自动触发；记录里写「谁刮的 + 结果」，双方都看得到 */
   const revealScratch = async () => {
     if (!memberId || !friendId || scratchSaving) return
     setScratchSaving(true)
     try {
-      // 同样以服务端为准：本地这张卡可能已经被别的标签页或对方刮开了
+      // 同样以服务端为准：本地这张票可能已经被别的标签页或对方刮开了
       const base = await loadScratchBase(memberId, friendId)
       const card = base.cards[myId]
       if (!card || card.revealed_at) return
       const at = new Date().toISOString()
+      const theme = themeOf(card.theme)
+      const tier = tierOf(card)
       const state: CoupleScratchState = {
         cards: { ...base.cards, [myId]: { ...card, revealed_at: at, revealed_by: myId } },
         log: mergeScratchLog(base.log, {
           at,
-          text: `${memberName || '我'} 刮了刮刮乐：${card.prize.startsWith('谢谢惠顾') ? '谢谢惠顾，没刮中～' : `刮中了「${card.prize}」`}`,
+          text: `${memberName || '我'} 刮了「${theme.name}」：${
+            tier === 'none' ? '谢谢惠顾，没刮中～' : `${tier === 'big' ? '中了甜蜜大奖' : '刮中了'}「${card.prize}」`
+          }`,
         }),
       }
       await upsertCoupleScratch(memberId, friendId, state)
       const [a, b] = orderedPair(memberId, friendId)
       setScratchGame({ member_a: a, member_b: b, state, updated_at: at })
       void notifyScratchRevealed(friendId, memberName || '我', card.prize)
-      toast.show(card.prize.startsWith('谢谢惠顾') ? `🎫 ${card.prize}` : `🎉 刮中了「${card.prize}」！`)
+      toast.show(tier === 'none' ? `🎫 ${card.prize}` : `${tier === 'big' ? '🏆 甜蜜大奖' : '🎉'} ${card.prize}`)
     } catch (error) {
       toast.show((error as Error).message, 'err')
     } finally {
@@ -6396,64 +6329,155 @@ export default function CouplePage() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h3 className="font-semibold">🎫 情侣刮刮乐</h3>
-                  <p className="mt-1 text-xs text-slate-400">各抽各的卡、各刮各的，刮开结果两个人都看得到。抽卡后用手指把银色涂层刮开，刮中甜蜜奖励就兑现吧！</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    每天各抽一张，手指刮开银色涂层，刮满 60% 自动揭晓。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn-ghost shrink-0 px-2.5 py-1 text-xs"
+                  title="刮擦音效开关"
+                  onClick={() => setSfxEnabled(!scratchSfxOn)}
+                >
+                  {scratchSfxOn ? '🔔' : '🔕'}
+                </button>
+              </div>
+
+              {/* 票面主题：切换只影响下一张新票，已经抽出来的票保持原样 */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-500">票面主题</span>
+                  <span className="text-[10px] text-slate-400">只影响下一张新票</span>
+                </div>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {SCRATCH_THEMES.map((t) => {
+                    const active = t.id === scratchTheme
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className={`overflow-hidden rounded-xl text-center transition-all ${
+                          active ? 'ring-2 ring-rose-400 ring-offset-1' : 'ring-1 ring-slate-200 active:scale-95'
+                        }`}
+                        onClick={() => {
+                          setScratchTheme(t.id)
+                          try {
+                            localStorage.setItem(SCRATCH_THEME_KEY, t.id)
+                          } catch {
+                            // 存不了就只在本次会话生效
+                          }
+                        }}
+                      >
+                        <span
+                          className="relative flex h-10 items-center justify-center overflow-hidden text-base"
+                          style={{ background: t.fallback }}
+                        >
+                          {t.image && <img src={t.image} alt="" className="absolute inset-0 h-full w-full object-cover" />}
+                          <span className="relative">{t.decor}</span>
+                        </span>
+                        <span
+                          className={`block truncate px-0.5 py-0.5 text-[10px] ${
+                            active ? 'font-semibold text-rose-500' : 'text-slate-500'
+                          }`}
+                        >
+                          {t.name}
+                        </span>
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
-              {/* 我的卡：自己抽、自己刮 */}
+              {/* 我的票：自己抽、自己刮 */}
               {(() => {
                 const mine = scratchGame?.state.cards?.[myId]
+                if (!mine) {
+                  return (
+                    <div className="space-y-3 rounded-2xl bg-slate-50 py-6 text-center">
+                      <div className="text-4xl">🎫</div>
+                      <p className="text-xs text-slate-400">还没有属于你的刮刮乐</p>
+                      <button
+                        type="button"
+                        className="btn-primary px-4 py-1.5 text-xs"
+                        disabled={scratchSaving || !ready}
+                        onClick={() => void drawScratchCard()}
+                      >
+                        🎫 抽一张「{themeOf(scratchTheme).name}」
+                      </button>
+                    </div>
+                  )
+                }
+                const theme = themeOf(mine.theme)
+                const tier = tierOf(mine)
+                const today = scratchDay(new Date().toISOString())
+                const drewToday =
+                  scratchDay(mine.created_at) === today || (!!mine.revealed_at && scratchDay(mine.revealed_at) === today)
                 return (
-                  <div className={`space-y-3 rounded-2xl p-4 ${mine?.revealed_at ? 'bg-amber-50' : 'bg-slate-100'}`}>
-                    <div className="text-xs font-semibold text-slate-500">🙋 我的刮刮乐</div>
-                    {mine ? (
-                      mine.revealed_at ? (
-                        <div className="text-center">
-                          <div className={`text-lg font-bold ${mine.prize.startsWith('谢谢惠顾') ? 'text-slate-500' : 'text-rose-600'}`}>
-                            {mine.prize.startsWith('谢谢惠顾') ? '😅' : '🎉'} {mine.prize}
-                          </div>
-                          <div className="mt-1 text-[11px] text-slate-400">刮开于 {new Date(mine.revealed_at).toLocaleString('zh-CN')}</div>
-                          {scratchDay(mine.revealed_at) === scratchDay(new Date().toISOString()) ? (
-                            <button type="button" className="btn-primary mt-3" disabled>🎫 明天再来</button>
-                          ) : (
-                            <button type="button" className="btn-primary mt-3" disabled={scratchSaving || !ready} onClick={() => void drawScratchCard()}>🎫 抽今天的刮刮乐</button>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          <div className="text-[11px] text-slate-400">抽卡时间 {new Date(mine.created_at).toLocaleString('zh-CN')} · 刮开面积过半自动揭晓</div>
-                          <ScratchCover revealed={false} onReveal={() => void revealScratch()} />
-                        </div>
-                      )
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-slate-500">🙋 我的刮刮乐</span>
+                      <span className="text-[10px] text-slate-400">
+                        {mine.revealed_at
+                          ? `刮开于 ${new Date(mine.revealed_at).toLocaleString('zh-CN', {
+                              month: 'numeric',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}`
+                          : '刮满 60% 自动揭晓'}
+                      </span>
+                    </div>
+                    {/* key 用票 id：换新票时整张票重建，涂层才会重新铺满，不会沿用上一张刮过的状态 */}
+                    <ScratchTicket
+                      key={mine.id}
+                      theme={theme}
+                      ticketNo={mine.ticket_no || fallbackTicketNo(mine.id, theme)}
+                      tier={tier}
+                      prize={mine.prize}
+                      revealed={!!mine.revealed_at}
+                      onReveal={() => void revealScratch()}
+                    />
+                    {mine.revealed_at ? (
+                      <button
+                        type="button"
+                        className="btn-primary w-full py-2 text-xs"
+                        disabled={drewToday || scratchSaving || !ready}
+                        onClick={() => void drawScratchCard()}
+                      >
+                        {drewToday ? '🎫 明天再来' : `🎫 抽明天的「${themeOf(scratchTheme).name}」`}
+                      </button>
                     ) : (
-                      <div className="space-y-3 py-2 text-center">
-                        <div className="text-4xl">🎫</div>
-                        <p className="text-xs text-slate-400">还没有属于你的刮刮乐</p>
-                        <button type="button" className="btn-primary" disabled={scratchSaving || !ready} onClick={() => void drawScratchCard()}>🎫 抽一张刮刮乐</button>
-                      </div>
+                      <p className="text-center text-[10px] text-slate-400">用手指在银色涂层上来回刮开</p>
                     )}
                   </div>
                 )
               })()}
-              {/* 对方的卡：只展示状态与结果，不能代刮 */}
+              {/* 对方的票：只能看，不能代刮 */}
               {(() => {
                 const theirs = friendId ? scratchGame?.state.cards?.[friendId] : undefined
+                if (!theirs) {
+                  return (
+                    <div className="rounded-2xl bg-slate-50 p-3 text-center text-xs text-slate-400">
+                      👀 {friendName} 还没抽卡
+                    </div>
+                  )
+                }
+                const theme = themeOf(theirs.theme)
                 return (
-                  <div className="space-y-2 rounded-2xl bg-slate-50 p-4">
-                    <div className="text-xs font-semibold text-slate-500">👀 {friendName} 的刮刮乐</div>
-                    {theirs ? (
-                      theirs.revealed_at ? (
-                        <div className="text-center">
-                          <div className={`text-base font-bold ${theirs.prize.startsWith('谢谢惠顾') ? 'text-slate-500' : 'text-rose-600'}`}>
-                            {theirs.prize.startsWith('谢谢惠顾') ? '😅' : '🎉'} {theirs.prize}
-                          </div>
-                          <div className="mt-1 text-[11px] text-slate-400">{friendName} 刮开于 {new Date(theirs.revealed_at).toLocaleString('zh-CN')}</div>
-                        </div>
-                      ) : (
-                        <div className="py-2 text-center text-xs text-slate-400">🎫 已抽卡，等 {friendName} 亲自刮开揭晓～</div>
-                      )
-                    ) : (
-                      <div className="py-2 text-center text-xs text-slate-400">{friendName} 还没抽卡</div>
-                    )}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-slate-500">👀 {friendName} 的刮刮乐</span>
+                      <span className="text-[10px] text-slate-400">{theirs.revealed_at ? '已开奖' : '等 TA 亲自刮开'}</span>
+                    </div>
+                    <ScratchTicket
+                      key={theirs.id}
+                      theme={theme}
+                      ticketNo={theirs.ticket_no || fallbackTicketNo(theirs.id, theme)}
+                      tier={tierOf(theirs)}
+                      prize={theirs.prize}
+                      revealed={!!theirs.revealed_at}
+                      onReveal={() => undefined}
+                      locked={!theirs.revealed_at}
+                    />
                   </div>
                 )
               })()}

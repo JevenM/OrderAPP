@@ -80,7 +80,46 @@ function tone(freq: number, dur: number, opts?: { type?: OscillatorType; vol?: n
   }
 }
 
+/**
+ * 白噪声（带通滤波）：用来做刮擦的「沙沙」声。
+ * 纯正弦音不像刮票，噪声 + 带通才接近指甲划过涂层的质感。
+ */
+let noiseBuf: AudioBuffer | null = null
+function noise(dur: number, vol: number, freq: number) {
+  const ac = audio()
+  if (!ac) return
+  try {
+    if (!noiseBuf) {
+      const len = Math.floor(ac.sampleRate * 0.2)
+      noiseBuf = ac.createBuffer(1, len, ac.sampleRate)
+      const data = noiseBuf.getChannelData(0)
+      // 尾巴做衰减，避免听起来像一段循环片段
+      for (let i = 0; i < len; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / len)
+    }
+    const src = ac.createBufferSource()
+    src.buffer = noiseBuf
+    const filter = ac.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.frequency.value = freq
+    filter.Q.value = 0.7
+    const gain = ac.createGain()
+    gain.gain.setValueAtTime(vol, ac.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur)
+    src.connect(filter).connect(gain).connect(ac.destination)
+    src.start()
+    src.stop(ac.currentTime + dur + 0.02)
+  } catch {
+    // 音效失败不该影响游戏，忽略
+  }
+}
+
 export const sfx = {
+  /** 刮刮乐刮擦：短促沙沙声，调用方自己控制节奏 */
+  scratch: () => noise(0.08, 0.05, 2600),
+  /** 刮刮乐整张揭开：小上行琶音 */
+  reveal: () => {
+    ;[660, 880, 1180].forEach((f, i) => tone(f, 0.16, { type: 'sine', vol: 0.11, delay: i * 0.07 }))
+  },
   /** 2048 滑动一步 */
   move: () => tone(300, 0.08, { type: 'triangle', vol: 0.07 }),
   /** 猫猫落子 */

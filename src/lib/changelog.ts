@@ -25,6 +25,21 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.51',
+    date: '2026-11-10',
+    title: '刮刮乐改版：真票面 · 4 套主题 · 银粉涂层',
+    items: [
+      { kind: 'new', text: '刮刮乐换成福利彩票同款票面：喜相逢、好运十倍、点石成金、生肖系列 4 套主题，随时切换，只影响下一张新票' },
+      { kind: 'new', text: '4 套主题的票面背景图已内置（喜鹊牡丹 / 金币祥云 / 黑金鎏光 / 生肖龙）；想换成自己的图，放进 public/scratch-themes/ 再改 scratchThemes.ts 的 image 字段即可' },
+      { kind: 'new', text: '票面重做：磨砂银粉涂层、刮擦轨迹、纸质纹理与圆角票边，票头带主题名与彩票编号，刮满 60% 自动整张揭晓' },
+      { kind: 'fix', text: '修复星尘 2048 偶发的数字消失、该合不合：恢复存档时统一重编方块编号，避免新方块和旧存档撞 id；同时清理同格重叠的脏数据，输了以后也能撤销一步挽回' },
+      { kind: 'new', text: '奖池分三档：甜蜜大奖 / 甜蜜小奖 / 谢谢参与，概率、文案、票面背景图都集中在 src/lib/scratchThemes.ts，一个文件就能改' },
+      { kind: 'improve', text: '刮票时有沙沙的刮擦音效，可以单独静音（和两个小游戏的音效开关共用）' },
+      { kind: 'improve', text: '对方的票只能看不能代刮，没刮开时显示「等 TA 亲自刮开」' },
+      { kind: 'improve', text: '票面下方明确标注：仅供情侣娱乐，不设充值 / 兑奖，不涉及任何真实金钱' },
+    ],
+  },
+  {
     version: '1.9.50',
     date: '2026-11-10',
     title: '2048 可选难度 · 动物世界消消乐 · 情侣排行榜',
