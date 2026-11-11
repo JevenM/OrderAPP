@@ -125,27 +125,6 @@ function spawn(tiles: Tile[], size: number): Tile[] | null {
   return [...tiles, { id: newId(), value: Math.random() < 0.9 ? 2 : 4, row, col, isNew: true }]
 }
 
-/** 满盘时还有没有可合并的相邻块 */
-function hasMerge(tiles: Tile[], size: number): boolean {
-  const grid = toGrid(tiles, size)
-  for (let r = 0; r < size; r++) {
-    for (let c = 0; c < size; c++) {
-      const cur = grid[r][c]
-      if (!cur) continue
-      if (c < size - 1 && grid[r][c + 1]?.value === cur.value) return true
-      if (r < size - 1 && grid[r + 1][c]?.value === cur.value) return true
-    }
-  }
-  return false
-}
-
-/** 死局判定：只要盘上有空位就必可移动；满盘且没有相邻同值对才是真死局。
- *  必须在「生成新块之后」的最终盘面上判——旧逻辑在补块前判，最后一块补满棋盘的死局会漏掉 */
-function isStuck(tiles: Tile[], size: number): boolean {
-  if (emptyCells(tiles, size).length) return false
-  return !hasMerge(tiles, size)
-}
-
 function makeTiles(size: number): Tile[] {
   let tiles: Tile[] = []
   for (let i = 0; i < 2; i++) tiles = spawn(tiles, size) ?? tiles
@@ -282,6 +261,8 @@ export default function Star2048({ myId, friendId, names }: Props) {
   const [passPanel, setPassPanel] = useState<{ task: string } | null>(null)
   const [passBusy, setPassBusy] = useState(false)
   const [sharing, setSharing] = useState(false)
+  /** 截图下载成功后的临时提示 */
+  const [savedTip, setSavedTip] = useState(false)
 
   /** 未配对时不限制（防沉迷依赖伴侣确认，没法确认就放开） */
   const limited = !!(myId && friendId)
@@ -305,16 +286,6 @@ export default function Star2048({ myId, friendId, names }: Props) {
   const reportedRef = useRef(0)
 
   useEffect(() => subscribeSfx(() => setSfxOn(sfxEnabled())), [])
-
-  // 恢复的存档可能已经是死局（旧版本漏判过）：进页面就查一次，别让用户对着死盘面干瞪眼
-  useEffect(() => {
-    if (initial && phase === 'playing' && isStuck(initial.tiles, initial.size)) {
-      setOver(true)
-      report(initial.score, initial.moves, initial.won, initial.size)
-    }
-    // 只在首次挂载时检查一次，用初始盘面即可
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   /* ------------------------------ 防沉迷数据同步 ------------------------------ */
 
@@ -623,12 +594,7 @@ export default function Star2048({ myId, friendId, names }: Props) {
       const next = spawned ?? movedTiles
       tilesRef.current = next
       setTiles(next)
-      // 在补块之后的最终盘面上判死局：补块填满棋盘造成的死局也要能被检测到
-      if (isStuck(next, size)) {
-        setOver(true)
-        sfx.lose()
-        report(nextScore, nextMoves, wonShownRef.current, size)
-      }
+      // 不做死局自动判定：什么时候结束由玩家自己决定（点「结束并重开」），走确认弹窗记榜
     },
     [over, phase, size, pushFloat, report]
   )
@@ -685,29 +651,24 @@ export default function Star2048({ myId, friendId, names }: Props) {
     top: `calc(${t.row} * ((100% - ${(size - 1) * gapRem}rem) / ${size} + ${gapRem}rem))`,
   })
 
-  /** 结算截图分享：canvas 画一张成绩卡，支持系统分享就调起分享，否则下载图片 */
-  const shareResult = async () => {
+  /** 保存成绩卡到本地：canvas 画一张成绩卡直接触发下载，成功后按钮提示 2 秒 */
+  const saveShot = async () => {
     if (sharing) return
     setSharing(true)
     try {
       const canvas = drawShareCard(score, moves, size, wonShownRef.current)
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
       if (!blob) throw new Error('生成图片失败')
-      const file = new File([blob], `star2048-${score}分.png`, { type: 'image/png' })
-      const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean }
-      if (nav.share && nav.canShare?.({ files: [file] })) {
-        await nav.share({ files: [file], title: '星尘 2048', text: `我在星尘 2048 拿到 ${score} 分，来挑战一下？` })
-      } else {
-        // 不支持 Web Share（多数桌面浏览器）：退化为下载 PNG
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = file.name
-        a.click()
-        window.setTimeout(() => URL.revokeObjectURL(url), 2000)
-      }
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `star2048-${score}分.png`
+      a.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 2000)
+      setSavedTip(true)
+      window.setTimeout(() => setSavedTip(false), 2000)
     } catch {
-      // 用户取消分享或生成失败：静默结束，不打扰
+      alert('生成图片失败，请重试')
     } finally {
       setSharing(false)
     }
@@ -871,8 +832,8 @@ export default function Star2048({ myId, friendId, names }: Props) {
         <button type="button" className="btn-ghost flex-1 py-1.5 text-xs" disabled={!canUndo} onClick={undo}>
           ↩️ 撤销1步
         </button>
-        <button type="button" className="btn-ghost flex-1 py-1.5 text-xs" onClick={reset}>
-          🔄 重开
+        <button type="button" className="btn-ghost flex-1 py-1.5 text-xs" onClick={() => setOver(true)}>
+          🏁 结束并重开
         </button>
         {sfxButton}
       </div>
@@ -952,7 +913,7 @@ export default function Star2048({ myId, friendId, names }: Props) {
 
       <GameLeaderboard game="star2048" myId={myId} friendId={friendId} names={names} version={lbVersion} />
 
-      {/* 死局结算：Portal 渲染到 body 的全屏悬浮弹窗，点确定重开一局。
+      {/* 结束确认弹窗：点「结束并重开」弹出，Portal 渲染到 body。
           必须用 Portal：外层 .card 的 :active { transform } 会让 fixed 退化成相对卡片
           定位（弹窗瞬间变「页面内遮罩」并跳动），挂到 body 后不再受任何祖先影响。
           touch-none 禁止触摸手势在弹窗上滚动，防止 click 被滚动手势吃掉 */}
@@ -962,41 +923,24 @@ export default function Star2048({ myId, friendId, names }: Props) {
             <div className="animate-fade w-full max-w-xs space-y-3 rounded-2xl bg-white p-5 text-center shadow-xl">
               <div className="text-4xl">{score >= best && score > 0 ? '🏆' : '🌌'}</div>
               <p className="font-bold text-slate-600">
-                {limited && remaining <= 0
-                  ? `今日 ${DAILY_LIMIT} 局已用完`
-                  : score >= best && score > 0
-                    ? `新纪录！${score} 分`
-                    : `棋盘满了，本局 ${score} 分`}
+                {score >= best && score > 0 ? `新纪录！${score} 分` : `本局 ${score} 分`}
               </p>
-              <p className="text-[11px] text-slate-400">
-                {limited && remaining <= 0
-                  ? `本局 ${score} 分已自动记入情侣排行榜`
-                  : '本局成绩会自动记入情侣排行榜'}
+              <p className="text-[11px] leading-relaxed text-slate-400">
+                确定{score > 0 ? '后成绩自动记入情侣排行榜，' : '后'}返回难度选择页
               </p>
-              {/* 次数用尽时死局即结算：不再显示「再来一局」，直接进入任务加时流程 */}
-              {limited && remaining <= 0 ? (
-                <button
-                  type="button"
-                  className="btn-primary w-full py-2 text-xs"
-                  onClick={() => setPassPanel({ task: myPending ? myPending.task : drawTask() })}
-                >
-                  🎯 完成大冒险任务，加玩一局
-                </button>
-              ) : (
-                <button type="button" className="btn-primary w-full py-2 text-xs" onClick={reset}>
-                  确定，再来一局
-                </button>
-              )}
-              <button type="button" className="btn-ghost w-full py-2 text-xs" disabled={sharing} onClick={() => void shareResult()}>
-                {sharing ? '生成图片中…' : '📸 截图分享成绩'}
+              <button type="button" className="btn-primary w-full py-2 text-xs" onClick={exitToSetup}>
+                ✅ 确定
               </button>
-              <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={exitToSetup}>
-                换难度
+              <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={() => setOver(false)}>
+                ❌ 取消，继续游戏
               </button>
-              </div>
-              </div>,
-              document.body
-              )}
+              <button type="button" className="btn-ghost w-full py-2 text-xs" disabled={sharing} onClick={() => void saveShot()}>
+                {savedTip ? '✅ 图片已开始下载' : sharing ? '生成图片中…' : '💾 保存截图到本地'}
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
               {passPanelNode}
               </div>
               )

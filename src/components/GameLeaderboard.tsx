@@ -19,13 +19,16 @@ interface Props {
   version: number
 }
 
-/** 日期 + 具体时间，精确到秒；紧凑数字格式（11-11 14:30:25），
- *  比「11月11日 …」窄 30px 左右，窄屏上才塞得下整行；两位补零保证等宽对齐 */
-function formatWhen(iso: string): string {
+/** 时间列：消消乐只显示日期（11-10）；2048 带到秒（11-11 14:30:25）。
+ *  紧凑数字格式、两位补零，保证等宽对齐 */
+function formatWhen(game: 'star2048' | 'animalmatch', iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   const p = (n: number) => String(n).padStart(2, '0')
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  const day = `${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  return game === 'star2048'
+    ? `${day} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+    : day
 }
 
 export default function GameLeaderboard({ game, myId, friendId, names, version }: Props) {
@@ -103,10 +106,14 @@ export default function GameLeaderboard({ game, myId, friendId, names, version }
                   {name}
                 </span>
                 {/* 记录列：右对齐紧贴时间列（flex-1 拉出的空隙留在文字左侧），过长时截断省略 */}
-                <span className="min-w-0 flex-1 truncate text-right text-slate-400">{row.detail}</span>
-                {/* 时间列固定宽、字号略小、不换行；配合紧凑格式，窄屏也放得下 */}
-                <span className="w-[80px] shrink-0 whitespace-nowrap text-right text-[10px] tabular-nums text-slate-300">
-                  {formatWhen(row.created_at)}
+                <span className="min-w-0 flex-1 truncate text-center text-slate-400">{row.detail}</span>
+                {/* 时间列固定宽、字号略小、不换行；消消乐只显示日期，列宽更窄 */}
+                <span
+                  className={`shrink-0 whitespace-nowrap text-center text-[10px] tabular-nums text-slate-300 ${
+                    game === 'star2048' ? 'w-[80px]' : 'w-[38px]'
+                  }`}
+                >
+                  {formatWhen(game, row.created_at)}
                 </span>
                 <span className="w-11 shrink-0 text-right font-bold tabular-nums text-indigo-600">{row.score}</span>
               </li>
