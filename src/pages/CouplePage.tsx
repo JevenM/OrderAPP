@@ -118,6 +118,7 @@ import {
   type CoupleScratchRow,
   type CoupleScratchState,
 } from '../lib/db'
+import { DARES } from '../lib/darePrompts'
 import { markActive, useIsPeerOnline } from '../lib/presence'
 import {
   DEFAULT_THEME_ID,
@@ -728,28 +729,6 @@ const BUILT_IN_QUESTIONS: Question[] = [
 
 export const ALL_QUESTIONS = [...BUILT_IN_QUESTIONS, ...EXTRA_COUPLE_QUESTIONS, ...DEEP_COUPLE_QUESTIONS, ...MILESTONE_QUESTIONS]
 let managedQuestionsCache: Question[] | null = null
-const DARES = [
-  '用三个具体细节夸夸对方，不能只说“很好”。',
-  '给对方倒一杯水或准备一份小零食。',
-  '模仿对方一个可爱的日常习惯，让对方猜是什么。',
-  '一起选一首歌，认真听完并说说喜欢的部分。',
-  '给对方发一条真诚的感谢消息。',
-  '邀请对方散步十分钟，由对方选择路线。',
-  '用一分钟讲出你们共同经历里最有趣的一幕。',
-  '给对方一个拥抱，或尊重对方选择击掌。',
-  '一起拍一张自然的合照，双方都同意再保存。',
-  '为对方做一件现在就能完成的小事。',
-  '轮流说出对方一个让你欣赏的优点。',
-  '为下次约会各提一个点子，并选一个加入计划。',
-  '用一句话描述今天最想和对方分享的心情。',
-  '一起做三次深呼吸，然后互相问问现在感觉如何。',
-  '把手机放下两分钟，专心听对方讲一件小事。',
-  '给对方写一句鼓励的话，可以当面念出来。',
-  '一起挑一张旧照片，各自讲讲当时记得的细节。',
-  '为彼此准备一个不花钱的惊喜点子。',
-  '轮流选一个表情，用动作演出来让对方猜。',
-  '问对方现在最需要什么，再一起完成一个小步骤。',
-]
 
 const REQUIRED_SLOTS: MealSlot[] = ['breakfast', 'lunch', 'dinner']
 

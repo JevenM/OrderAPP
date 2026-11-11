@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, TouchEvent } from 'react'
-import { addCoupleGameScore } from '../lib/db'
+import {
+  addCoupleGameScore,
+  confirmCoupleGamePass,
+  createCoupleGamePass,
+  deleteCoupleGamePass,
+  listCoupleDarePromptBank,
+  listCoupleGamePasses,
+  type CoupleGamePassRow,
+} from '../lib/db'
+import { DARES } from '../lib/darePrompts'
+import { POLL, useRealtime } from '../lib/realtime'
 import { setSfxEnabled, sfx, sfxEnabled, subscribeSfx } from '../lib/sfx'
 import GameLeaderboard from './GameLeaderboard'
 
@@ -31,6 +41,28 @@ const SAVE_KEY = 'couple-2048-save'
 const TARGET = 2048
 const MIN_SIZE = 3
 const MAX_SIZE = 8
+
+/* ------------------------------ 防沉迷 ------------------------------ */
+
+/** 每天最多开这么多局；用完后完成大冒险任务、经伴侣确认，每确认一次多一局 */
+const DAILY_LIMIT = 8
+const PLAYS_KEY = 'couple-2048-plays'
+
+/** 本地日期 YYYY-MM-DD（不能用 toISOString，那是 UTC，东八区凌晨会差一天） */
+const dayKey = (): string => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** 今天已经开了多少局；跨天自动归零（存储带日期） */
+const loadPlays = (): number => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PLAYS_KEY) ?? '') as { day?: string; count?: number } | null
+    return raw?.day === dayKey() && typeof raw.count === 'number' ? raw.count : 0
+  } catch {
+    return 0
+  }
+}
 
 /** 最高分按棋盘大小分开记：大盘更难，混在一起不公平。4×4 沿用老 key 兼容历史成绩 */
 const bestKey = (size: number) => (size === 4 ? 'couple-2048-best' : `couple-2048-best-${size}`)
@@ -105,6 +137,13 @@ function hasMerge(tiles: Tile[], size: number): boolean {
     }
   }
   return false
+}
+
+/** 死局判定：只要盘上有空位就必可移动；满盘且没有相邻同值对才是真死局。
+ *  必须在「生成新块之后」的最终盘面上判——旧逻辑在补块前判，最后一块补满棋盘的死局会漏掉 */
+function isStuck(tiles: Tile[], size: number): boolean {
+  if (emptyCells(tiles, size).length) return false
+  return !hasMerge(tiles, size)
 }
 
 function makeTiles(size: number): Tile[] {
@@ -232,6 +271,29 @@ export default function Star2048({ myId, friendId, names }: Props) {
   const [customSize, setCustomSize] = useState(initial?.size ?? 4)
   const [lbVersion, setLbVersion] = useState(0)
 
+  /* ------------------------------ 防沉迷 ------------------------------ */
+  /** 今天已开的局数 */
+  const [playsUsed, setPlaysUsed] = useState(loadPlays)
+  /** 今天的加时申请（双方共享一份）：pending=等确认，confirmed=已加一局 */
+  const [passes, setPasses] = useState<CoupleGamePassRow[]>([])
+  /** 自定义大冒险题库（和内置池合并后抽任务） */
+  const [dareBank, setDareBank] = useState<string[]>([])
+  /** 防沉迷任务面板：null=关闭；task=抽到的任务文本 */
+  const [passPanel, setPassPanel] = useState<{ task: string } | null>(null)
+  const [passBusy, setPassBusy] = useState(false)
+  const [sharing, setSharing] = useState(false)
+
+  /** 未配对时不限制（防沉迷依赖伴侣确认，没法确认就放开） */
+  const limited = !!(myId && friendId)
+  /** 我的加时局数：今天被确认的申请条数 */
+  const myConfirmed = passes.filter((p) => p.status === 'confirmed' && p.requester_id === myId).length
+  /** 我发出去、还没被确认的申请 */
+  const myPending = passes.find((p) => p.status === 'pending' && p.requester_id === myId) ?? null
+  /** 对方发来的、等我确认的申请 */
+  const partnerPending = passes.find((p) => p.status === 'pending' && p.requester_id !== myId) ?? null
+  const remaining = limited ? Math.max(0, DAILY_LIMIT - playsUsed + myConfirmed) : Infinity
+  const canPlay = remaining > 0
+
   /** 撤销用的快照：只在最近一步有效 */
   const snapshotRef = useRef<Snapshot | null>(null)
   /** 2048 的胜利提示只弹一次，之后可以继续往大合 */
@@ -243,6 +305,65 @@ export default function Star2048({ myId, friendId, names }: Props) {
   const reportedRef = useRef(0)
 
   useEffect(() => subscribeSfx(() => setSfxOn(sfxEnabled())), [])
+
+  // 恢复的存档可能已经是死局（旧版本漏判过）：进页面就查一次，别让用户对着死盘面干瞪眼
+  useEffect(() => {
+    if (initial && phase === 'playing' && isStuck(initial.tiles, initial.size)) {
+      setOver(true)
+      report(initial.score, initial.moves, initial.won, initial.size)
+    }
+    // 只在首次挂载时检查一次，用初始盘面即可
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /* ------------------------------ 防沉迷数据同步 ------------------------------ */
+
+  // 当日局数持久化：带日期，跨天自动归零
+  useEffect(() => {
+    try {
+      localStorage.setItem(PLAYS_KEY, JSON.stringify({ day: dayKey(), count: playsUsed }))
+    } catch {
+      // 写不进去就本次会话内生效
+    }
+  }, [playsUsed])
+
+  /** 拉今天的加时申请；对方确认 / 拒绝后 realtime 会推过来 */
+  const reloadPasses = useCallback(async () => {
+    if (!myId || !friendId) {
+      setPasses([])
+      return
+    }
+    try {
+      setPasses(await listCoupleGamePasses(myId, friendId, 'star2048', dayKey()))
+    } catch (error) {
+      console.warn('加载防沉迷加时申请失败', error)
+    }
+  }, [myId, friendId])
+
+  useEffect(() => {
+    void reloadPasses()
+  }, [reloadPasses])
+
+  // 自定义大冒险题库：和内置池合并抽任务，加载一次即可
+  useEffect(() => {
+    if (!myId || !friendId) return
+    listCoupleDarePromptBank(myId, friendId)
+      .then((rows) => setDareBank(rows.map((r) => r.prompt)))
+      .catch(() => {
+        // 拉不到就用内置题池
+      })
+  }, [myId, friendId])
+
+  useRealtime(
+    'game-passes-star2048',
+    [
+      {
+        table: 'couple_game_passes',
+        on: () => void reloadPasses(),
+      },
+    ],
+    { enabled: limited, pollMs: POLL.warm, onPoll: () => void reloadPasses() }
+  )
 
   // 死局结算弹窗打开时锁住页面滚动：触摸弹窗不会带动整页滚动，按钮不会点不到
   useEffect(() => {
@@ -317,6 +438,67 @@ export default function Star2048({ myId, friendId, names }: Props) {
   const movesRef = useRef(moves)
   movesRef.current = moves
 
+  /** 开一局消耗一次当日次数（未配对时不限） */
+  const consumePlay = useCallback(() => {
+    if (!myId || !friendId) return
+    setPlaysUsed((c) => c + 1)
+  }, [myId, friendId])
+
+  /** 抽一个大冒险任务：内置池 + 自定义题库合并后随机 */
+  const drawTask = useCallback((): string => {
+    const pool = [...new Set([...DARES, ...dareBank])]
+    return pool[Math.floor(Math.random() * pool.length)]
+  }, [dareBank])
+
+  /** 「我完成啦」：提交申请等伴侣确认 */
+  const submitPass = useCallback(async () => {
+    if (!passPanel || !myId || !friendId || myPending) return
+    setPassBusy(true)
+    try {
+      await createCoupleGamePass(myId, friendId, 'star2048', myId, passPanel.task)
+      await reloadPasses()
+      setPassPanel(null)
+    } catch (error) {
+      console.warn('提交加时申请失败', error)
+      alert((error as Error).message || '提交失败，稍后再试')
+    } finally {
+      setPassBusy(false)
+    }
+  }, [passPanel, myId, friendId, myPending, reloadPasses])
+
+  /** 确认对方的申请：TA 今天可以多玩一局 */
+  const approvePass = useCallback(
+    async (id: string) => {
+      if (!myId) return
+      setPassBusy(true)
+      try {
+        await confirmCoupleGamePass(id, myId)
+        await reloadPasses()
+      } catch (error) {
+        console.warn('确认加时申请失败', error)
+      } finally {
+        setPassBusy(false)
+      }
+    },
+    [myId, reloadPasses]
+  )
+
+  /** 拒绝对方的申请 */
+  const rejectPass = useCallback(
+    async (id: string) => {
+      setPassBusy(true)
+      try {
+        await deleteCoupleGamePass(id)
+        await reloadPasses()
+      } catch (error) {
+        console.warn('拒绝加时申请失败', error)
+      } finally {
+        setPassBusy(false)
+      }
+    },
+    [reloadPasses]
+  )
+
   const start = useCallback((nextSize: number) => {
     const fresh = makeTiles(nextSize)
     tilesRef.current = fresh
@@ -334,9 +516,28 @@ export default function Star2048({ myId, friendId, names }: Props) {
     setPhase('playing')
   }, [])
 
-  /** 重开当前难度；已经有分数就先记一局榜，再开新的 */
+  /** 从选择页开一局：还有次数就直接开，没次数就打开任务面板 */
+  const begin = useCallback(
+    (nextSize: number) => {
+      if (!limited || canPlay) {
+        consumePlay()
+        start(nextSize)
+        return
+      }
+      setPassPanel({ task: myPending ? myPending.task : drawTask() })
+    },
+    [limited, canPlay, consumePlay, start, myPending, drawTask]
+  )
+
+  /** 重开当前难度；已经有分数就先记一局榜，再开新的（重开也算一局，计入防沉迷）。
+      次数用完时不重开，改为弹出大冒险任务面板 */
   const reset = useCallback(() => {
+    if (limited && remaining <= 0) {
+      setPassPanel({ task: myPending ? myPending.task : drawTask() })
+      return
+    }
     report(scoreRef.current, movesRef.current, false, size)
+    consumePlay()
     const fresh = makeTiles(size)
     tilesRef.current = fresh
     setTiles(fresh)
@@ -348,7 +549,7 @@ export default function Star2048({ myId, friendId, names }: Props) {
     snapshotRef.current = null
     setCanUndo(false)
     roundRef.current += 1
-  }, [size, report])
+  }, [size, report, consumePlay, limited, remaining, myPending, drawTask])
 
   /** 换难度：先把当前这局记上账，再清掉存档回到选择页，避免分数白打 */
   const exitToSetup = useCallback(() => {
@@ -422,7 +623,8 @@ export default function Star2048({ myId, friendId, names }: Props) {
       const next = spawned ?? movedTiles
       tilesRef.current = next
       setTiles(next)
-      if (!spawned && !hasMerge(movedTiles, size)) {
+      // 在补块之后的最终盘面上判死局：补块填满棋盘造成的死局也要能被检测到
+      if (isStuck(next, size)) {
         setOver(true)
         sfx.lose()
         report(nextScore, nextMoves, wonShownRef.current, size)
@@ -483,6 +685,63 @@ export default function Star2048({ myId, friendId, names }: Props) {
     top: `calc(${t.row} * ((100% - ${(size - 1) * gapRem}rem) / ${size} + ${gapRem}rem))`,
   })
 
+  /** 结算截图分享：canvas 画一张成绩卡，支持系统分享就调起分享，否则下载图片 */
+  const shareResult = async () => {
+    if (sharing) return
+    setSharing(true)
+    try {
+      const canvas = drawShareCard(score, moves, size, wonShownRef.current)
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+      if (!blob) throw new Error('生成图片失败')
+      const file = new File([blob], `star2048-${score}分.png`, { type: 'image/png' })
+      const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean }
+      if (nav.share && nav.canShare?.({ files: [file] })) {
+        await nav.share({ files: [file], title: '星尘 2048', text: `我在星尘 2048 拿到 ${score} 分，来挑战一下？` })
+      } else {
+        // 不支持 Web Share（多数桌面浏览器）：退化为下载 PNG
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = file.name
+        a.click()
+        window.setTimeout(() => URL.revokeObjectURL(url), 2000)
+      }
+    } catch {
+      // 用户取消分享或生成失败：静默结束，不打扰
+    } finally {
+      setSharing(false)
+    }
+  }
+
+  /** 防沉迷任务面板：setup / playing 两个分支都可能弹出，提取成公共 Portal 节点 */
+  const passPanelNode =
+    passPanel &&
+    createPortal(
+      <div className="fixed inset-0 z-50 flex touch-none items-center justify-center overscroll-contain bg-slate-900/45 p-4 backdrop-blur-sm">
+        <div className="animate-fade w-full max-w-xs space-y-3 rounded-2xl bg-white p-5 text-center shadow-xl">
+          <div className="text-3xl">⏳</div>
+          <p className="text-sm font-bold text-slate-700">今日 {DAILY_LIMIT} 局已用完</p>
+          <p className="text-[11px] text-slate-400">完成这个大冒险任务，等 TA 确认后就能多玩一局</p>
+          <p className="rounded-xl bg-rose-50 p-3 text-left text-xs font-medium leading-relaxed text-rose-600">
+            {passPanel.task}
+          </p>
+          {myPending ? (
+            <p className="rounded-lg bg-amber-50 p-2 text-[11px] text-amber-700">
+              🕐 已提交，等 TA 在 TA 的 2048 页面点「确认」（确认后这里自动解锁）
+            </p>
+          ) : (
+            <button type="button" className="btn-primary w-full py-2 text-xs" disabled={passBusy} onClick={() => void submitPass()}>
+              ✅ 我完成啦，请 TA 确认
+            </button>
+          )}
+          <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={() => setPassPanel(null)}>
+            关闭
+          </button>
+        </div>
+      </div>,
+      document.body
+    )
+
   const sfxButton = (
     <button
       type="button"
@@ -501,10 +760,59 @@ export default function Star2048({ myId, friendId, names }: Props) {
         <div className="rounded-2xl bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 p-4 text-center">
           <div className="text-3xl">✨</div>
           <h3 className="mt-1 text-sm font-bold text-indigo-600">选一个棋盘大小</h3>
-          <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+          {/* <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
             盘越大越难，默认 4×4，合并出 2048 就算通关，还能继续往大合。
-          </p>
+          </p> */}
         </div>
+
+        {/* 防沉迷：每日局数上限 + 加时申请（完成大冒险任务 → TA 确认） */}
+        {limited && (
+          <div className="space-y-2 rounded-xl bg-amber-50 p-3 ring-1 ring-amber-100">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-amber-700">⏳ 防沉迷</span>
+              <span className="tabular-nums text-amber-600">
+                今日 {Math.min(playsUsed, DAILY_LIMIT + myConfirmed)}/{DAILY_LIMIT + myConfirmed} 局
+                {myConfirmed > 0 ? `（含任务加时 +${myConfirmed}）` : ''}
+              </span>
+            </div>
+            {partnerPending && (
+              <div className="space-y-1.5 rounded-lg bg-white p-2.5">
+                <p className="text-[11px] text-slate-600">💪 TA 说完成了一个大冒险任务，确认后 TA 今天可以多玩一局：</p>
+                <p className="rounded-md bg-rose-50 p-2 text-[11px] font-medium leading-relaxed text-rose-600">
+                  {partnerPending.task}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className="btn-primary flex-1 py-1.5 text-xs"
+                    disabled={passBusy}
+                    onClick={() => void approvePass(partnerPending.id)}
+                  >
+                    ✅ 确认 +1 局
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost flex-1 py-1.5 text-xs"
+                    disabled={passBusy}
+                    onClick={() => void rejectPass(partnerPending.id)}
+                  >
+                    ❌ 不算
+                  </button>
+                </div>
+              </div>
+            )}
+            {myPending && (
+              <p className="rounded-lg bg-white p-2 text-[11px] text-slate-500">
+                🕐 你的大冒险任务已提交，等 TA 确认后自动 +1 局
+              </p>
+            )}
+            {!canPlay && !myPending && (
+              <p className="text-[11px] leading-relaxed text-amber-600">
+                今天的局数用完啦～点下面的开始按钮，完成一个大冒险任务、经 TA 确认就能多玩一局。
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="space-y-2 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-100">
           <div className="flex items-center justify-between">
@@ -524,15 +832,20 @@ export default function Star2048({ myId, friendId, names }: Props) {
           />
           <div className="flex items-center justify-between text-[10px] text-slate-400">
             <span>{MIN_SIZE}×{MIN_SIZE} 极简</span>
-            <span>最高 {loadBest(customSize)}</span>
+            {/* <span>最高 {loadBest(customSize)}</span> */}
             <span>{MAX_SIZE}×{MAX_SIZE} 地狱</span>
           </div>
-          <button type="button" className="btn-primary w-full py-2 text-xs" onClick={() => start(customSize)}>
-            用 {customSize}×{customSize} 开始
+          <button type="button" className="btn-primary w-full py-2 text-xs" onClick={() => begin(customSize)}>
+            {canPlay || !limited
+              ? `用 ${customSize}×${customSize} 开始`
+              : myPending
+                ? '🕐 等待 TA 确认加时…'
+                : '🎯 完成大冒险任务，加玩一局'}
           </button>
         </div>
 
         <GameLeaderboard game="star2048" myId={myId} friendId={friendId} names={names} version={lbVersion} />
+        {passPanelNode}
       </div>
     )
   }
@@ -556,16 +869,22 @@ export default function Star2048({ myId, friendId, names }: Props) {
       </div>
       <div className="flex gap-2">
         <button type="button" className="btn-ghost flex-1 py-1.5 text-xs" disabled={!canUndo} onClick={undo}>
-          ↩️ 撤销一步
+          ↩️ 撤销1步
         </button>
         <button type="button" className="btn-ghost flex-1 py-1.5 text-xs" onClick={reset}>
-          🔄 重新开始
-        </button>
-        <button type="button" className="btn-ghost shrink-0 px-3 py-1.5 text-xs" onClick={exitToSetup}>
-          🎚️ 换难度
+          🔄 重开
         </button>
         {sfxButton}
       </div>
+
+      {/* 防沉迷局数提示：玩最后一局时明确告知，死局后会自动结算进入加时流程 */}
+      {limited && (
+        <p className={`text-center text-[10px] tabular-nums ${canPlay ? 'text-slate-400' : 'font-semibold text-amber-600'}`}>
+          {canPlay
+            ? `🎫 今日剩余 ${remaining} 局${remaining === 1 ? ' · 这是最后一局' : ''}`
+            : '⏳ 今日局数已用完 · 本局结束后可做任务加时'}
+        </p>
+      )}
 
       <div
         className="relative touch-none select-none rounded-2xl bg-indigo-100 p-2"
@@ -643,19 +962,113 @@ export default function Star2048({ myId, friendId, names }: Props) {
             <div className="animate-fade w-full max-w-xs space-y-3 rounded-2xl bg-white p-5 text-center shadow-xl">
               <div className="text-4xl">{score >= best && score > 0 ? '🏆' : '🌌'}</div>
               <p className="font-bold text-slate-600">
-                {score >= best && score > 0 ? `新纪录！${score} 分` : `棋盘满了，本局 ${score} 分`}
+                {limited && remaining <= 0
+                  ? `今日 ${DAILY_LIMIT} 局已用完`
+                  : score >= best && score > 0
+                    ? `新纪录！${score} 分`
+                    : `棋盘满了，本局 ${score} 分`}
               </p>
-              <p className="text-[11px] text-slate-400">本局成绩会自动记入情侣排行榜</p>
-              <button type="button" className="btn-primary w-full py-2 text-xs" onClick={reset}>
-                确定，再来一局
+              <p className="text-[11px] text-slate-400">
+                {limited && remaining <= 0
+                  ? `本局 ${score} 分已自动记入情侣排行榜`
+                  : '本局成绩会自动记入情侣排行榜'}
+              </p>
+              {/* 次数用尽时死局即结算：不再显示「再来一局」，直接进入任务加时流程 */}
+              {limited && remaining <= 0 ? (
+                <button
+                  type="button"
+                  className="btn-primary w-full py-2 text-xs"
+                  onClick={() => setPassPanel({ task: myPending ? myPending.task : drawTask() })}
+                >
+                  🎯 完成大冒险任务，加玩一局
+                </button>
+              ) : (
+                <button type="button" className="btn-primary w-full py-2 text-xs" onClick={reset}>
+                  确定，再来一局
+                </button>
+              )}
+              <button type="button" className="btn-ghost w-full py-2 text-xs" disabled={sharing} onClick={() => void shareResult()}>
+                {sharing ? '生成图片中…' : '📸 截图分享成绩'}
               </button>
               <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={exitToSetup}>
                 换难度
               </button>
-            </div>
-          </div>,
-          document.body
-        )}
-    </div>
-  )
-}
+              </div>
+              </div>,
+              document.body
+              )}
+              {passPanelNode}
+              </div>
+              )
+              }
+
+              /**
+              * 结算成绩分享卡：纯 canvas 绘制（720×960 竖版），不依赖截图库。
+              * 分享出去的是这张图，手机上走系统分享面板，桌面上退化为下载 PNG。
+              */
+              function drawShareCard(score: number, moves: number, size: number, achieved: boolean): HTMLCanvasElement {
+              const w = 720
+              const h = 960
+              const canvas = document.createElement('canvas')
+              canvas.width = w
+              canvas.height = h
+              const ctx = canvas.getContext('2d')
+              if (!ctx) return canvas
+
+              // 星空渐变背景
+              const bg = ctx.createLinearGradient(0, 0, w, h)
+              bg.addColorStop(0, '#1e1b4b')
+              bg.addColorStop(0.5, '#5b21b6')
+              bg.addColorStop(1, '#db2777')
+              ctx.fillStyle = bg
+              ctx.fillRect(0, 0, w, h)
+
+              // 随机星尘
+              for (let i = 0; i < 90; i++) {
+              ctx.fillStyle = `rgba(255,255,255,${0.15 + Math.random() * 0.6})`
+              const r = 1 + Math.random() * 2.5
+              ctx.beginPath()
+              ctx.arc(Math.random() * w, Math.random() * h, r, 0, Math.PI * 2)
+              ctx.fill()
+              }
+
+              ctx.textAlign = 'center'
+              // 标题
+              ctx.fillStyle = 'rgba(255,255,255,0.85)'
+              ctx.font = '500 40px sans-serif'
+              ctx.fillText('✨ 星尘 2048 ✨', w / 2, 150)
+
+              // 大分数
+              ctx.fillStyle = '#fbbf24'
+              ctx.font = 'bold 130px sans-serif'
+              ctx.fillText(String(score), w / 2, 350)
+              ctx.fillStyle = 'rgba(255,255,255,0.75)'
+              ctx.font = '30px sans-serif'
+              ctx.fillText('最 终 得 分', w / 2, 410)
+
+              // 信息行
+              ctx.fillStyle = '#ffffff'
+              ctx.font = '600 38px sans-serif'
+              ctx.fillText(`${size}×${size} · ${moves} 步${achieved ? ' · 🌟 达成 2048' : ''}`, w / 2, 520)
+
+              // 分隔线
+              ctx.strokeStyle = 'rgba(255,255,255,0.35)'
+              ctx.lineWidth = 2
+              ctx.beginPath()
+              ctx.moveTo(140, 600)
+              ctx.lineTo(w - 140, 600)
+              ctx.stroke()
+
+              // 底部信息
+              const now = new Date()
+              const pad = (n: number) => String(n).padStart(2, '0')
+              ctx.fillStyle = 'rgba(255,255,255,0.65)'
+              ctx.font = '26px sans-serif'
+              ctx.fillText(
+              `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
+              w / 2,
+              h - 140
+              )
+              ctx.fillText('来自我们的情侣小站 · 快来和我对战', w / 2, h - 85)
+              return canvas
+              }

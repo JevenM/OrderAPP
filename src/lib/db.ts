@@ -2346,6 +2346,78 @@ export async function addCoupleGameScore(input: {
   }
 }
 
+/* --------------------------- 防沉迷加时申请 --------------------------- */
+
+/**
+ * 小游戏防沉迷：每日局数用完后，完成一个大冒险任务、由伴侣确认，才能多玩一局。
+ * 一条申请 = 一次「完成任务 → 对方确认」的流程；confirmed 的行数就是加时局数。
+ */
+export interface CoupleGamePassRow {
+  id: string
+  member_a: string
+  member_b: string
+  game: string
+  requester_id: string
+  task: string
+  status: 'pending' | 'confirmed'
+  confirmed_by: string | null
+  /** 本地日期 YYYY-MM-DD：加时只对当天有效，每天重新开始 */
+  play_day: string
+  created_at: string
+  confirmed_at: string | null
+}
+
+/** 拉某对情侣、某个游戏、某一天的申请记录（双方看同一份数据，各自按 requester_id 过滤） */
+export async function listCoupleGamePasses(userA: string, userB: string, game: string, day: string): Promise<CoupleGamePassRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_game_passes')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .eq('game', game)
+    .eq('play_day', day)
+    .order('created_at', { ascending: false })
+    .limit(100)
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载防沉迷加时申请')
+  }
+  return (data ?? []) as CoupleGamePassRow[]
+}
+
+/** 提交加时申请：任务内容一并存库，对方看到的就是这段文字 */
+export async function createCoupleGamePass(userA: string, userB: string, game: string, requesterId: string, task: string): Promise<CoupleGamePassRow> {
+  if (!userA || !userB || userA === userB) throw new Error('暂未检测到专属好友对象')
+  const clean = task.trim().slice(0, 300)
+  if (!clean) throw new Error('任务内容不能为空')
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_game_passes')
+    .insert({ member_a: memberA, member_b: memberB, game, requester_id: requesterId, task: clean })
+    .select()
+    .single()
+  if (error || !data) fail(error, '提交加时申请')
+  return data as CoupleGamePassRow
+}
+
+/** 伴侣确认：确认后 requester 当天可多玩一局 */
+export async function confirmCoupleGamePass(id: string, confirmedBy: string): Promise<void> {
+  const { error } = await supabase
+    .from('couple_game_passes')
+    .update({ status: 'confirmed', confirmed_by: confirmedBy || null, confirmed_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('status', 'pending')
+  if (error) fail(error, '确认加时申请')
+}
+
+/** 伴侣拒绝 / 申请方撤回：直接删掉这条申请 */
+export async function deleteCoupleGamePass(id: string): Promise<void> {
+  const { error } = await supabase.from('couple_game_passes').delete().eq('id', id)
+  if (error) fail(error, '删除加时申请')
+}
+
 /* ------------------------------ 情侣西瓜分 ------------------------------ */
 
 export interface CoupleWatermelonScoreRow {

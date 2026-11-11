@@ -102,7 +102,8 @@ export default function GameLeaderboard({ game, myId, friendId, names, version }
                 >
                   {name}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-slate-400">{row.detail}</span>
+                {/* 记录列：右对齐紧贴时间列（flex-1 拉出的空隙留在文字左侧），过长时截断省略 */}
+                <span className="min-w-0 flex-1 truncate text-right text-slate-400">{row.detail}</span>
                 {/* 时间列固定宽、字号略小、不换行；配合紧凑格式，窄屏也放得下 */}
                 <span className="w-[80px] shrink-0 whitespace-nowrap text-right text-[10px] tabular-nums text-slate-300">
                   {formatWhen(row.created_at)}
