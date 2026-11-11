@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { CSSProperties, TouchEvent } from 'react'
 import { addCoupleGameScore } from '../lib/db'
 import { setSfxEnabled, sfx, sfxEnabled, subscribeSfx } from '../lib/sfx'
@@ -228,7 +229,7 @@ export default function Star2048({ myId, friendId, names }: Props) {
   const [sfxOn, setSfxOn] = useState(sfxEnabled)
   const [floats, setFloats] = useState<Array<{ id: number; text: string }>>([])
   const [canUndo, setCanUndo] = useState(false)
-  const [customSize, setCustomSize] = useState(initial?.size && ![4, 5, 6].includes(initial.size) ? initial.size : 7)
+  const [customSize, setCustomSize] = useState(initial?.size ?? 4)
   const [lbVersion, setLbVersion] = useState(0)
 
   /** 撤销用的快照：只在最近一步有效 */
@@ -242,6 +243,16 @@ export default function Star2048({ myId, friendId, names }: Props) {
   const reportedRef = useRef(0)
 
   useEffect(() => subscribeSfx(() => setSfxOn(sfxEnabled())), [])
+
+  // 死局结算弹窗打开时锁住页面滚动：触摸弹窗不会带动整页滚动，按钮不会点不到
+  useEffect(() => {
+    if (!over) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [over])
 
   // 当前局面落 localStorage：刷新 / 重开页面接着玩；结束的局不留档
   useEffect(() => {
@@ -483,41 +494,21 @@ export default function Star2048({ myId, friendId, names }: Props) {
     </button>
   )
 
-  /* ------------------------------ 开局：选难度 ------------------------------ */
+  /* ------------------------------ 开局：选棋盘大小 ------------------------------ */
   if (phase === 'setup') {
-    const presets = [
-      { size: 4, label: '轻松' },
-      { size: 5, label: '标准'},
-      { size: 6, label: '挑战'},
-    ]
     return (
       <div className="space-y-3">
         <div className="rounded-2xl bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 p-4 text-center">
           <div className="text-3xl">✨</div>
           <h3 className="mt-1 text-sm font-bold text-indigo-600">选一个棋盘大小</h3>
           <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-            盘越大越难，合并出 2048 就算通关，还能继续往大合。
+            盘越大越难，默认 4×4，合并出 2048 就算通关，还能继续往大合。
           </p>
-        </div>
-
-        <div className="grid grid-cols-3 gap-2">
-          {presets.map((p) => (
-            <button
-              key={p.size}
-              type="button"
-              className="rounded-xl bg-white p-2.5 text-center shadow-sm ring-1 ring-slate-100 transition-transform active:scale-95"
-              onClick={() => start(p.size)}
-            >
-              <div className="text-base font-bold text-indigo-600">{p.size}×{p.size}</div>
-              <div className="text-[11px] font-semibold text-slate-600">{p.label}</div>
-              <div className="mt-1 text-[10px] tabular-nums text-amber-500">最高 {loadBest(p.size)}</div>
-            </button>
-          ))}
         </div>
 
         <div className="space-y-2 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-100">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-600">自定义网格</span>
+            <span className="text-xs font-semibold text-slate-600">网格大小</span>
             <span className="text-sm font-bold tabular-nums text-indigo-600">
               {customSize}×{customSize}
             </span>
@@ -611,38 +602,18 @@ export default function Star2048({ myId, friendId, names }: Props) {
           ))}
         </div>
 
-        {(over || won) && (
+        {won && !over && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-2xl bg-white/80 px-4 backdrop-blur-sm">
-            {won && !over ? (
-              <>
-                <div className="text-4xl">🌟</div>
-                <p className="text-center font-bold text-indigo-600">合成 {TARGET}！星尘闪耀～</p>
-                <div className="flex gap-2">
-                  <button type="button" className="btn-ghost px-3 py-1.5 text-xs" onClick={() => setWon(false)}>
-                    继续挑战
-                  </button>
-                  <button type="button" className="btn-primary px-3 py-1.5 text-xs" onClick={reset}>
-                    再来一局
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="text-4xl">{score >= best && score > 0 ? '🏆' : '🌌'}</div>
-                <p className="text-center font-bold text-slate-600">
-                  {score >= best && score > 0 ? `新纪录！${score} 分` : `棋盘满了，本局 ${score} 分`}
-                </p>
-                <p className="text-[11px] text-slate-400">本局成绩会自动记入情侣排行榜</p>
-                <div className="flex gap-2">
-                  <button type="button" className="btn-ghost px-3 py-1.5 text-xs" onClick={exitToSetup}>
-                    换难度
-                  </button>
-                  <button type="button" className="btn-primary px-4 py-1.5 text-xs" onClick={reset}>
-                    再来一局
-                  </button>
-                </div>
-              </>
-            )}
+            <div className="text-4xl">🌟</div>
+            <p className="text-center font-bold text-indigo-600">合成 {TARGET}！星尘闪耀～</p>
+            <div className="flex gap-2">
+              <button type="button" className="btn-ghost px-3 py-1.5 text-xs" onClick={() => setWon(false)}>
+                继续挑战
+              </button>
+              <button type="button" className="btn-primary px-3 py-1.5 text-xs" onClick={reset}>
+                再来一局
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -661,6 +632,30 @@ export default function Star2048({ myId, friendId, names }: Props) {
       </p>
 
       <GameLeaderboard game="star2048" myId={myId} friendId={friendId} names={names} version={lbVersion} />
+
+      {/* 死局结算：Portal 渲染到 body 的全屏悬浮弹窗，点确定重开一局。
+          必须用 Portal：外层 .card 的 :active { transform } 会让 fixed 退化成相对卡片
+          定位（弹窗瞬间变「页面内遮罩」并跳动），挂到 body 后不再受任何祖先影响。
+          touch-none 禁止触摸手势在弹窗上滚动，防止 click 被滚动手势吃掉 */}
+      {over &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex touch-none items-center justify-center overscroll-contain bg-slate-900/45 p-4 backdrop-blur-sm">
+            <div className="animate-fade w-full max-w-xs space-y-3 rounded-2xl bg-white p-5 text-center shadow-xl">
+              <div className="text-4xl">{score >= best && score > 0 ? '🏆' : '🌌'}</div>
+              <p className="font-bold text-slate-600">
+                {score >= best && score > 0 ? `新纪录！${score} 分` : `棋盘满了，本局 ${score} 分`}
+              </p>
+              <p className="text-[11px] text-slate-400">本局成绩会自动记入情侣排行榜</p>
+              <button type="button" className="btn-primary w-full py-2 text-xs" onClick={reset}>
+                确定，再来一局
+              </button>
+              <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={exitToSetup}>
+                换难度
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   )
 }

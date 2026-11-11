@@ -19,11 +19,12 @@ interface Props {
   version: number
 }
 
-/** 只留月日，榜单里不需要秒级精度 */
-function formatDay(iso: string): string {
+/** 月日 + 具体时间，精确到秒；两位补零保证等宽对齐 */
+function formatWhen(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
-  return `${d.getMonth() + 1}月${d.getDate()}日`
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
 export default function GameLeaderboard({ game, myId, friendId, names, version }: Props) {
@@ -86,16 +87,25 @@ export default function GameLeaderboard({ game, myId, friendId, names, version }
             return (
               <li
                 key={row.id}
-                className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] ${
+                className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] ${
                   mine ? 'bg-white shadow-sm' : 'bg-white/60'
                 }`}
               >
                 <span className="w-5 shrink-0 text-center tabular-nums text-slate-400">
                   {MEDALS[i] ?? i + 1}
                 </span>
-                <span className={`shrink-0 font-semibold ${mine ? 'text-rose-500' : 'text-slate-600'}`}>{name}</span>
+                {/* 名字固定宽度截断：昵称再长也不把行挤成两行 */}
+                <span
+                  className={`w-14 shrink-0 truncate font-semibold ${mine ? 'text-rose-500' : 'text-slate-600'}`}
+                  title={name}
+                >
+                  {name}
+                </span>
                 <span className="min-w-0 flex-1 truncate text-slate-400">{row.detail}</span>
-                <span className="shrink-0 tabular-nums text-slate-300">{formatDay(row.created_at)}</span>
+                {/* 时间列固定宽、不换行，秒级时间戳也能和别的行对齐 */}
+                <span className="w-[104px] shrink-0 whitespace-nowrap text-right tabular-nums text-slate-300">
+                  {formatWhen(row.created_at)}
+                </span>
                 <span className="w-12 shrink-0 text-right font-bold tabular-nums text-indigo-600">{row.score}</span>
               </li>
             )

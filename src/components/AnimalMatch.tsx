@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { addCoupleGameScore } from '../lib/db'
 import { setSfxEnabled, sfx, sfxEnabled, subscribeSfx } from '../lib/sfx'
 import GameLeaderboard from './GameLeaderboard'
@@ -333,6 +334,21 @@ interface SaveData {
 
 const SAVE_KEY = 'couple-animal-save'
 const BEST_KEY = 'couple-animal-best'
+/**
+ * 通关进度：过了第 N 关才解锁第 N+1 关。
+ * 存储里带日期，跨天自动回落到第 1 关——牌局每天换新，解锁也每天重开
+ */
+const UNLOCK_KEY = 'couple-animal-unlocked'
+
+const loadUnlocked = (): number => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(UNLOCK_KEY) ?? '') as { day?: string; unlocked?: number } | null
+    if (raw?.day === dayKey() && raw.unlocked! >= 1 && raw.unlocked! <= LEVEL_IDS.length) return raw.unlocked!
+  } catch {
+    // 没存过 / 解析失败，都按「今天的进度还没开始」处理
+  }
+  return 1
+}
 
 /** 本关的道具：由关卡表配置，高关卡会被砍 */
 const freshItems = (level: LevelId): Items => ({ ...LEVELS[level].items })
@@ -376,6 +392,8 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
   const [result, setResult] = useState<null | 'win' | 'lose'>(null)
   const [view, setView] = useState({ cols: 12, rows: 12 })
   const [best, setBest] = useState(loadBest)
+  /** 已解锁到第几关：通关一关解锁下一关 */
+  const [unlocked, setUnlocked] = useState(loadUnlocked)
   const [sfxOn, setSfxOn] = useState(sfxEnabled)
   const [tip, setTip] = useState('')
   const [lbVersion, setLbVersion] = useState(0)
@@ -388,6 +406,26 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
 
   useEffect(() => subscribeSfx(() => setSfxOn(sfxEnabled())), [])
   useEffect(() => setSaveHint(loadSave()), [])
+
+  // 结算弹窗打开时锁住页面滚动：手指按下弹窗再轻微滑动，不会把整页滚走，
+  // 否则 click 被滚动手势吃掉，表现为「按钮点不到、一点位置页面就跑」
+  useEffect(() => {
+    if (!result) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [result])
+
+  // 解锁进度持久化：带当天日期，跨天读取时会自动回落到第 1 关
+  useEffect(() => {
+    try {
+      localStorage.setItem(UNLOCK_KEY, JSON.stringify({ day: today, unlocked }))
+    } catch {
+      // 写不进去就本次会话内生效
+    }
+  }, [unlocked, today])
 
   // 进度存档：结果出来就清掉（跨天自动作废），免得首页一直提示「有一局没打完」
   useEffect(() => {
@@ -413,8 +451,9 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
     }
   }, [score, best])
 
-  /** 开局：牌局由「日期 + 关卡」种子决定，同一天同一关布局固定 */
+  /** 开局：只能进已解锁的关；牌局由「日期 + 关卡」种子决定，同一天同一关布局固定 */
   const startLevel = useCallback((next: LevelId) => {
+    if (next > loadUnlocked()) return
     const built = buildLevel(next, dayKey())
     setLevel(next)
     setCards(built.cards)
@@ -459,6 +498,10 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
       setResult(kind)
       if (reportedRef.current) return
       reportedRef.current = true
+      // 通关即解锁下一关（最后一关通关就保持解锁状态）
+      if (kind === 'win' && level < LEVEL_IDS.length) {
+        setUnlocked((u) => Math.max(u, level + 1))
+      }
       const detail = `第 ${level} 关 · ${kind === 'win' ? '通关' : '失败'}`
       if (finalScore <= 0 || !myId || !friendId) return
       void addCoupleGameScore({
@@ -608,7 +651,7 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
           {/* <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
             点没被压住的牌收进卡槽，同种凑三张就消掉。卡槽只有 7 格，塞满就结束。
           </p> */}
-          <p className="mt-1.5 text-[10px] text-emerald-500">今日牌局 {today} · 每天 0 点换新</p>
+          <p className="mt-1.5 text-[10px] text-emerald-500">今日牌局 {today} · 每天 0 点换新，关卡解锁也一起重置</p>
         </div>
 
         {saveHint && (
@@ -621,9 +664,11 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
           </button>
         )}
 
-        {/* 关卡按难度分四档配色：绿（新手）→ 黄（熟练）→ 橙（硬核）→ 红（终极） */}
+        {/* 关卡按难度分四档配色：绿（新手）→ 黄（熟练）→ 橙（硬核）→ 红（终极）。
+            过了前一关才能解锁下一关，锁着的关只能看不能进 */}
         {LEVEL_IDS.map((lv) => {
           const def = LEVELS[lv]
+          const locked = lv > unlocked
           const chip =
             lv <= 3
               ? 'bg-emerald-50 text-emerald-600'
@@ -636,14 +681,25 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
             <button
               key={lv}
               type="button"
-              className="w-full rounded-xl bg-white p-3 text-left shadow-sm ring-1 ring-slate-100 transition-transform active:scale-[0.99]"
+              disabled={locked}
+              className={`w-full rounded-xl p-3 text-left shadow-sm ring-1 transition-transform ${
+                locked
+                  ? 'bg-slate-100 opacity-70 ring-slate-200'
+                  : 'bg-white ring-slate-100 active:scale-[0.99]'
+              }`}
               onClick={() => startLevel(lv)}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-semibold text-slate-700">{def.name}</span>
-                <span className={`chip shrink-0 border-0 ${chip}`}>{def.tag}</span>
+                <span className={`text-sm font-semibold ${locked ? 'text-slate-400' : 'text-slate-700'}`}>
+                  {def.name}
+                </span>
+                <span className={`chip shrink-0 border-0 ${locked ? 'bg-slate-200 text-slate-500' : chip}`}>
+                  {locked ? `🔒 ${lv === unlocked + 1 ? '通关上一关解锁' : '通关前面的关卡解锁'}` : def.tag}
+                </span>
               </div>
-              <p className="mt-1 text-[11px] leading-relaxed text-slate-400">{def.desc}</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+                {locked ? `这一关有 ${def.speciesCount} 种图案、${def.layers.length} 层堆叠——先过前面的关再说～` : def.desc}
+              </p>
             </button>
           )
         })}
@@ -737,32 +793,53 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
         {itemButton('洗牌', '🔀', items.shuffle, useShuffle, !!result || items.shuffle <= 0 || cards.length === 0)}
       </div>
 
-      {/* 结算 */}
-      {result && (
-        <div className="animate-fade space-y-2 rounded-2xl bg-white p-3 text-center shadow-sm ring-1 ring-slate-100">
-          <div className="text-3xl">{result === 'win' ? '🏆' : '🧺'}</div>
-          <p className="text-sm font-bold text-slate-700">
-            {result === 'win' ? `第 ${level} 关通关！` : '卡槽塞满了，本局结束'}
-          </p>
-          <p className="text-[11px] text-slate-400">
-            得分 {score}
-            {result === 'win' ? `（含通关奖励 ${LEVELS[level].winBonus}）` : ''} · 成绩已记入情侣排行榜
-          </p>
-          <div className="flex justify-center gap-2">
-            {result === 'lose' && items.revive > 0 && (
-              <button type="button" className="btn-primary px-3 py-1.5 text-xs" onClick={useRevive}>
-                💗 复活继续（每局 1 次）
-              </button>
-            )}
-            <button type="button" className="btn-ghost px-3 py-1.5 text-xs" onClick={() => startLevel(level)}>
-              重玩本关
-            </button>
-            <button type="button" className="btn-ghost px-3 py-1.5 text-xs" onClick={backHome}>
-              回首页
-            </button>
-          </div>
-        </div>
-      )}
+      {/* 结算：Portal 渲染到 body 的全屏悬浮弹窗。
+          必须用 Portal：组件外层的 .card 有 :active { transform }，手指按住弹窗时祖先卡片
+          会被 :active 激活加上 transform，fixed 就退化成相对卡片定位——弹窗瞬间变成
+          「页面内遮罩」并跳动，怎么都点不中。挂到 body 后脱离所有祖先，fixed 永远成立。
+          touch-none 让触摸手势不在弹窗上触发滚动（含滚动穿透） */}
+      {result &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex touch-none items-center justify-center overscroll-contain bg-slate-900/45 p-4 backdrop-blur-sm">
+            <div className="animate-fade w-full max-w-xs space-y-3 rounded-2xl bg-white p-5 text-center shadow-xl">
+              <div className="text-3xl">{result === 'win' ? '🏆' : '🧺'}</div>
+              <p className="text-sm font-bold text-slate-700">
+                {result === 'win' ? `第 ${level} 关通关！` : '卡槽塞满了，本局结束'}
+              </p>
+              <p className="text-[11px] text-slate-400">
+                得分 {score}
+                {result === 'win' ? `（含通关奖励 ${LEVELS[level].winBonus}）` : ''} · 成绩已记入情侣排行榜
+              </p>
+              <div className="space-y-2">
+                {result === 'lose' && items.revive > 0 && (
+                  <button type="button" className="btn-primary w-full py-2 text-xs" onClick={useRevive}>
+                    💗 复活继续（每局 1 次）
+                  </button>
+                )}
+                {result === 'win' && level < LEVEL_IDS.length && (
+                  <button
+                    type="button"
+                    className="btn-primary w-full py-2 text-xs"
+                    onClick={() => startLevel((level + 1) as LevelId)}
+                  >
+                    ➡️ 挑战第 {level + 1} 关
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={result === 'win' && level < LEVEL_IDS.length ? 'btn-ghost w-full py-2 text-xs' : 'btn-primary w-full py-2 text-xs'}
+                  onClick={() => startLevel(level)}
+                >
+                  🔄 重玩本关
+                </button>
+                <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={backHome}>
+                  回首页
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
 
       <GameLeaderboard game="animalmatch" myId={myId} friendId={friendId} names={names} version={lbVersion} />
     </div>
