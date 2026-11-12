@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { addCoupleGameScore } from '../lib/db'
+import { addCoupleGameScore, getCoupleGameProgress, saveCoupleGameProgress } from '../lib/db'
 import { setSfxEnabled, sfx, sfxEnabled, subscribeSfx } from '../lib/sfx'
 import GameLeaderboard from './GameLeaderboard'
 
@@ -335,14 +335,15 @@ interface SaveData {
 const SAVE_KEY = 'couple-animal-save'
 const BEST_KEY = 'couple-animal-best'
 /**
- * 通关进度：过了第 N 关才解锁第 N+1 关。
- * 存储里带日期，跨天自动回落到第 1 关——牌局每天换新，解锁也每天重开
+ * 通关进度的本地缓存 key（按用户分开，防沉迷同款思路）：
+ * 过了第 N 关才解锁第 N+1 关，带日期跨天回落；真正的进度存远端 couple_game_progress，
+ * 退出登录 / 清缓存 / 换设备都能恢复，零点自然重开
  */
-const UNLOCK_KEY = 'couple-animal-unlocked'
+const unlockKeyFor = (userId: string) => `couple-animal-unlocked-${userId}`
 
-const loadUnlocked = (): number => {
+const loadLocalUnlocked = (userId: string): number => {
   try {
-    const raw = JSON.parse(localStorage.getItem(UNLOCK_KEY) ?? '') as { day?: string; unlocked?: number } | null
+    const raw = JSON.parse(localStorage.getItem(unlockKeyFor(userId)) ?? '') as { day?: string; unlocked?: number } | null
     if (raw?.day === dayKey() && raw.unlocked! >= 1 && raw.unlocked! <= LEVEL_IDS.length) return raw.unlocked!
   } catch {
     // 没存过 / 解析失败，都按「今天的进度还没开始」处理
@@ -392,8 +393,8 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
   const [result, setResult] = useState<null | 'win' | 'lose'>(null)
   const [view, setView] = useState({ cols: 12, rows: 12 })
   const [best, setBest] = useState(loadBest)
-  /** 已解锁到第几关：通关一关解锁下一关 */
-  const [unlocked, setUnlocked] = useState(loadUnlocked)
+  /** 已解锁到第几关：通关一关解锁下一关（本地缓存起步，远端恢复后取更大值） */
+  const [unlocked, setUnlocked] = useState(() => loadLocalUnlocked(myId))
   const [sfxOn, setSfxOn] = useState(sfxEnabled)
   const [tip, setTip] = useState('')
   const [lbVersion, setLbVersion] = useState(0)
@@ -402,6 +403,8 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
   const undoRef = useRef<{ cards: Card[]; slot: Card[]; score: number } | null>(null)
   /** 这一局的成绩是否已经上报 */
   const reportedRef = useRef(false)
+  /** 远端解锁进度是否已经恢复完成：恢复前不写远端，防止初始值把已有进度覆盖掉 */
+  const progressReadyRef = useRef(false)
   const today = dayKey()
 
   useEffect(() => subscribeSfx(() => setSfxOn(sfxEnabled())), [])
@@ -418,14 +421,39 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
     }
   }, [result])
 
-  // 解锁进度持久化：带当天日期，跨天读取时会自动回落到第 1 关
+  // 解锁进度持久化：本地缓存 + 远端 couple_game_progress 双写。
+  // progressReadyRef 确保先读到远端已有进度再开始覆盖写，避免竞态把进度冲掉
   useEffect(() => {
     try {
-      localStorage.setItem(UNLOCK_KEY, JSON.stringify({ day: today, unlocked }))
+      localStorage.setItem(unlockKeyFor(myId), JSON.stringify({ day: today, unlocked }))
     } catch {
       // 写不进去就本次会话内生效
     }
-  }, [unlocked, today])
+    if (!progressReadyRef.current || !myId || !friendId) return
+    void saveCoupleGameProgress({ userId: myId, friendId, game: 'animalmatch', day: today, progress: { unlocked } }).catch(
+      () => {
+        // 远端写失败不影响游戏，下次通关会再写
+      }
+    )
+  }, [unlocked, today, myId, friendId])
+
+  // 远端恢复：退出登录 / 清缓存 / 换设备后，今天的解锁进度从数据库找回来
+  useEffect(() => {
+    if (!myId || !friendId) return
+    getCoupleGameProgress(myId, friendId, 'animalmatch', today)
+      .then((p) => {
+        const remote = typeof p?.unlocked === 'number' ? Math.round(p.unlocked) : 0
+        if (remote > 1) setUnlocked((u) => Math.max(u, Math.min(remote, LEVEL_IDS.length)))
+      })
+      .catch(() => {
+        // 拉不到就用本地缓存
+      })
+      .finally(() => {
+        progressReadyRef.current = true
+      })
+    // 只在挂载时恢复一次；today 在组件生命周期内不变
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myId, friendId])
 
   // 进度存档：结果出来就清掉（跨天自动作废），免得首页一直提示「有一局没打完」
   useEffect(() => {
@@ -452,21 +480,24 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
   }, [score, best])
 
   /** 开局：只能进已解锁的关；牌局由「日期 + 关卡」种子决定，同一天同一关布局固定 */
-  const startLevel = useCallback((next: LevelId) => {
-    if (next > loadUnlocked()) return
-    const built = buildLevel(next, dayKey())
-    setLevel(next)
-    setCards(built.cards)
-    setView({ cols: built.viewCols, rows: built.viewRows })
-    setSlot([])
-    setScore(0)
-    setItems(freshItems(next))
-    setResult(null)
-    setTip('')
-    undoRef.current = null
-    reportedRef.current = false
-    setPhase('play')
-  }, [])
+  const startLevel = useCallback(
+    (next: LevelId) => {
+      if (next > unlocked) return
+      const built = buildLevel(next, dayKey())
+      setLevel(next)
+      setCards(built.cards)
+      setView({ cols: built.viewCols, rows: built.viewRows })
+      setSlot([])
+      setScore(0)
+      setItems(freshItems(next))
+      setResult(null)
+      setTip('')
+      undoRef.current = null
+      reportedRef.current = false
+      setPhase('play')
+    },
+    [unlocked]
+  )
 
   /** 回首页：顺手刷新「未打完」提示，否则通关后还挂着旧的那条 */
   const backHome = useCallback(() => {

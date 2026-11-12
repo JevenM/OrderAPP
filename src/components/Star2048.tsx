@@ -6,8 +6,10 @@ import {
   confirmCoupleGamePass,
   createCoupleGamePass,
   deleteCoupleGamePass,
+  getCoupleGameProgress,
   listCoupleDarePromptBank,
   listCoupleGamePasses,
+  saveCoupleGameProgress,
   type CoupleGamePassRow,
 } from '../lib/db'
 import { DARES } from '../lib/darePrompts'
@@ -46,7 +48,6 @@ const MAX_SIZE = 8
 
 /** 每天最多开这么多局；用完后完成大冒险任务、经伴侣确认，每确认一次多一局 */
 const DAILY_LIMIT = 8
-const PLAYS_KEY = 'couple-2048-plays'
 
 /** 本地日期 YYYY-MM-DD（不能用 toISOString，那是 UTC，东八区凌晨会差一天） */
 const dayKey = (): string => {
@@ -54,10 +55,15 @@ const dayKey = (): string => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-/** 今天已经开了多少局；跨天自动归零（存储带日期） */
-const loadPlays = (): number => {
+/**
+ * 今日已开局数的本地缓存 key（按用户分开）：真正进度存远端 couple_game_progress，
+ * 退出登录 / 清缓存 / 换设备都能找回今天的局数，不再「重新登录就归零」
+ */
+const playsKeyFor = (userId: string) => `couple-2048-plays-${userId}`
+
+const loadLocalPlays = (userId: string): number => {
   try {
-    const raw = JSON.parse(localStorage.getItem(PLAYS_KEY) ?? '') as { day?: string; count?: number } | null
+    const raw = JSON.parse(localStorage.getItem(playsKeyFor(userId)) ?? '') as { day?: string; count?: number } | null
     return raw?.day === dayKey() && typeof raw.count === 'number' ? raw.count : 0
   } catch {
     return 0
@@ -251,8 +257,8 @@ export default function Star2048({ myId, friendId, names }: Props) {
   const [lbVersion, setLbVersion] = useState(0)
 
   /* ------------------------------ 防沉迷 ------------------------------ */
-  /** 今天已开的局数 */
-  const [playsUsed, setPlaysUsed] = useState(loadPlays)
+  /** 今天已开的局数（本地缓存起步，远端恢复后取更大值） */
+  const [playsUsed, setPlaysUsed] = useState(() => loadLocalPlays(myId))
   /** 今天的加时申请（双方共享一份）：pending=等确认，confirmed=已加一局 */
   const [passes, setPasses] = useState<CoupleGamePassRow[]>([])
   /** 自定义大冒险题库（和内置池合并后抽任务） */
@@ -275,6 +281,8 @@ export default function Star2048({ myId, friendId, names }: Props) {
   const remaining = limited ? Math.max(0, DAILY_LIMIT - playsUsed + myConfirmed) : Infinity
   const canPlay = remaining > 0
 
+  /** 远端局数是否已恢复完成：恢复前不写远端，防止初始值 0 把已有进度覆盖掉 */
+  const playsReadyRef = useRef(false)
   /** 撤销用的快照：只在最近一步有效 */
   const snapshotRef = useRef<Snapshot | null>(null)
   /** 2048 的胜利提示只弹一次，之后可以继续往大合 */
@@ -289,14 +297,38 @@ export default function Star2048({ myId, friendId, names }: Props) {
 
   /* ------------------------------ 防沉迷数据同步 ------------------------------ */
 
-  // 当日局数持久化：带日期，跨天自动归零
+  // 当日局数持久化：本地缓存 + 远端双写（远端解决退出登录 / 清缓存后次数归零的问题）
   useEffect(() => {
     try {
-      localStorage.setItem(PLAYS_KEY, JSON.stringify({ day: dayKey(), count: playsUsed }))
+      localStorage.setItem(playsKeyFor(myId), JSON.stringify({ day: dayKey(), count: playsUsed }))
     } catch {
       // 写不进去就本次会话内生效
     }
-  }, [playsUsed])
+    if (!playsReadyRef.current || !myId || !friendId) return
+    void saveCoupleGameProgress({ userId: myId, friendId, game: 'star2048', day: dayKey(), progress: { playsUsed } }).catch(
+      () => {
+        // 远端写失败不影响游戏，下一局开始时会再写
+      }
+    )
+  }, [playsUsed, myId, friendId])
+
+  // 远端恢复：重新登录 / 换设备后，把今天的局数从数据库找回来
+  useEffect(() => {
+    if (!myId || !friendId) return
+    getCoupleGameProgress(myId, friendId, 'star2048', dayKey())
+      .then((p) => {
+        const remote = typeof p?.playsUsed === 'number' ? Math.round(p.playsUsed) : 0
+        if (remote > 0) setPlaysUsed((c) => Math.max(c, remote))
+      })
+      .catch(() => {
+        // 拉不到就用本地缓存
+      })
+      .finally(() => {
+        playsReadyRef.current = true
+      })
+    // 只在挂载时恢复一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myId, friendId])
 
   /** 拉今天的加时申请；对方确认 / 拒绝后 realtime 会推过来 */
   const reloadPasses = useCallback(async () => {
@@ -409,7 +441,7 @@ export default function Star2048({ myId, friendId, names }: Props) {
   const movesRef = useRef(moves)
   movesRef.current = moves
 
-  /** 开一局消耗一次当日次数（未配对时不限） */
+  /** 开一局消耗一次当日次数（未配对时不限；远端由持久化 effect 负责同步） */
   const consumePlay = useCallback(() => {
     if (!myId || !friendId) return
     setPlaysUsed((c) => c + 1)

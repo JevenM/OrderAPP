@@ -2319,7 +2319,7 @@ export async function listCoupleGameScores(
   return (data ?? []) as CoupleGameScoreRow[]
 }
 
-/** 每局结束上传一条成绩；0 分或没配对时直接跳过，不打扰玩家 */
+/** 每局结束上传成绩；每人每天只保留一条最高分，其他清空（刷分、重复上传都只留最好的一次） */
 export async function addCoupleGameScore(input: {
   userA: string
   userB: string
@@ -2332,17 +2332,105 @@ export async function addCoupleGameScore(input: {
   if (!userA || !userB || userA === userB) return
   if (!Number.isFinite(score) || score <= 0) return
   const [memberA, memberB] = couplePair(userA, userB)
+  const rounded = Math.round(score)
+
+  // 「今天」按用户本地时区算：本地零点转 UTC ISO 做范围查询，东八区不会差一天
+  const now = new Date()
+  const dayStartIso = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
+  const { data: todayRows, error: queryError } = await supabase
+    .from('couple_game_scores')
+    .select('id, score')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .eq('game', game)
+    .eq('player_id', playerId)
+    .gte('created_at', dayStartIso)
+    .order('score', { ascending: false })
+    .limit(50)
+  if (queryError && !isMissingTable(queryError)) fail(queryError, '查询今日游戏成绩')
+  const todayBest = todayRows?.[0]?.score ?? 0
+  // 今天已经有不低于本局的成绩：不上传，榜单保持每人每天一条
+  if (todayBest >= rounded) return
+
+  // 本局更高：把今天该玩家的旧记录清空，再插入这一条最高分
+  if (todayRows?.length) {
+    const { error: delError } = await supabase
+      .from('couple_game_scores')
+      .delete()
+      .in('id', todayRows.map((r) => r.id))
+    if (delError && !isMissingTable(delError)) fail(delError, '清理今日旧成绩')
+  }
+
   const { error } = await supabase.from('couple_game_scores').insert({
     member_a: memberA,
     member_b: memberB,
     game,
     player_id: playerId,
-    score: Math.round(score),
+    score: rounded,
     detail: detail.slice(0, 60),
   })
   if (error) {
     if (isMissingTable(error)) return
     fail(error, '上传游戏成绩')
+  }
+}
+
+/* --------------------------- 小游戏每日进度 --------------------------- */
+
+/**
+ * 小游戏进度（每用户每天一行）：2048 的防沉迷局数、消消乐的关卡解锁都存这里。
+ * 存远端是为了退出登录 / 清缓存 / 换设备后进度不丢；localStorage 只做离线缓存。
+ */
+export async function getCoupleGameProgress(
+  userId: string,
+  friendId: string,
+  game: string,
+  day: string
+): Promise<Record<string, number> | null> {
+  if (!userId || !friendId || userId === friendId) return null
+  const [memberA, memberB] = couplePair(userId, friendId)
+  const { data, error } = await supabase
+    .from('couple_game_progress')
+    .select('progress')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .eq('game', game)
+    .eq('progress_day', day)
+    .eq('owner_id', userId)
+    .maybeSingle()
+  if (error) {
+    if (isMissingTable(error)) return null
+    fail(error, '加载游戏进度')
+  }
+  return ((data as { progress: Record<string, number> } | null)?.progress ?? null)
+}
+
+/** 保存小游戏进度：按「情侣对 + 游戏 + 日期 + 用户」幂等覆盖，重复写也无副作用 */
+export async function saveCoupleGameProgress(input: {
+  userId: string
+  friendId: string
+  game: string
+  day: string
+  progress: Record<string, number>
+}): Promise<void> {
+  const { userId, friendId, game, day, progress } = input
+  if (!userId || !friendId || userId === friendId) return
+  const [memberA, memberB] = couplePair(userId, friendId)
+  const { error } = await supabase.from('couple_game_progress').upsert(
+    {
+      member_a: memberA,
+      member_b: memberB,
+      game,
+      progress_day: day,
+      owner_id: userId,
+      progress,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'member_a,member_b,game,progress_day,owner_id' }
+  )
+  if (error) {
+    if (isMissingTable(error)) return
+    fail(error, '保存游戏进度')
   }
 }
 
