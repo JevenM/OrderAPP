@@ -138,6 +138,7 @@ import LoveTree from '../components/LoveTree'
 import ScratchTicket from '../components/ScratchTicket'
 import Star2048 from '../components/Star2048'
 import AnimalMatch from '../components/AnimalMatch'
+import WatermelonGame from '../components/WatermelonGame'
 import {
   LOVE_TREE_LOOKBACK,
   isDormantTree,
@@ -4458,6 +4459,7 @@ export default function CouplePage() {
             { id: 'scratch', icon: '🎫', title: '情侣刮刮乐', detail: '刮开卡片赢甜蜜奖励' },
             { id: 'star2048', icon: '✨', title: '星尘 2048', detail: '滑动合并方块' },
             { id: 'animalmatch', icon: '🐾', title: '动物世界消消乐', detail: '7 卡槽三消，多层堆叠' },
+            { id: 'bigwatermelon', icon: '🍉', title: '合成大西瓜', detail: '点击放水果，合出大西瓜' },
           ]}
           isEnabled={isEnabled}
           onSelect={setActiveModule}
@@ -6539,6 +6541,23 @@ export default function CouplePage() {
                 </p>
               </div>
               <AnimalMatch
+                myId={myId ?? ''}
+                friendId={friendId ?? ''}
+                names={{ [myId ?? '']: memberName, [friendId ?? '']: friendName }}
+              />
+            </section>
+          )}
+
+          {/* 🍉 合成大西瓜：点击放水果、同款相融合体，单机 */}
+          {activeModule === 'bigwatermelon' && (
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
+              <div>
+                <h3 className="font-semibold">🍉 合成大西瓜</h3>
+                <p className="mt-1 text-xs text-slate-400">
+                  点击屏幕放水果，两个同款相碰合成更大的，从小葡萄一路合到大西瓜；堆过警戒线就结束。
+                </p>
+              </div>
+              <WatermelonGame
                 myId={myId ?? ''}
                 friendId={friendId ?? ''}
                 names={{ [myId ?? '']: memberName, [friendId ?? '']: friendName }}

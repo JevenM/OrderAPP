@@ -19,9 +19,9 @@ interface Props {
   version: number
 }
 
-/** 时间列：消消乐只显示日期（11-10）；2048 带到秒（11-11 14:30:25）。
+/** 时间列：2048 带到秒（11-11 14:30:25）；其它游戏只显示日期（11-10）。
  *  紧凑数字格式、两位补零，保证等宽对齐 */
-function formatWhen(game: 'star2048' | 'animalmatch', iso: string): string {
+function formatWhen(game: 'star2048' | 'animalmatch' | 'bigwatermelon', iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   const p = (n: number) => String(n).padStart(2, '0')
@@ -107,7 +107,7 @@ export default function GameLeaderboard({ game, myId, friendId, names, version }
                 </span>
                 {/* 记录列：右对齐紧贴时间列（flex-1 拉出的空隙留在文字左侧），过长时截断省略 */}
                 <span className="min-w-0 flex-1 truncate text-center text-slate-400">{row.detail}</span>
-                {/* 时间列固定宽、字号略小、不换行；消消乐只显示日期，列宽更窄 */}
+                {/* 时间列固定宽、字号略小、不换行；2048 带秒更宽，其它游戏只显示日期 */}
                 <span
                   className={`shrink-0 whitespace-nowrap text-center text-[10px] tabular-nums text-slate-300 ${
                     game === 'star2048' ? 'w-[80px]' : 'w-[38px]'

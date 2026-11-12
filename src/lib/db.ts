@@ -2276,8 +2276,8 @@ export async function notifyScratchRevealed(recipient: string, senderName: strin
 
 /* ------------------------------ 离线小游戏成绩榜 ------------------------------ */
 
-/** 离线小游戏：星尘 2048 / 动物世界消消乐 */
-export type CoupleGameKey = 'star2048' | 'animalmatch'
+/** 离线小游戏：星尘 2048 / 动物世界消消乐 / 合成大西瓜 */
+export type CoupleGameKey = 'star2048' | 'animalmatch' | 'bigwatermelon'
 
 export interface CoupleGameScoreRow {
   id: string

@@ -47,7 +47,7 @@ const MAX_SIZE = 8
 /* ------------------------------ 防沉迷 ------------------------------ */
 
 /** 每天最多开这么多局；用完后完成大冒险任务、经伴侣确认，每确认一次多一局 */
-const DAILY_LIMIT = 8
+const DAILY_LIMIT = 6
 
 /** 本地日期 YYYY-MM-DD（不能用 toISOString，那是 UTC，东八区凌晨会差一天） */
 const dayKey = (): string => {
