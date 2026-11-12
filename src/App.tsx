@@ -121,10 +121,11 @@ function Shell() {
               {isAdmin && <Route path="/admin/couple-wishes" element={<AdminCoupleWishes />} />}
               {isAdmin && <Route path="/admin/couple-questions" element={<AdminCoupleQuestions />} />}
               {isAdmin && <Route path="/admin/couple-truth" element={<AdminCoupleTruthDare />} />}
-              <Route path="/admin/orders" element={<AdminOrders />} />
-              <Route path="/admin/meals" element={<AdminMeals />} />
-              <Route path="/admin/dishes" element={<AdminDishes />} />
-              <Route path="/admin/members" element={<AdminMembers />} />
+              {/* 这四个页面同样只给管理员：普通成员手输地址不该能看全员订单 / 成员邀请码 */}
+              {isAdmin && <Route path="/admin/orders" element={<AdminOrders />} />}
+              {isAdmin && <Route path="/admin/meals" element={<AdminMeals />} />}
+              {isAdmin && <Route path="/admin/dishes" element={<AdminDishes />} />}
+              {isAdmin && <Route path="/admin/members" element={<AdminMembers />} />}
               <Route path="*" element={<Navigate to={HOME[role]} replace />} />
             </Route>
           </Routes>

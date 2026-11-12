@@ -2291,6 +2291,18 @@ export interface CoupleGameScoreRow {
   created_at: string
 }
 
+/** 小游戏每日进度行（couple_game_progress）：防沉迷局数 / 关卡解锁 / 大西瓜盘面 */
+export interface CoupleGameProgressRow {
+  id: string
+  member_a: string
+  member_b: string
+  game: string
+  progress_day: string
+  owner_id: string
+  progress: Record<string, unknown>
+  updated_at: string
+}
+
 /**
  * 取一对情侣某个游戏的前 N 名：按分数降序，同分先打出的人排前面。
  * 表还没建时返回空数组 —— 排行榜缺数据不该把游戏本身搞崩。
@@ -2624,6 +2636,30 @@ export async function listAllCoupleScratch(limit = 200): Promise<CoupleScratchRo
   return (data ?? []) as CoupleScratchRow[]
 }
 
+/** 管理员：全部情侣的游戏成绩（2048 / 消消乐 / 合成大西瓜），按时间倒序 */
+export async function listAllCoupleGameScores(limit = 500): Promise<CoupleGameScoreRow[]> {
+  const { data, error } = await supabase.from('couple_game_scores').select('*').order('created_at', { ascending: false }).limit(limit)
+  if (error && !isMissingTable(error)) fail(error, '加载全部游戏成绩')
+  return (data ?? []) as CoupleGameScoreRow[]
+}
+
+export async function deleteCoupleGameScores(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { error } = await supabase.from('couple_game_scores').delete().in('id', ids)
+  if (error && !isMissingTable(error)) fail(error, '删除游戏成绩')
+}
+
+/** 管理员：全部情侣的小游戏每日进度（防沉迷局数 / 关卡解锁 / 大西瓜盘面），按更新时间倒序 */
+export async function listAllCoupleGameProgress(limit = 300): Promise<CoupleGameProgressRow[]> {
+  const { data, error } = await supabase
+    .from('couple_game_progress')
+    .select('*')
+    .order('updated_at', { ascending: false })
+    .limit(limit)
+  if (error && !isMissingTable(error)) fail(error, '加载全部游戏进度')
+  return (data ?? []) as CoupleGameProgressRow[]
+}
+
 export async function deleteCoupleTruthPrompts(ids: string[]): Promise<void> {
   if (!ids.length) return
   const { error } = await supabase.from('couple_truth_prompts').delete().in('id', ids)
@@ -2773,6 +2809,43 @@ export async function listOrders(limit = 60, memberId?: string | null): Promise<
     byOrder.set(it.order_id, arr)
   }
   return list.map((o) => ({ ...o, items: byOrder.get(o.id) ?? [] }))
+}
+
+/**
+ * 管理员订单页专用：状态 / 成员在服务端筛选 + 分页（page 从 0 开始），并返回总数。
+ * 之前只取最近 60 条再在前端筛状态，导致「已取消 / 已完成」的历史订单永远看不到。
+ */
+export async function listOrdersPage(opts: {
+  page: number
+  pageSize: number
+  memberId?: string | null
+  status?: OrderStatus | null
+}): Promise<{ rows: OrderWithItems[]; total: number }> {
+  const start = Math.max(0, opts.page) * opts.pageSize
+  let query = supabase.from('orders').select('*', { count: 'exact' })
+  if (opts.memberId) query = query.eq('member_id', opts.memberId)
+  if (opts.status) query = query.eq('status', opts.status)
+  const { data: orders, error, count } = await query
+    .order('created_at', { ascending: false })
+    .range(start, start + opts.pageSize - 1)
+  if (error) fail(error, '加载订单')
+
+  const list = (orders ?? []) as OrderWithItems[]
+  if (!list.length) return { rows: [], total: count ?? 0 }
+
+  const { data: items, error: e2 } = await supabase
+    .from('order_items')
+    .select('*')
+    .in('order_id', list.map((o) => o.id))
+  if (e2) fail(e2, '加载订单明细')
+
+  const byOrder = new Map<string, OrderWithItems['items']>()
+  for (const it of (items ?? []) as OrderWithItems['items']) {
+    const arr = byOrder.get(it.order_id) ?? []
+    arr.push(it)
+    byOrder.set(it.order_id, arr)
+  }
+  return { rows: list.map((o) => ({ ...o, items: byOrder.get(o.id) ?? [] })), total: count ?? list.length }
 }
 
 export async function setOrderStatus(id: string, status: OrderStatus): Promise<void> {

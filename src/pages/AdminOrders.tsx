@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { autoMealFromOrder, listOrders, markOrderRead, setOrderStatus } from '../lib/db'
+import { useCallback, useEffect, useState } from 'react'
+import { autoMealFromOrder, listOrdersPage, markOrderRead, setOrderStatus } from '../lib/db'
 import { timeCn } from '../lib/date'
 import { useRealtime } from '../lib/realtime'
 import { useToast } from '../components/Toast'
+import Pager from '../components/Pager'
 import { useUnread } from '../store/unread'
 import { useMembers } from '../store/members'
 import { useSession } from '../store/session'
@@ -16,32 +17,49 @@ const FILTERS: { key: 'all' | OrderStatus; label: string }[] = [
   { key: 'cancelled', label: '已取消' },
 ]
 
+/** 每页订单数：卡片不算高，比通用分页器的 10 条稍多一些 */
+const ORDERS_PAGE_SIZE = 20
+
 export default function AdminOrders() {
   const toast = useToast()
   const { refresh } = useUnread()
   const { members } = useMembers()
   const { memberId: viewMemberId } = useSession() // 顶部下拉切换到某个她时，只显示她的
   const [orders, setOrders] = useState<OrderWithItems[]>([])
+  const [total, setTotal] = useState(0)
   const [filter, setFilter] = useState<'all' | OrderStatus>('all')
   const [memberFilter, setMemberFilter] = useState(viewMemberId ?? '')
+  const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(true)
 
-  // 切换查看对象 → 成员筛选跟着变（回到管理视图时恢复成「全部成员」）
+  // 切换查看对象 → 成员筛选跟着变（回到管理视图时恢复成「全部成员」），并回到第一页
   useEffect(() => {
     setMemberFilter(viewMemberId ?? '')
+    setPage(0)
   }, [viewMemberId])
 
   const who = (id: string | null) => members.find((m) => m.id === id)?.name ?? '未归属'
 
+  // 状态 + 成员都在服务端筛选，页码也在服务端切片：历史订单再久也能翻到
   const load = useCallback(async () => {
     try {
-      setOrders(await listOrders(60, memberFilter || null))
+      const res = await listOrdersPage({
+        page,
+        pageSize: ORDERS_PAGE_SIZE,
+        memberId: memberFilter || null,
+        status: filter === 'all' ? null : filter,
+      })
+      setOrders(res.rows)
+      setTotal(res.total)
+      // 删改后总页数可能变少，页码越界就退回最后一页
+      const lastPage = Math.max(0, Math.ceil(res.total / ORDERS_PAGE_SIZE) - 1)
+      if (page > lastPage) setPage(lastPage)
     } catch (e) {
       toast.show((e as Error).message, 'err')
     } finally {
       setLoading(false)
     }
-  }, [toast, memberFilter])
+  }, [toast, memberFilter, filter, page])
 
   useEffect(() => {
     void load()
@@ -67,11 +85,6 @@ export default function AdminOrders() {
     }, 1500)
     return () => window.clearTimeout(t)
   }, [orders, refresh])
-
-  const list = useMemo(
-    () => (filter === 'all' ? orders : orders.filter((o) => o.status === filter)),
-    [orders, filter]
-  )
 
   const act = async (id: string, status: OrderStatus) => {
     try {
@@ -110,7 +123,7 @@ export default function AdminOrders() {
         {FILTERS.map((f) => (
           <button
             key={f.key}
-            onClick={() => setFilter(f.key)}
+            onClick={() => { setFilter(f.key); setPage(0) }}
             className={`chip whitespace-nowrap ${
               filter === f.key ? 'border-brand-400 bg-brand-50 text-brand-600' : 'border-slate-200 text-slate-400'
             }`}
@@ -121,9 +134,9 @@ export default function AdminOrders() {
       </div>
 
       {loading && <p className="py-10 text-center text-sm text-slate-400">加载中…</p>}
-      {!loading && list.length === 0 && <p className="py-10 text-center text-sm text-slate-400">还没有订单</p>}
+      {!loading && orders.length === 0 && <p className="py-10 text-center text-sm text-slate-400">还没有订单</p>}
 
-      {list.map((o) => (
+      {orders.map((o) => (
         <div key={o.id} className={`card space-y-2 ${!o.read_at ? 'ring-2 ring-brand-200' : ''}`}>
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs text-slate-400">
@@ -171,6 +184,8 @@ export default function AdminOrders() {
           </div>
         </div>
       ))}
+
+      <Pager page={page} total={total} pageSize={ORDERS_PAGE_SIZE} onChange={setPage} />
     </div>
   )
 }

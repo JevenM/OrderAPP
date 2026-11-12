@@ -118,17 +118,24 @@ export default function AdminCoupleModules() {
 
       <section className="card space-y-3">
         <h3 className="text-sm font-semibold text-slate-700">📅 重要日倒计时（{countdowns.length} 对）</h3>
-        {countdowns.length === 0 ? <p className="text-xs text-slate-400">暂无倒计时</p> : countdowns.map((row) => (
-          <div key={`${row.member_a}-${row.member_b}`} className="rounded-xl bg-slate-50 p-3 text-xs">
-            <div className="font-medium text-slate-700">{pairLabel(row.member_a, row.member_b)}</div>
-            <div className="mt-1 text-slate-500">{row.state.items.length} 个日期 · 最近更新 {fmt(row.updated_at)}</div>
-            <div className="mt-2 space-y-1 text-slate-600">{row.state.items.map((item) => <div key={item.id}>{item.emoji ?? '📅'} {item.title} · {item.date}</div>)}</div>
-          </div>
-        ))}
+        {countdowns.length === 0 ? <p className="text-xs text-slate-400">暂无倒计时</p> : countdowns.map((row) => {
+          // jsonb 是裸存的，历史数据可能缺字段：取不到就按空数组渲染，别让整个页面崩掉
+          const items = row.state?.items ?? []
+          return (
+            <div key={`${row.member_a}-${row.member_b}`} className="rounded-xl bg-slate-50 p-3 text-xs">
+              <div className="font-medium text-slate-700">{pairLabel(row.member_a, row.member_b)}</div>
+              <div className="mt-1 text-slate-500">{items.length} 个日期 · 最近更新 {fmt(row.updated_at)}</div>
+              <div className="mt-2 space-y-1 text-slate-600">{items.map((item) => <div key={item.id}>{item.emoji ?? '📅'} {item.title} · {item.date}</div>)}</div>
+            </div>
+          )
+        })}
       </section>
 
       <section className="card space-y-3">
-        <h3 className="text-sm font-semibold text-slate-700">🎫 刮刮乐状态（{scratches.length} 对）</h3>
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="text-sm font-semibold text-slate-700">🎫 刮刮乐状态（{scratches.length} 对）</h3>
+          <span className="chip shrink-0 border-slate-200 bg-white text-[10px] text-slate-400">历史见「互动数据管理」</span>
+        </div>
         {scratches.length === 0 ? <p className="text-xs text-slate-400">暂无刮刮乐记录</p> : scratches.map((row) => (
           <div key={`${row.member_a}-${row.member_b}`} className="rounded-xl bg-slate-50 p-3 text-xs">
             <div className="font-medium text-slate-700">{pairLabel(row.member_a, row.member_b)} · {fmt(row.updated_at)}</div>

@@ -4436,30 +4436,61 @@ export default function CouplePage() {
       )}
 
       {!activeModule ? (
+        /* 互动模块按分类分组：模块多了以后平铺要下拉很久，切成五段好找也好认 */
         <CoupleModuleGrid
-          modules={[
-            { id: 'love', icon: '💌', title: '今日情话', detail: loveUnlocked ? '今日已解锁' : '完成三餐打卡解锁' },
-            { id: 'wish', icon: '🎁', title: '秘密心愿', detail: `${gridCounts.wishes} 个心愿` },
-            { id: 'chat', icon: '💬', title: '甜蜜留言', detail: `${gridCounts.messages} 条留言` },
-            { id: 'quiz', icon: '💞', title: '同步抉择', detail: `已做 ${gridCounts.quizDone}/${quizTotalQuestions.length} 题` },
-            { id: 'truth', icon: '🎲', title: '真心话大冒险', detail: `已答 ${gridCounts.truthDone}/${truthPromptPool.length} 题` },
-            { id: 'board', icon: '🎯', title: '情侣飞行棋', detail: '联网轮流掷骰对战' },
-            { id: 'mines', icon: '💣', title: '情侣扫雷', detail: '轮流拆雷，踩雷做任务' },
-            { id: 'wufu', icon: '♟️', title: '摆方五福棋', detail: '摆子提子走子，吃到剩2子' },
-            { id: 'gomoku', icon: '⚫', title: '情侣五子棋', detail: '联网轮流落子，五连获胜' },
-            { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分' },
-            { id: 'dice', icon: '🎲', title: '骰子比大小', detail: '骰子押大小，围骰庄家通吃' },
-            { id: 'countdown', icon: '⏳', title: '重要日倒计时', detail: '倒数还有多少天' },
+          sections={[
             {
-              id: 'wedding',
-              icon: '💍',
-              title: '备婚流程',
-              detail: weddingDoneCount ? `已完成 ${weddingDoneCount}/${WEDDING_TOTAL} 步` : `从定心意到结完婚共 ${WEDDING_TOTAL} 步`,
+              icon: '💕',
+              title: '情感交流',
+              modules: [
+                { id: 'love', icon: '💌', title: '今日情话', detail: loveUnlocked ? '今日已解锁' : '完成三餐打卡解锁' },
+                { id: 'chat', icon: '💬', title: '甜蜜留言', detail: `${gridCounts.messages} 条留言` },
+                { id: 'wish', icon: '🎁', title: '秘密心愿', detail: `${gridCounts.wishes} 个心愿` },
+              ],
             },
-            { id: 'scratch', icon: '🎫', title: '情侣刮刮乐', detail: '刮开卡片赢甜蜜奖励' },
-            { id: 'star2048', icon: '✨', title: '星尘 2048', detail: '滑动合并方块' },
-            { id: 'animalmatch', icon: '🐾', title: '动物世界消消乐', detail: '7 卡槽三消，多层堆叠' },
-            { id: 'bigwatermelon', icon: '🍉', title: '合成大西瓜', detail: '点击放水果，合出大西瓜' },
+            {
+              icon: '❓',
+              title: '文字问答',
+              modules: [
+                { id: 'quiz', icon: '💞', title: '同步抉择', detail: `已做 ${gridCounts.quizDone}/${quizTotalQuestions.length} 题` },
+                { id: 'truth', icon: '🎲', title: '真心话大冒险', detail: `已答 ${gridCounts.truthDone}/${truthPromptPool.length} 题` },
+              ],
+            },
+            {
+              icon: '🎮',
+              title: '双人游戏',
+              modules: [
+                { id: 'board', icon: '🎯', title: '情侣飞行棋', detail: '联网轮流掷骰对战' },
+                { id: 'mines', icon: '💣', title: '情侣扫雷', detail: '轮流拆雷，踩雷做任务' },
+                { id: 'wufu', icon: '♟️', title: '摆方五福棋', detail: '摆子提子走子，吃到剩2子' },
+                { id: 'gomoku', icon: '⚫', title: '情侣五子棋', detail: '联网轮流落子，五连获胜' },
+                { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分' },
+                { id: 'dice', icon: '🎲', title: '骰子比大小', detail: '骰子押大小，围骰庄家通吃' },
+              ],
+            },
+            {
+              icon: '🕹️',
+              title: '单机小游戏',
+              modules: [
+                { id: 'scratch', icon: '🎫', title: '情侣刮刮乐', detail: '刮开卡片赢甜蜜奖励' },
+                { id: 'star2048', icon: '✨', title: '星尘 2048', detail: '滑动合并方块' },
+                { id: 'animalmatch', icon: '🐾', title: '动物世界消消乐', detail: '7 卡槽三消，多层堆叠' },
+                { id: 'bigwatermelon', icon: '🍈', title: '合成大西瓜', detail: '点击放水果，合出大西瓜' },
+              ],
+            },
+            {
+              icon: '📅',
+              title: '流程日程',
+              modules: [
+                { id: 'countdown', icon: '⏳', title: '重要日倒计时', detail: '倒数还有多少天' },
+                {
+                  id: 'wedding',
+                  icon: '💍',
+                  title: '备婚流程',
+                  detail: weddingDoneCount ? `已完成 ${weddingDoneCount}/${WEDDING_TOTAL} 步` : `从定心意到结完婚共 ${WEDDING_TOTAL} 步`,
+                },
+              ],
+            },
           ]}
           isEnabled={isEnabled}
           onSelect={setActiveModule}
@@ -6552,7 +6583,7 @@ export default function CouplePage() {
           {activeModule === 'bigwatermelon' && (
             <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
               <div>
-                <h3 className="font-semibold">🍉 合成大西瓜</h3>
+                <h3 className="font-semibold">🍈 合成大西瓜</h3>
                 <p className="mt-1 text-xs text-slate-400">
                   点击屏幕放水果，一路合到大西瓜。
                 </p>

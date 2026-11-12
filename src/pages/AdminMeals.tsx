@@ -329,12 +329,13 @@ export default function AdminMeals() {
             </button>
           ))}
         </div>
+        {/* 文案跟随当前浏览的日期：可以左右切到历史日期，写死「今天」会对不上 */}
         <p className="text-[11px] text-slate-400">
           {records.filter((m) => m.status === 'skipped').length > 0
-            ? '⚠️ 今天有一餐没吃，记得关心一下'
+            ? '⚠️ 这一天的记录里有没吃的一餐，记得关心一下'
             : records.length === 0
-              ? '今天还没有任何记录'
-              : '✅ 今天三餐都有记录'}
+              ? `${day === todayStr() ? '今天' : day} 还没有任何记录`
+              : `✅ ${day === todayStr() ? '今天' : day} 有记录（共 ${records.length} 条）`}
         </p>
       </div>
     </div>

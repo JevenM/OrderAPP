@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Pager from '../components/Pager'
 import { useToast } from '../components/Toast'
 import { deleteCoupleQuizBankQuestion, listAllFriendships, listCoupleQuizBank, listCoupleQuizPairQuestions, saveCoupleQuizBankQuestion, saveCoupleQuizPairQuestions, setCoupleQuizBankQuestionEnabled, type CoupleQuizBankRow } from '../lib/db'
@@ -25,6 +25,9 @@ export default function AdminCoupleQuestions() {
   const [pickPage, setPickPage] = useState(0)
 
   const memberNames = useMemo(() => new Map(members.map((member) => [member.id, member.name])), [members])
+  /* 题库最新值放在 ref 里：切换情侣对时算默认题池要用它，但不希望题库刷新触发题池重载（会覆盖未保存的勾选） */
+  const questionsRef = useRef(questions)
+  questionsRef.current = questions
   const pair = pairs.find((item) => `${item.a}|${item.b}` === selectedPair)
   const visibleQuestions = useMemo(() => {
     const normalized = filter.trim().toLocaleLowerCase()
@@ -63,17 +66,20 @@ export default function AdminCoupleQuestions() {
   useEffect(() => { void reloadQuestions() }, [reloadQuestions])
   useEffect(() => { void reloadPairs() }, [reloadPairs])
 
+  // 只在「切换情侣对」时拉该对题池。之前依赖里带了 questions，保存题目 / 启停题目都会触发重载，
+  // 把管理员刚勾好还没保存的选择直接冲掉。
   useEffect(() => {
     if (!pair) return
     let active = true
     void listCoupleQuizPairQuestions(pair.a, pair.b).then((rows) => {
       if (!active) return
+      const enabledIds = questionsRef.current.filter((question) => question.enabled).map((question) => question.id)
       const configuredIds = rows[0]?.question_ids
-      setUsesDefaultPool(!configuredIds?.length || (configuredIds.length === questions.filter((question) => question.enabled).length && questions.filter((question) => question.enabled).every((question) => configuredIds.includes(question.id))))
-      setSelectedIds(new Set(configuredIds?.length ? configuredIds : questions.filter((question) => question.enabled).map((question) => question.id)))
+      setUsesDefaultPool(!configuredIds?.length || (configuredIds.length === enabledIds.length && enabledIds.every((id) => configuredIds.includes(id))))
+      setSelectedIds(new Set(configuredIds?.length ? configuredIds : enabledIds))
     }).catch((error) => toast.show((error as Error).message, 'err'))
     return () => { active = false }
-  }, [pair?.a, pair?.b, questions, toast])
+  }, [pair?.a, pair?.b, toast])
 
   const openNew = () => {
     setEditing({ ...EMPTY })
@@ -131,7 +137,9 @@ export default function AdminCoupleQuestions() {
     setSaving(true)
     try {
       await saveCoupleQuizPairQuestions(pair.a, pair.b, [...selectedIds])
-      setUsesDefaultPool(false)
+      // 勾选的内容刚好等于「全部启用题目」时，按默认题池展示（和重新进页面时的判断保持一致）
+      const enabledIds = questionsRef.current.filter((question) => question.enabled).map((question) => question.id)
+      setUsesDefaultPool(selectedIds.size === enabledIds.length && enabledIds.every((id) => selectedIds.has(id)))
       toast.show(`已保存「${pair.label}」的 ${selectedIds.size} 道可抽题目`)
     } catch (error) {
       toast.show((error as Error).message, 'err')
@@ -179,8 +187,17 @@ export default function AdminCoupleQuestions() {
         </select>
         {pair && <>
           <div className="flex items-center justify-between gap-2 rounded-xl bg-brand-50 px-3 py-2 text-xs text-brand-700">
-            <span>{usesDefaultPool ? '当前使用全部启用题目' : `当前自定义题池：${selectedIds.size} 道`}</span>
-            {<button className="underline" disabled={saving} onClick={() => void useGlobalPool()}>{usesDefaultPool ? '应用勾选项' : '恢复全部启用题目'}</button>}
+            <span>
+              {usesDefaultPool
+                ? '当前使用全部启用题目（勾选后点下方保存即可自定义）'
+                : `当前自定义题池：${selectedIds.size} 道`}
+            </span>
+            {/* 只有在自定义题池时才需要「恢复」；原来这里写着「应用勾选项」却调恢复全局，按钮行为和文案对不上 */}
+            {!usesDefaultPool && (
+              <button className="shrink-0 underline" disabled={saving} onClick={() => void useGlobalPool()}>
+                恢复全部启用题目
+              </button>
+            )}
           </div>
           <div className="space-y-2">
             {questions.slice(safePickPage * PICK_PAGE_SIZE, (safePickPage + 1) * PICK_PAGE_SIZE).map((question) => (

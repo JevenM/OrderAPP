@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Pager from '../components/Pager'
 import { exportCoupleQuizHistoryCsv, exportCoupleQuizHistoryJson, type CoupleQuizHistoryExportRow } from '../lib/export'
 import { listAllCoupleQuizHistory, listAllFriendships, type CoupleQuizHistoryRow } from '../lib/db'
 import { useToast } from '../components/Toast'
+
+/** 每页答题记录条数 */
+const HISTORY_PAGE_SIZE = 10
 import { useMembers } from '../store/members'
 
 export default function AdminCoupleHistory() {
@@ -12,6 +16,7 @@ export default function AdminCoupleHistory() {
   const [pair, setPair] = useState('all')
   const [status, setStatus] = useState<'all' | 'revealed' | 'answering'>('all')
   const [loading, setLoading] = useState(true)
+  const [page, setPage] = useState(0)
 
   const memberById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members])
   const pairs = useMemo(() => {
@@ -29,6 +34,10 @@ export default function AdminCoupleHistory() {
     () => rows.filter((row) => (pair === 'all' || `${row.member_a}|${row.member_b}` === pair) && (status === 'all' || row.status === status)),
     [rows, pair, status]
   )
+  /* 分页：答题记录会一直累积，不能一次全渲染（手机上几百条会明显卡） */
+  const pages = Math.max(1, Math.ceil(filtered.length / HISTORY_PAGE_SIZE))
+  const safePage = Math.min(Math.max(page, 0), pages - 1)
+  const pagedRows = filtered.slice(safePage * HISTORY_PAGE_SIZE, (safePage + 1) * HISTORY_PAGE_SIZE)
   const exportRows = useMemo<CoupleQuizHistoryExportRow[]>(
     () => filtered.map((row) => ({
       ...row,
@@ -69,11 +78,11 @@ export default function AdminCoupleHistory() {
           <span className="chip shrink-0 border-brand-200 bg-brand-50 text-brand-600">管理员</span>
         </div>
         <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
-          <select className="input" value={pair} onChange={(e) => setPair(e.target.value)} disabled={membersLoading}>
+          <select className="input" value={pair} onChange={(e) => { setPair(e.target.value); setPage(0) }} disabled={membersLoading}>
             <option value="all">全部情侣对</option>
             {pairs.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
           </select>
-          <select className="input" value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
+          <select className="input" value={status} onChange={(e) => { setStatus(e.target.value as typeof status); setPage(0) }}>
             <option value="all">全部状态</option>
             <option value="revealed">已揭晓</option>
             <option value="answering">进行中</option>
@@ -93,7 +102,7 @@ export default function AdminCoupleHistory() {
         </div>
         {loading && <p className="py-6 text-center text-sm text-slate-400">加载中…</p>}
         {!loading && !filtered.length && <p className="py-6 text-center text-sm text-slate-400">暂无符合条件的答题记录</p>}
-        {!loading && filtered.map((row) => {
+        {!loading && pagedRows.map((row) => {
           const a = memberById.get(row.member_a)?.name ?? '未知成员'
           const b = memberById.get(row.member_b)?.name ?? '未知成员'
           return (
@@ -115,6 +124,8 @@ export default function AdminCoupleHistory() {
             </article>
           )
         })}
+
+        <Pager page={safePage} total={filtered.length} pageSize={HISTORY_PAGE_SIZE} onChange={setPage} />
       </section>
     </div>
   )

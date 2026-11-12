@@ -40,6 +40,13 @@ export default function AdminMembers() {
     setMyName(adminName)
   }, [adminName])
 
+  // 进页面就拉一次成员清单：之前只在增删改之后才刷新，首次进入会一直卡在「加载中…」
+  useEffect(() => {
+    void reload()
+    // reload 只依赖 toast（稳定），挂载时执行一次即可
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const saveMyName = async () => {
     const n = myName.trim()
     if (!n) return toast.show('给自己起个昵称吧～', 'err')

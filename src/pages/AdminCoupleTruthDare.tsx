@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { deleteCoupleTruthDare, listAllCoupleTruthDare, listAllFriendships, type CoupleTruthDareRow } from '../lib/db'
+import Pager from '../components/Pager'
 import { useToast } from '../components/Toast'
 import { useMembers } from '../store/members'
+
+/** 每页记录条数：抽题记录会一直累积，一页 10 条避免手机上几百条一起渲染 */
+const TRUTH_PAGE_SIZE = 10
 
 /** 管理员查看 / 管理每对情侣玩过的真心话大冒险题目与答案：多选、批量删除、导出 */
 export default function AdminCoupleTruthDare() {
@@ -16,6 +20,7 @@ export default function AdminCoupleTruthDare() {
   /** 多选模式 + 选中的记录 id */
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [page, setPage] = useState(0)
 
   const memberById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members])
   const pairs = useMemo(() => {
@@ -37,6 +42,11 @@ export default function AdminCoupleTruthDare() {
     [rows, pair, type]
   )
   const selectedFiltered = useMemo(() => filtered.filter((row) => selected.has(row.id)), [filtered, selected])
+
+  /* 分页：切片后渲染，「全选本页」也按当前页算 */
+  const pages = Math.max(1, Math.ceil(filtered.length / TRUTH_PAGE_SIZE))
+  const safePage = Math.min(Math.max(page, 0), pages - 1)
+  const pagedRows = filtered.slice(safePage * TRUTH_PAGE_SIZE, (safePage + 1) * TRUTH_PAGE_SIZE)
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -75,7 +85,7 @@ export default function AdminCoupleTruthDare() {
   }
 
   const toggleSelectAll = () => {
-    setSelected((current) => (current.size === filtered.length ? new Set() : new Set(filtered.map((r) => r.id))))
+    setSelected((current) => (pagedRows.every((r) => current.has(r.id)) ? new Set() : new Set(pagedRows.map((r) => r.id))))
   }
 
   const exitSelect = () => {
@@ -143,7 +153,7 @@ export default function AdminCoupleTruthDare() {
           <span className="chip shrink-0 border-brand-200 bg-brand-50 text-brand-600">管理员</span>
         </div>
         <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
-          <select className="input" value={pair} onChange={(e) => setPair(e.target.value)} disabled={membersLoading}>
+          <select className="input" value={pair} onChange={(e) => { setPair(e.target.value); setPage(0) }} disabled={membersLoading}>
             <option value="all">全部情侣对</option>
             {pairs.map((item) => (
               <option key={item.key} value={item.key}>
@@ -151,7 +161,7 @@ export default function AdminCoupleTruthDare() {
               </option>
             ))}
           </select>
-          <select className="input" value={type} onChange={(e) => setType(e.target.value as typeof type)}>
+          <select className="input" value={type} onChange={(e) => { setType(e.target.value as typeof type); setPage(0) }}>
             <option value="all">全部类型</option>
             <option value="truth">真心话</option>
             <option value="dare">大冒险</option>
@@ -196,7 +206,7 @@ export default function AdminCoupleTruthDare() {
         {loading && <p className="py-6 text-center text-sm text-slate-400">加载中…</p>}
         {!loading && !filtered.length && <p className="py-6 text-center text-sm text-slate-400">暂无符合条件的记录</p>}
         {!loading &&
-          filtered.map((row) => {
+          pagedRows.map((row) => {
             const a = memberById.get(row.member_a)?.name ?? '未知成员'
             const b = memberById.get(row.member_b)?.name ?? '未知成员'
             const sender = memberById.get(row.sender_id)?.name ?? row.sender_name ?? '未知成员'
@@ -235,6 +245,8 @@ export default function AdminCoupleTruthDare() {
               </article>
             )
           })}
+
+        <Pager page={safePage} total={filtered.length} pageSize={TRUTH_PAGE_SIZE} onChange={setPage} />
       </section>
     </div>
   )

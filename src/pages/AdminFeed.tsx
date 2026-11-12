@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Avatar from '../components/Avatar'
+import Pager from '../components/Pager'
 import { useToast } from '../components/Toast'
 import { deletePosts, listPostsAdmin, removeComment, updatePostContent } from '../lib/db'
 import { exportTableCsv, exportTableJson } from '../lib/export'
 import { SLOT_LABEL, type PostWithMeta } from '../lib/types'
 import { todayStr } from '../lib/date'
 import { useMembers } from '../store/members'
+
+/** 动态卡片较高，一页 10 条；列表不滚动，翻页查看（苹果设备内部滚动条划不动） */
+const FEED_PAGE_SIZE = 10
 
 /** 管理员饭圈动态管理：按日期范围 / 成员 / 关键词筛选，支持查看、编辑、删除与批量删除、导出 */
 export default function AdminFeed() {
@@ -14,6 +18,12 @@ export default function AdminFeed() {
   const [rows, setRows] = useState<PostWithMeta[]>([])
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState(false)
+  const [page, setPage] = useState(0)
+
+  /* 分页：数据攒多了不能一次全渲染，切片交给 Pager */
+  const pages = Math.max(1, Math.ceil(rows.length / FEED_PAGE_SIZE))
+  const safePage = Math.min(Math.max(page, 0), pages - 1)
+  const pagedRows = rows.slice(safePage * FEED_PAGE_SIZE, (safePage + 1) * FEED_PAGE_SIZE)
 
   /* 筛选条件 */
   const [from, setFrom] = useState('')
@@ -63,8 +73,9 @@ export default function AdminFeed() {
       return next
     })
 
+  /** 全选 / 取消全选只作用于当前页，避免一勾就把几百条都选上 */
   const toggleSelectAll = () =>
-    setSelected((prev) => (prev.size === rows.length ? new Set() : new Set(rows.map((row) => row.id))))
+    setSelected((prev) => (pagedRows.every((row) => prev.has(row.id)) ? new Set() : new Set(pagedRows.map((row) => row.id))))
 
   const removeSelected = async () => {
     if (!selected.size) return
@@ -201,11 +212,12 @@ export default function AdminFeed() {
         </div>
 
         <div className="flex flex-col gap-2 min-[420px]:flex-row">
-          <button className="btn-soft flex-1" onClick={() => void reload()} disabled={loading}>
+          <button className="btn-soft flex-1" onClick={() => { setPage(0); void reload() }} disabled={loading}>
             {loading ? '加载中…' : '按条件查询'}
           </button>
           <button className="btn-soft flex-1" onClick={exportCsv} disabled={!rows.length}>导出 CSV</button>
-          <button className="btn-soft flex-1" onClick={() => exportTableJson(`饭圈动态-${todayStr()}.json`, rows)} disabled={!rows.length}>
+          {/* 文件名与 CSV 保持同一套筛选条件，一眼能对上 */}
+          <button className="btn-soft flex-1" onClick={() => exportTableJson(`饭圈动态-${from || '全部'}_${to || '全部'}.json`, rows)} disabled={!rows.length}>
             导出 JSON
           </button>
         </div>
@@ -223,7 +235,7 @@ export default function AdminFeed() {
           {selectMode && (
             <>
               <button className="btn-ghost px-2 py-1 text-xs" onClick={toggleSelectAll}>
-                {selected.size === rows.length && rows.length ? '取消全选' : '全选'}
+                {pagedRows.length && pagedRows.every((row) => selected.has(row.id)) ? '取消全选本页' : '全选本页'}
               </button>
               <button className="btn-ghost px-2 py-1 text-xs text-rose-500" disabled={!selected.size || deleting} onClick={() => void removeSelected()}>
                 {deleting ? '删除中…' : `🗑 删除选中(${selected.size})`}
@@ -247,7 +259,7 @@ export default function AdminFeed() {
         {!loading && !rows.length && <p className="py-6 text-center text-sm text-slate-400">暂无符合条件的动态</p>}
 
         {!loading &&
-          rows.map((post) => {
+          pagedRows.map((post) => {
             const name = nameOf(post.member_id)
             return (
               <article
@@ -326,6 +338,8 @@ export default function AdminFeed() {
               </article>
             )
           })}
+
+        <Pager page={safePage} total={rows.length} pageSize={FEED_PAGE_SIZE} onChange={setPage} />
       </section>
     </div>
   )
