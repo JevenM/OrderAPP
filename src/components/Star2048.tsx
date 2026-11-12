@@ -283,6 +283,9 @@ export default function Star2048({ myId, friendId, names }: Props) {
 
   /** 远端局数是否已恢复完成：恢复前不写远端，防止初始值 0 把已有进度覆盖掉 */
   const playsReadyRef = useRef(false)
+  /** 最新局数放在 ref：远端写失败后的延迟重试要拿到当前值 */
+  const playsRef = useRef(playsUsed)
+  playsRef.current = playsUsed
   /** 撤销用的快照：只在最近一步有效 */
   const snapshotRef = useRef<Snapshot | null>(null)
   /** 2048 的胜利提示只弹一次，之后可以继续往大合 */
@@ -299,17 +302,23 @@ export default function Star2048({ myId, friendId, names }: Props) {
 
   // 当日局数持久化：本地缓存 + 远端双写（远端解决退出登录 / 清缓存后次数归零的问题）
   useEffect(() => {
+    // 没有身份不写（会写到 null key 下，登录后读不回来）；远端恢复完成前也不写——
+    // 恢复期间 playsUsed 还是初始值（可能是 0），这时写本地/远端都会把今天的进度覆盖没
+    if (!myId || !friendId || !playsReadyRef.current) return
     try {
       localStorage.setItem(playsKeyFor(myId), JSON.stringify({ day: dayKey(), count: playsUsed }))
     } catch {
       // 写不进去就本次会话内生效
     }
-    if (!playsReadyRef.current || !myId || !friendId) return
-    void saveCoupleGameProgress({ userId: myId, friendId, game: 'star2048', day: dayKey(), progress: { playsUsed } }).catch(
-      () => {
-        // 远端写失败不影响游戏，下一局开始时会再写
-      }
-    )
+    const savePlays = (count: number) =>
+      saveCoupleGameProgress({ userId: myId, friendId, game: 'star2048', day: dayKey(), progress: { playsUsed: count } })
+    void savePlays(playsUsed).catch((error) => {
+      // 写失败不能静默丢进度：3 秒后用最新局数重试一次，玩完直接退出页面时最后一局也能存上
+      console.warn('保存防沉迷局数失败，稍后重试', error)
+      window.setTimeout(() => {
+        void savePlays(playsRef.current).catch(() => {})
+      }, 3000)
+    })
   }, [playsUsed, myId, friendId])
 
   // 远端恢复：重新登录 / 换设备后，把今天的局数从数据库找回来
@@ -321,7 +330,19 @@ export default function Star2048({ myId, friendId, names }: Props) {
         if (remote > 0) setPlaysUsed((c) => Math.max(c, remote))
       })
       .catch(() => {
-        // 拉不到就用本地缓存
+        // 拉不到不能直接当 0 用完（ready=false 已挡住写入）：隔 1.5 秒重试一次，
+        // 重试也失败才放行——之后玩的第一局写入会覆盖远端，但至少本地缓存还在
+        window.setTimeout(() => {
+          getCoupleGameProgress(myId, friendId, 'star2048', dayKey())
+            .then((p) => {
+              const remote = typeof p?.playsUsed === 'number' ? Math.round(p.playsUsed) : 0
+              if (remote > 0) setPlaysUsed((c) => Math.max(c, remote))
+            })
+            .catch(() => {})
+            .finally(() => {
+              playsReadyRef.current = true
+            })
+        }, 1500)
       })
       .finally(() => {
         playsReadyRef.current = true

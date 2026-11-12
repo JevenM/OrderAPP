@@ -2513,12 +2513,15 @@ export async function getCoupleGameProgress(
     .eq('game', game)
     .eq('progress_day', day)
     .eq('owner_id', userId)
-    .maybeSingle()
+    // 不用 maybeSingle：历史上竞态插入可能留下重复行，多行会让 maybeSingle 直接报错，
+    // 进度就永远恢复不了（2048 防沉迷局数「晚上变 0」的帮凶之一）；取最新一条
+    .order('updated_at', { ascending: false })
+    .limit(1)
   if (error) {
     if (isMissingTable(error)) return null
     fail(error, '加载游戏进度')
   }
-  return ((data as { progress: Record<string, unknown> } | null)?.progress ?? null)
+  return ((data?.[0] as { progress: Record<string, unknown> } | undefined)?.progress ?? null)
 }
 
 /** 保存小游戏进度：按「情侣对 + 游戏 + 日期 + 用户」幂等覆盖，重复写也无副作用 */
@@ -2532,22 +2535,44 @@ export async function saveCoupleGameProgress(input: {
   const { userId, friendId, game, day, progress } = input
   if (!userId || !friendId || userId === friendId) return
   const [memberA, memberB] = couplePair(userId, friendId)
-  const { error } = await supabase.from('couple_game_progress').upsert(
-    {
-      member_a: memberA,
-      member_b: memberB,
-      game,
-      progress_day: day,
-      owner_id: userId,
-      progress,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'member_a,member_b,game,progress_day,owner_id' }
-  )
-  if (error) {
+  const key = { member_a: memberA, member_b: memberB, game, progress_day: day, owner_id: userId }
+  const payload = { ...key, progress, updated_at: new Date().toISOString() }
+  // 之前用 upsert + onConflict(五列)，要求表上真有这五列的唯一约束——约束不存在时
+  // 整条写入直接报错（2048 防沉迷局数就从来没存上过）；改成先查后写，两种表结构都可靠
+  const { data: existing, error: selError } = await supabase
+    .from('couple_game_progress')
+    .select('id')
+    .match(key)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+  if (selError) {
+    if (isMissingTable(selError)) return
+    fail(selError, '查询游戏进度')
+  }
+  const rowId = (existing?.[0] as { id: string } | undefined)?.id
+  if (rowId) {
+    const { error } = await supabase.from('couple_game_progress').update(payload).eq('id', rowId)
+    if (error) fail(error, '保存游戏进度')
+    return
+  }
+  const { error } = await supabase.from('couple_game_progress').insert(payload)
+  if (!error) return
+  // 两个端同时首写、且表上恰好有唯一约束时会撞唯一冲突：改成按 key 更新兜底
+  if ((error as { code?: string }).code !== '23505') {
     if (isMissingTable(error)) return
     fail(error, '保存游戏进度')
+    return
   }
+  const { data: again, error: selError2 } = await supabase
+    .from('couple_game_progress')
+    .select('id')
+    .match(key)
+    .limit(1)
+  if (selError2) fail(selError2, '查询游戏进度')
+  const id2 = (again?.[0] as { id: string } | undefined)?.id
+  if (!id2) return
+  const { error: updError } = await supabase.from('couple_game_progress').update(payload).eq('id', id2)
+  if (updError) fail(updError, '保存游戏进度')
 }
 
 /* --------------------------- 防沉迷加时申请 --------------------------- */
