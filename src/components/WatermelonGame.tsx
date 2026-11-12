@@ -760,9 +760,12 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
     dirtyRef.current = true
   }
 
-  /** 重新开始：先把当前成绩记入排行榜（结束弹窗里的成绩已由 endGame 上报过），再清场开新一局 */
+  /**
+   * 重新开始：只清场，不上报成绩——
+   * 结束那一局的成绩已经在 endGame 里记入排行榜，中途 / 结束后点重开都不再补报，
+   * 避免同一局的成绩被记两次、或者没打完的分也上榜。
+   */
   const restart = useCallback(() => {
-    if (!overRef.current) reportScore(Math.round(scoreRef.current))
     fruitsRef.current = []
     scoreRef.current = 0
     dangerRef.current = 0
@@ -777,7 +780,6 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
     setOver(false)
     dirtyRef.current = true
     persistState(true)
-    // reportScore 用到组件内的闭包变量（myId/friendId），声明提升保证拿到最新渲染的值
   }, [persistState])
 
   useEffect(() => subscribeSfx(() => setSfxOn(sfxEnabled())), [])

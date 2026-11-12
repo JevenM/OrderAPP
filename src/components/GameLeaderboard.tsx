@@ -1,18 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { game2048SizeOf, listCoupleGameScores, type CoupleGameKey, type CoupleGameScoreRow } from '../lib/db'
+import {
+  game2048SizeOf,
+  listCoupleGame2048Board,
+  listCoupleGameScores,
+  type CoupleGameKey,
+  type CoupleGameScoreRow,
+} from '../lib/db'
 import { POLL, useRealtime } from '../lib/realtime'
 
 /**
  * 情侣小游戏成绩榜：三个离线游戏共用。
- * - 2048：按棋盘难度（3×3 / 4×4 …）分组，每个难度只显示今天的最高分一条，按格子大小排序，每天 0 点自动重开
+ * - 2048：按棋盘难度分组，每组两段——「共同历史最高分」一条（玩出更高分就顶替，永不清晰）+
+ *   「双方今天的前 10 名」（按分数混排），按格子大小排序
  * - 消消乐：按分数取前 10，信息列显示关卡
  * - 合成大西瓜：按分数取前 10，无信息列
  */
 
 const MEDALS = ['🥇', '🥈', '🥉']
-
-/** 2048 榜单一天最多参与的难度条数上限：拉当天记录够用 */
-const DAILY_FETCH_LIMIT = 500
 
 interface Props {
   game: CoupleGameKey
@@ -52,22 +56,28 @@ const sizeCells = (size: string): number => {
 }
 
 export default function GameLeaderboard({ game, myId, friendId, names, version }: Props) {
-  const [rows, setRows] = useState<CoupleGameScoreRow[]>([])
-  const [loading, setLoading] = useState(true)
   const is2048 = game === 'star2048'
+  /** 非 2048 游戏：按分数取的前 10 条 */
+  const [rows, setRows] = useState<CoupleGameScoreRow[]>([])
+  /** 2048：每难度的共同历史最高分一条 */
+  const [records, setRecords] = useState<CoupleGameScoreRow[]>([])
+  /** 2048：今天的全部成绩（服务端已按分数降序），展示时每难度取前 10 */
+  const [todayRows, setTodayRows] = useState<CoupleGameScoreRow[]>([])
+  const [loading, setLoading] = useState(true)
 
   const reload = useCallback(async () => {
     if (!myId || !friendId) {
       setRows([])
+      setRecords([])
+      setTodayRows([])
       setLoading(false)
       return
     }
     try {
       if (is2048) {
-        // 2048 只看今天：本地 0 点转 UTC 范围查询，东八区不会差一天；每天 0 点榜单自动清空重开
-        const dayStart = new Date()
-        dayStart.setHours(0, 0, 0, 0)
-        setRows(await listCoupleGameScores(myId, friendId, game, DAILY_FETCH_LIMIT, dayStart.toISOString()))
+        const board = await listCoupleGame2048Board(myId, friendId)
+        setRecords(board.records)
+        setTodayRows(board.today)
       } else {
         setRows(await listCoupleGameScores(myId, friendId, game, 10))
       }
@@ -101,77 +111,135 @@ export default function GameLeaderboard({ game, myId, friendId, names, version }
   )
 
   /**
-   * 展示行：
-   * - 2048：服务端已按分数降序，逐条遍历「每个难度只取第一条」= 该难度今日最高分，
-   *   再按格子大小升序排列（3×3 → 4×4 → …）；解析不出难度的排最后
-   * - 其它游戏：直接用前 10 条
+   * 2048 按难度分组：组集合 = 有纪录的难度 ∪ 今天玩过的难度，按格子大小升序（3×3 → 8×8），
+   * 解析不出难度的排最后；今天数据服务端已按分数降序，组内直接取前 10 即双方当日前 10 名
    */
-  const displayRows = useMemo<CoupleGameScoreRow[]>(() => {
-    if (!is2048) return rows
-    const bySize = new Map<string, CoupleGameScoreRow>()
-    for (const r of rows) {
+  const groups = useMemo(() => {
+    const recordBySize = new Map<string, CoupleGameScoreRow>()
+    for (const r of records) {
       const key = game2048SizeOf(r.detail ?? '') ?? '未知'
-      if (!bySize.has(key)) bySize.set(key, r)
+      if (!recordBySize.has(key)) recordBySize.set(key, r)
     }
-    const unknown = bySize.get('未知')
-    bySize.delete('未知')
-    const known = [...bySize.entries()]
-      .sort((a, b) => sizeCells(a[0]) - sizeCells(b[0]))
-      .map(([, r]) => r)
-    return unknown ? [...known, unknown] : known
-  }, [is2048, rows])
+    const todayBySize = new Map<string, CoupleGameScoreRow[]>()
+    for (const r of todayRows) {
+      const key = game2048SizeOf(r.detail ?? '') ?? '未知'
+      const arr = todayBySize.get(key) ?? []
+      arr.push(r)
+      todayBySize.set(key, arr)
+    }
+    const sizes = [...new Set([...recordBySize.keys(), ...todayBySize.keys()])].sort(
+      (a, b) => (a === '未知' ? 1 : 0) - (b === '未知' ? 1 : 0) || sizeCells(a) - sizeCells(b)
+    )
+    return sizes.map((size) => ({
+      size,
+      record: recordBySize.get(size) ?? null,
+      today: (todayBySize.get(size) ?? []).slice(0, 10),
+    }))
+  }, [records, todayRows])
+
+  /** 行内显示的玩家名：自己的记录高亮成「我」 */
+  const nameOf = useCallback(
+    (row: CoupleGameScoreRow) => (row.player_id === myId ? '我' : names[row.player_id] || 'TA'),
+    [myId, names]
+  )
+  const isMine = useCallback((row: CoupleGameScoreRow) => row.player_id === myId, [myId])
 
   return (
     <div className="space-y-2 rounded-2xl bg-slate-50 p-3">
       <div className="flex items-center justify-between gap-2">
-        <h4 className="text-xs font-semibold text-slate-600">
-          🏆 情侣排行榜 · {is2048 ? '今日各难度最高分' : '前 10'}
-        </h4>
-        <span className="text-[10px] text-slate-400">{is2048 ? '每天 0 点重新开始' : '每局结束自动上榜'}</span>
+        <h4 className="text-xs font-semibold text-slate-600">🏆 情侣排行榜</h4>
+        <span className="text-[10px] text-slate-400">
+          {is2048 ? '共同纪录 + 今日前 10' : '每局结束自动上榜'}
+        </span>
       </div>
 
       {loading ? (
         <p className="py-2 text-center text-[11px] text-slate-400">加载中…</p>
-      ) : displayRows.length === 0 ? (
+      ) : is2048 ? (
+        groups.length === 0 ? (
+          <p className="py-2 text-center text-[11px] text-slate-400">还没有成绩，第一个上榜的就是你～</p>
+        ) : (
+          <div className="space-y-1.5">
+            {groups.map((g) => (
+              <div key={g.size} className="space-y-1 rounded-lg bg-white/60 px-2 py-1.5">
+                {/* 组头：难度徽标 + 共同历史纪录 */}
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  <span className="shrink-0 rounded bg-brand-50 px-1 py-px text-[10px] font-semibold text-brand-600 tabular-nums">
+                    {g.size}
+                  </span>
+                  {g.record ? (
+                    <span className="min-w-0 flex-1 truncate text-slate-500">
+                      纪录 <b className="tabular-nums text-amber-600">{g.record.score}</b>
+                      <span className={`ml-1 text-slate-400 ${isMine(g.record) ? 'text-rose-400' : ''}`}>
+                        {nameOf(g.record)}        {formatWhen(g.record.created_at)}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="min-w-0 flex-1 truncate text-slate-400">暂无纪录</span>
+                  )}
+                </div>
+                {/* 当天双方成绩前 10：按分数混排 */}
+                {g.today.length > 0 && (
+                  <ol className="space-y-0.5">
+                    {g.today.map((row, i) => (
+                      <li
+                        key={row.id}
+                        className={`flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px] ${
+                          isMine(row) ? 'bg-rose-50' : ''
+                        }`}
+                      >
+                        <span className="w-4 shrink-0 text-center tabular-nums text-slate-400">{i + 1}</span>
+                        <span
+                          className={`w-14 shrink-0 truncate font-semibold ${isMine(row) ? 'text-rose-500' : 'text-slate-600'}`}
+                          title={nameOf(row)}
+                        >
+                          {nameOf(row)}
+                        </span>
+                        
+                        <span className="shrink-0 whitespace-nowrap text-center text-[10px] tabular-nums text-slate-300">
+                          {formatWhen(row.created_at)}
+                        </span>
+                        <span className="min-w-0 flex-1" />
+                        <span className="w-11 shrink-0 text-center font-bold tabular-nums text-indigo-600">{row.score}</span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            ))}
+          </div>
+        )
+      ) : rows.length === 0 ? (
         <p className="py-2 text-center text-[11px] text-slate-400">还没有成绩，第一个上榜的就是你～</p>
       ) : (
         <ol className="space-y-1">
-          {displayRows.map((row, i) => {
-            const mine = row.player_id === myId
-            const name = mine ? '我' : names[row.player_id] || 'TA'
-            const info = infoOf(game, row.detail ?? '')
-            return (
-              <li
-                key={row.id}
-                className={`flex items-center gap-1.5 overflow-hidden rounded-lg px-2 py-1.5 text-[11px] ${
-                  mine ? 'bg-white shadow-sm' : 'bg-white/60'
-                }`}
+          {rows.map((row, i) => (
+            <li
+              key={row.id}
+              className={`flex items-center gap-1.5 overflow-hidden rounded-lg px-2 py-1.5 text-[11px] ${
+                isMine(row) ? 'bg-white shadow-sm' : 'bg-white/60'
+              }`}
+            >
+              <span className="w-5 shrink-0 text-center tabular-nums text-slate-400">{MEDALS[i] ?? i + 1}</span>
+              <span
+                className={`w-14 shrink-0 truncate font-semibold ${isMine(row) ? 'text-rose-500' : 'text-slate-600'}`}
+                title={nameOf(row)}
               >
-                {/* 2048 按难度排序，序号用纯数字；按分数排的榜单前三名给奖牌 */}
-                <span className="w-5 shrink-0 text-center tabular-nums text-slate-400">
-                  {is2048 ? i + 1 : (MEDALS[i] ?? i + 1)}
+                {nameOf(row)}
+              </span>
+              {/* 信息列：紧跟名字（2关），没有就不占位，行内不留多余空隙 */}
+              {infoOf(game, row.detail ?? '') && (
+                <span className="shrink-0 rounded bg-slate-100 px-1 py-px text-[10px] tabular-nums text-slate-400">
+                  {infoOf(game, row.detail ?? '')}
                 </span>
-                {/* 名字固定宽度截断：昵称再长也不把行挤成两行 */}
-                <span
-                  className={`w-14 shrink-0 truncate font-semibold ${mine ? 'text-rose-500' : 'text-slate-600'}`}
-                  title={name}
-                >
-                  {name}
-                </span>
-                {/* 信息列：紧跟名字（4×4 / 2关），没有就不占位，行内不留多余空隙 */}
-                {info && (
-                  <span className="shrink-0 rounded bg-slate-100 px-1 py-px text-[10px] tabular-nums text-slate-400">
-                    {info}
-                  </span>
-                )}
-                <span className="min-w-0 flex-1" />
-                <span className="shrink-0 whitespace-nowrap text-right text-[10px] tabular-nums text-slate-300">
-                  {formatWhen(row.created_at)}
-                </span>
-                <span className="w-11 shrink-0 text-right font-bold tabular-nums text-indigo-600">{row.score}</span>
-              </li>
-            )
-          })}
+              )}
+              <span className="min-w-0 flex-1" />
+              <span className="shrink-0 whitespace-nowrap text-right text-[10px] tabular-nums text-slate-300">
+                {formatWhen(row.created_at)}
+              </span>
+              <span className="w-11 shrink-0 text-right font-bold tabular-nums text-indigo-600">{row.score}</span>
+            </li>
+          ))}
         </ol>
       )}
     </div>
