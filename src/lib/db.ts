@@ -2378,7 +2378,7 @@ export async function addCoupleGameScore(input: {
 /* --------------------------- 小游戏每日进度 --------------------------- */
 
 /**
- * 小游戏进度（每用户每天一行）：2048 的防沉迷局数、消消乐的关卡解锁都存这里。
+ * 小游戏进度（每用户每天一行）：2048 的防沉迷局数、消消乐的关卡解锁、大西瓜的盘面都存这里。
  * 存远端是为了退出登录 / 清缓存 / 换设备后进度不丢；localStorage 只做离线缓存。
  */
 export async function getCoupleGameProgress(
@@ -2386,7 +2386,7 @@ export async function getCoupleGameProgress(
   friendId: string,
   game: string,
   day: string
-): Promise<Record<string, number> | null> {
+): Promise<Record<string, unknown> | null> {
   if (!userId || !friendId || userId === friendId) return null
   const [memberA, memberB] = couplePair(userId, friendId)
   const { data, error } = await supabase
@@ -2402,7 +2402,7 @@ export async function getCoupleGameProgress(
     if (isMissingTable(error)) return null
     fail(error, '加载游戏进度')
   }
-  return ((data as { progress: Record<string, number> } | null)?.progress ?? null)
+  return ((data as { progress: Record<string, unknown> } | null)?.progress ?? null)
 }
 
 /** 保存小游戏进度：按「情侣对 + 游戏 + 日期 + 用户」幂等覆盖，重复写也无副作用 */
@@ -2411,7 +2411,7 @@ export async function saveCoupleGameProgress(input: {
   friendId: string
   game: string
   day: string
-  progress: Record<string, number>
+  progress: Record<string, unknown>
 }): Promise<void> {
   const { userId, friendId, game, day, progress } = input
   if (!userId || !friendId || userId === friendId) return

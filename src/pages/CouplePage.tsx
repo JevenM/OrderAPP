@@ -6554,7 +6554,7 @@ export default function CouplePage() {
               <div>
                 <h3 className="font-semibold">🍉 合成大西瓜</h3>
                 <p className="mt-1 text-xs text-slate-400">
-                  点击屏幕放水果，两个同款相碰合成更大的，从小葡萄一路合到大西瓜；堆过警戒线就结束。
+                  点击屏幕放水果，一路合到大西瓜。
                 </p>
               </div>
               <WatermelonGame
