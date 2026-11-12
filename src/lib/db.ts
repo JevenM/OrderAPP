@@ -2303,24 +2303,34 @@ export interface CoupleGameProgressRow {
   updated_at: string
 }
 
+/** 2048 detail 开头的难度（如「6×6 · 128 步」→「6×6」），解析不出返回 null */
+export const game2048SizeOf = (detail: string): string | null => {
+  const m = /^(\d+)×(\d+)/.exec(detail ?? '')
+  return m ? `${m[1]}×${m[2]}` : null
+}
+
 /**
  * 取一对情侣某个游戏的前 N 名：按分数降序，同分先打出的人排前面。
+ * 传 sinceIso 时只取该时间（如今天 0 点）之后的记录。
  * 表还没建时返回空数组 —— 排行榜缺数据不该把游戏本身搞崩。
  */
 export async function listCoupleGameScores(
   userA: string,
   userB: string,
   game: CoupleGameKey,
-  limit = 10
+  limit = 10,
+  sinceIso?: string
 ): Promise<CoupleGameScoreRow[]> {
   if (!userA || !userB || userA === userB) return []
   const [memberA, memberB] = couplePair(userA, userB)
-  const { data, error } = await supabase
+  let query = supabase
     .from('couple_game_scores')
     .select('*')
     .eq('member_a', memberA)
     .eq('member_b', memberB)
     .eq('game', game)
+  if (sinceIso) query = query.gte('created_at', sinceIso)
+  const { data, error } = await query
     .order('score', { ascending: false })
     .order('created_at', { ascending: true })
     .limit(limit)
@@ -2331,7 +2341,11 @@ export async function listCoupleGameScores(
   return (data ?? []) as CoupleGameScoreRow[]
 }
 
-/** 每局结束上传成绩；每人每天只保留一条最高分，其他清空（刷分、重复上传都只留最好的一次） */
+/**
+ * 每局结束上传成绩，落库前把今天的旧成绩清掉（刷分、重复上传都只留最好的一次）：
+ * - 2048 按「难度」分组保留：4×4 / 6×6 各自留当天最高的一条，互不覆盖；
+ * - 其它游戏每人每天只留一条最高分。
+ */
 export async function addCoupleGameScore(input: {
   userA: string
   userB: string
@@ -2345,13 +2359,16 @@ export async function addCoupleGameScore(input: {
   if (!Number.isFinite(score) || score <= 0) return
   const [memberA, memberB] = couplePair(userA, userB)
   const rounded = Math.round(score)
+  // 2048 的保留分组是难度；其它游戏整组只有一组（全部记录互斥）
+  const is2048 = game === 'star2048'
+  const sizeKey = is2048 ? game2048SizeOf(detail) : null
 
   // 「今天」按用户本地时区算：本地零点转 UTC ISO 做范围查询，东八区不会差一天
   const now = new Date()
   const dayStartIso = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
   const { data: todayRows, error: queryError } = await supabase
     .from('couple_game_scores')
-    .select('id, score')
+    .select('id, score, detail')
     .eq('member_a', memberA)
     .eq('member_b', memberB)
     .eq('game', game)
@@ -2360,16 +2377,20 @@ export async function addCoupleGameScore(input: {
     .order('score', { ascending: false })
     .limit(50)
   if (queryError && !isMissingTable(queryError)) fail(queryError, '查询今日游戏成绩')
-  const todayBest = todayRows?.[0]?.score ?? 0
-  // 今天已经有不低于本局的成绩：不上传，榜单保持每人每天一条
+  // 2048 只和「同难度」的今日记录竞争，其它难度不受影响
+  const relevant = (todayRows ?? []).filter(
+    (r) => !is2048 || (game2048SizeOf(r.detail ?? '') ?? null) === sizeKey
+  )
+  const todayBest = relevant[0]?.score ?? 0
+  // 同组里今天已经有不低于本局的成绩：不上传
   if (todayBest >= rounded) return
 
-  // 本局更高：把今天该玩家的旧记录清空，再插入这一条最高分
-  if (todayRows?.length) {
+  // 本局同组更高：清掉同组旧记录，再插入这一条最高分
+  if (relevant.length) {
     const { error: delError } = await supabase
       .from('couple_game_scores')
       .delete()
-      .in('id', todayRows.map((r) => r.id))
+      .in('id', relevant.map((r) => r.id))
     if (delError && !isMissingTable(delError)) fail(delError, '清理今日旧成绩')
   }
 
