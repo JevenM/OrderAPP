@@ -19,16 +19,12 @@ interface Props {
   version: number
 }
 
-/** 时间列：2048 带到秒（11-11 14:30:25）；其它游戏只显示日期（11-10）。
- *  紧凑数字格式、两位补零，保证等宽对齐 */
-function formatWhen(game: 'star2048' | 'animalmatch' | 'bigwatermelon', iso: string): string {
+/** 时间列：统一「日期 + 时分」（11-11 14:30），紧凑数字格式、两位补零保证等宽对齐 */
+function formatWhen(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   const p = (n: number) => String(n).padStart(2, '0')
-  const day = `${p(d.getMonth() + 1)}-${p(d.getDate())}`
-  return game === 'star2048'
-    ? `${day} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-    : day
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 export default function GameLeaderboard({ game, myId, friendId, names, version }: Props) {
@@ -100,20 +96,15 @@ export default function GameLeaderboard({ game, myId, friendId, names, version }
                 </span>
                 {/* 名字固定宽度截断：昵称再长也不把行挤成两行 */}
                 <span
-                  className={`w-12 shrink-0 truncate font-semibold ${mine ? 'text-rose-500' : 'text-slate-600'}`}
+                  className={`w-14 shrink-0 truncate font-semibold ${mine ? 'text-rose-500' : 'text-slate-600'}`}
                   title={name}
                 >
                   {name}
                 </span>
-                {/* 记录列：右对齐紧贴时间列（flex-1 拉出的空隙留在文字左侧），过长时截断省略 */}
-                <span className="min-w-0 flex-1 truncate text-center text-slate-400">{row.detail}</span>
-                {/* 时间列固定宽、字号略小、不换行；2048 带秒更宽，其它游戏只显示日期 */}
-                <span
-                  className={`shrink-0 whitespace-nowrap text-center text-[10px] tabular-nums text-slate-300 ${
-                    game === 'star2048' ? 'w-[80px]' : 'w-[38px]'
-                  }`}
-                >
-                  {formatWhen(game, row.created_at)}
+                {/* 中间留白把时间推到右侧，排行只关心：谁、什么时候、多少分 */}
+                <span className="min-w-0 flex-1" />
+                <span className="shrink-0 whitespace-nowrap text-right text-[10px] tabular-nums text-slate-300">
+                  {formatWhen(row.created_at)}
                 </span>
                 <span className="w-11 shrink-0 text-right font-bold tabular-nums text-indigo-600">{row.score}</span>
               </li>

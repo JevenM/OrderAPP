@@ -11,7 +11,7 @@ import GameLeaderboard from './GameLeaderboard'
  * - 顶部有一枚待放水果，点击 / 触屏指定下落位置，水果受重力自由下落
  * - 两个同款水果相碰合成上一级更大的水果，链路：葡萄→樱桃→橙子→柠檬→猕猴桃→
  *   番茄→桃子→菠萝→椰子→西瓜；两个西瓜相碰直接消除并大加分
- * - 水果堆积超过顶部警戒线（静止超过一小段时间）即游戏结束
+ * - 任意水果的顶部边缘越过顶部警戒线（穿线过程豁免，落定/被顶上去即结束）
  *
  * 物理说明（为什么这么做能「柔和且稳定」）：
  * - 固定时间步长（1/60s）积分，帧率波动不影响手感
@@ -22,7 +22,7 @@ import GameLeaderboard from './GameLeaderboard'
  * - 落地时微小垂直速度直接吸附清零，进一步消除「落地颤动」
  * - 速度上限 + 阻尼兜底，避免极端穿透
  *
- * 坐标系：逻辑单位 宽 100 × 高 150（y 向下），渲染时线性映射到 Canvas 实际像素，
+ * 坐标系：逻辑单位 宽 100 × 高 120（y 向下），渲染时线性映射到 Canvas 实际像素，
  * 任何屏幕宽度下物理表现一致。
  */
 
@@ -32,11 +32,12 @@ import GameLeaderboard from './GameLeaderboard'
 const W = 100
 const H = 120
 
-/**
- * 容器壁厚度（逻辑单位）：左右和下边各画一圈实心边框，
- * 水果活动边界整体内缩 EDGE——贴着壁也不会被边框切掉半个圆，边界一眼看得清。
- */
-const EDGE = 2.6
+/** 容器边框厚度（逻辑单位）：四条边一样粗的细边框，简洁美观 */
+const WALL = 1.2
+/** 边框与水果之间的留白：水果贴边时也完整可见，不会被边框盖住一角 */
+const GAP = 1.0
+/** 水果活动边界：中心到画布边缘的最小距离（四边统一） */
+const BOUND = WALL + GAP
 
 /** 警戒线高度（y 值）：任意水果的顶部边缘高过这条线（y - r < LINE_Y）即判负 */
 const LINE_Y = 30
@@ -118,6 +119,13 @@ interface Fruit {
   r: number
   /** 已存在时长（秒）：刚释放的水果穿警戒线不算危险 */
   age: number
+  /**
+   * 是否曾经在警戒线下方（y - r >= LINE_Y）。
+   * 「曾在下方 → 又回到线上方」= 被堆顶上去，判负；
+   * 出生即在线上方的水果（wasBelow=false）下落穿线不算，落下后停在线上方才算。
+   * 这让「穿线豁免」不再依赖速度阈值，判定稳定可靠。
+   */
+  wasBelow: boolean
 }
 
 /** 最高分本地存储 key */
@@ -254,16 +262,22 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
   const applyState = useCallback((snap: SavedState) => {
     fruitsRef.current = snap.fruits
       .filter((f) => f.l >= 0 && f.l < FRUITS.length)
-      .map((f) => ({
-        id: idSeed.current++,
-        level: f.l,
-        x: Math.min(Math.max(f.x, EDGE + FRUITS[f.l].r), W - EDGE - FRUITS[f.l].r),
-        y: Math.min(Math.max(f.y, FRUITS[f.l].r), H - EDGE - FRUITS[f.l].r),
-        vx: f.vx ?? 0,
-        vy: f.vy ?? 0,
-        r: FRUITS[f.l].r,
-        age: 3,
-      }))
+      .map((f) => {
+        const x = Math.min(Math.max(f.x, BOUND + FRUITS[f.l].r), W - BOUND - FRUITS[f.l].r)
+        const y = Math.min(Math.max(f.y, BOUND + FRUITS[f.l].r), H - BOUND - FRUITS[f.l].r)
+        return {
+          id: idSeed.current++,
+          level: f.l,
+          x,
+          y,
+          vx: f.vx ?? 0,
+          vy: f.vy ?? 0,
+          r: FRUITS[f.l].r,
+          age: 3,
+          // 恢复时按当前位置初始化：本来就在线下方的堆顶，恢复后马上判负是符合预期的
+          wasBelow: y - FRUITS[f.l].r >= LINE_Y,
+        }
+      })
     scoreRef.current = snap.score
     nextLevelRef.current = Math.min(Math.max(snap.nextLevel, 0), SPAWN_MAX_LEVEL - 1)
     setScore(snap.score)
@@ -334,9 +348,13 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
 
   /* ------------------------------ 物理求解 ------------------------------ */
 
-  /** 推进一帧物理：积分 → 边界 → 碰撞/合并（多轮迭代） */
+  /** 推进一帧物理：积分 → 边界 → 碰撞/合并（多轮迭代） → 支撑检测 */
   const stepPhysics = useCallback((dt: number) => {
     const fruits = fruitsRef.current
+
+    // 0. 记录积分前位置：碰撞阶段结束后用来判断「水果是否被支撑住」
+    const prevY = new Map<number, number>()
+    for (const f of fruits) prevY.set(f.id, f.y)
 
     // 1. 积分：重力 + 阻尼 + 位移；处理四周边界（低弹性反弹 + 地面摩擦 + 落地吸附）
     for (const f of fruits) {
@@ -351,22 +369,24 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
       f.x += f.vx * dt
       f.y += f.vy * dt
       f.age += dt
+      // 位置落到警戒线下方时记下标记：之后一旦被顶回线上方就判负
+      if (f.y - f.r >= LINE_Y) f.wasBelow = true
 
-      // 左右 / 底部边界都从 EDGE 起算：水果活动区在实心边框内侧，永远不会被边框遮挡
-      if (f.x < EDGE + f.r) {
-        f.x = EDGE + f.r
+      // 四边统一：水果活动区在细边框 + 留白内侧，永远不会被边框遮挡
+      if (f.x < BOUND + f.r) {
+        f.x = BOUND + f.r
         f.vx = Math.abs(f.vx) * BOUNCE_WALL
-      } else if (f.x > W - EDGE - f.r) {
-        f.x = W - EDGE - f.r
+      } else if (f.x > W - BOUND - f.r) {
+        f.x = W - BOUND - f.r
         f.vx = -Math.abs(f.vx) * BOUNCE_WALL
       }
-      if (f.y > H - EDGE - f.r) {
-        f.y = H - EDGE - f.r
+      if (f.y > H - BOUND - f.r) {
+        f.y = H - BOUND - f.r
         // 落地吸附：微小垂直速度直接清零，消除「落地颤动」；只有明显下落才产生小反弹
         f.vy = Math.abs(f.vy) < LAND_ABSORB ? 0 : -Math.abs(f.vy) * BOUNCE_FLOOR
         f.vx *= FLOOR_FRICTION
-      } else if (f.y < f.r) {
-        f.y = f.r
+      } else if (f.y < BOUND + f.r) {
+        f.y = BOUND + f.r
         f.vy = Math.abs(f.vy) * BOUNCE_WALL
       }
     }
@@ -423,6 +443,15 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
       }
     }
 
+    // 2.5 支撑检测：位置分离只推位置、不改速度，堆中水果的重力速度会一直累积，
+    // 涨过警戒判定的「下落速度」豁免线，导致「水果明明停着却永远被认为在下落」。
+    // 这一帧实际没怎么往下走 = 被下方水果顶住了，把垂直速度清零。
+    for (const f of fruits) {
+      const before = prevY.get(f.id)
+      if (before === undefined) continue
+      if (f.vy > 0 && f.y - before < f.vy * dt * 0.3) f.vy = 0
+    }
+
     // 3. 执行合并：新水果出现在两枚的中心，速度取平均（动量近似守恒）
     if (mergePairs.length > 0) {
       const survivors = fruits.filter((_, idx) => !consumed.has(idx))
@@ -441,13 +470,15 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
         spawned.push({
           id: idSeed.current++,
           level,
-          x: (a.x + b.x) / 2,
-          // 别让新水果出生在地面以下 / 边框里面
-          y: Math.min((a.y + b.y) / 2, H - EDGE - def.r - 0.2),
+          // 合并点四个方向都夹在活动区内：别让新水果出生在边框里 / 地面下
+          x: Math.min(Math.max((a.x + b.x) / 2, BOUND + def.r), W - BOUND - def.r),
+          y: Math.min(Math.max((a.y + b.y) / 2, BOUND + def.r), H - BOUND - def.r),
           vx: (a.vx + b.vx) / 2,
           vy: (a.vy + b.vy) / 2,
           r: def.r,
           age: 0,
+          // 父水果曾在警戒线下方 → 合并体也视作「曾被下方托举」，顶到线上立即判负
+          wasBelow: a.wasBelow || b.wasBelow,
         })
         scoreRef.current += level + 1
         sfx.merge(level)
@@ -460,8 +491,11 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
   }, [])
 
   /**
-   * 警戒线判定：任意一个水果的顶部边缘越过警戒线（y - r < LINE_Y），
-   * 只要它已经落定（不是刚放出、也不是还在快速下落穿线）就立刻结束，没有任何停留宽限。
+   * 警戒线判定：任意一个水果的顶部边缘越过警戒线（y - r < LINE_Y）即判负，分两种情况：
+   * 1. 曾在警戒线下方的水果被顶回线上（wasBelow=true）→ 立即结束，无条件、零延迟；
+   * 2. 出生即在线上方的新水果（wasBelow=false）：下落穿线过程豁免（刚放出 / 还在明显下落），
+   *    一旦停在线上方（堆已经够高接住它）也立即结束。
+   * 配合物理里的「支撑检测」（被顶住的水果 vy 清零），不会再出现「停着却永远算在下落」的漏判。
    */
   const checkDanger = useCallback((dt: number) => {
     if (overRef.current) return
@@ -469,10 +503,13 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
     for (const f of fruitsRef.current) {
       // 顶部边缘还在警戒线下方：安全
       if (f.y - f.r >= LINE_Y) continue
-      // 刚放出来的水果从线上方开始下落，穿线过程不算输
-      if (f.age < DROP_SETTLE) continue
-      // 还在明显下落 = 正在穿过警戒线，等它落定
-      if (f.vy > FALLING_VY) continue
+      // 曾在下方、被堆顶回线上：这就是「堆过线」本身，立即结束
+      if (f.wasBelow) {
+        danger = true
+        break
+      }
+      // 出生在线上方的新水果：穿线过程不算，停下还在线上才算
+      if (f.age < DROP_SETTLE || f.vy > FALLING_VY) continue
       danger = true
       break
     }
@@ -595,46 +632,44 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
     ctx.fillStyle = bg
     ctx.fillRect(0, 0, W, H)
 
-    // 容器壁：左 / 右 / 下三面实心边框（顶部开口落水果）。
-    // 水果活动边界已内缩 EDGE，所以壁和水果之间始终留着一圈，边界清晰、不遮挡
-    ctx.fillStyle = '#15803d'
-    ctx.fillRect(0, 0, EDGE, H)
-    ctx.fillRect(W - EDGE, 0, EDGE, H)
-    ctx.fillRect(0, H - EDGE, W, EDGE)
-    // 内侧高光：让壁看起来有厚度
-    ctx.fillStyle = 'rgba(255,255,255,0.35)'
-    ctx.fillRect(EDGE - 0.4, 0, 0.4, H - EDGE)
-    ctx.fillRect(W - EDGE, 0, 0.4, H - EDGE)
-    ctx.fillRect(EDGE, H - EDGE, W - EDGE * 2, 0.4)
-
-    // 警戒线：平时浅红虚线；有水果越线的那一帧立刻加深加粗（只画在容器壁内侧）
+    // 警戒线：平时浅红虚线；有水果越线的那一帧立刻加深加粗（画在容器内侧）
     const dangerRatio = Math.min(1, dangerRef.current / DANGER_FADE)
     ctx.save()
     ctx.setLineDash([3, 2.5])
     ctx.lineWidth = 0.6 + dangerRatio * 0.9
     ctx.strokeStyle = `rgba(${220 + dangerRatio * 35}, ${60 - dangerRatio * 40}, 60, ${0.5 + dangerRatio * 0.5})`
     ctx.beginPath()
-    ctx.moveTo(EDGE, LINE_Y)
-    ctx.lineTo(W - EDGE, LINE_Y)
+    ctx.moveTo(BOUND, LINE_Y)
+    ctx.lineTo(W - BOUND, LINE_Y)
     ctx.stroke()
     ctx.restore()
     ctx.fillStyle = 'rgba(220, 60, 60, 0.65)'
     ctx.font = '3px sans-serif'
     ctx.textAlign = 'right'
-    ctx.fillText('警戒线', W - EDGE - 0.6, LINE_Y - 1)
+    ctx.fillText('警戒线', W - BOUND - 0.6, LINE_Y - 1)
 
     // 待放水果虚影：跟随指针，冷却中淡化表示还不能放
     if (!overRef.current) {
       const def = FRUITS[nextLevelRef.current]
-      const x = Math.min(Math.max(aimRef.current, EDGE + def.r + 0.5), W - EDGE - def.r - 0.5)
+      const x = Math.min(Math.max(aimRef.current, BOUND + def.r + 0.5), W - BOUND - def.r - 0.5)
       ctx.globalAlpha = cooldownRef.current > 0 ? 0.25 : 0.65
-      drawFruit(ctx, nextLevelRef.current, x, Math.max(def.r + 1, LINE_Y - def.r - 1))
+      drawFruit(ctx, nextLevelRef.current, x, Math.max(BOUND + def.r + 0.5, LINE_Y - def.r - 1))
       ctx.globalAlpha = 1
     }
 
-    // 场上水果
+    // 场上水果：绘制位置也夹在活动区内——碰撞分离偶尔会把水果挤出边界一两帧，
+    // 这里兜底保证任何瞬间都不会有水果压到边框或超出画布
     ctx.textAlign = 'center'
-    for (const f of fruitsRef.current) drawFruit(ctx, f.level, f.x, f.y)
+    for (const f of fruitsRef.current) {
+      const dx = Math.min(Math.max(f.x, BOUND + f.r), W - BOUND - f.r)
+      const dy = Math.min(Math.max(f.y, BOUND + f.r), H - BOUND - f.r)
+      drawFruit(ctx, f.level, dx, dy)
+    }
+
+    // 容器边框最后画：四条边一样粗的细框，水果活动区已内缩 BOUND，边框永远不遮挡水果
+    ctx.strokeStyle = '#16a34a'
+    ctx.lineWidth = WALL
+    ctx.strokeRect(WALL / 2, WALL / 2, W - WALL, H - WALL)
   }
 
   /** 画一枚水果：实心圆 + 描边 + 中心文字；西瓜额外画深绿条纹增加辨识度 */
@@ -703,17 +738,19 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
     if (overRef.current || cooldownRef.current > 0) return
     const level = nextLevelRef.current
     const def = FRUITS[level]
-    const x = Math.min(Math.max(aimRef.current, EDGE + def.r + 0.5), W - EDGE - def.r - 0.5)
+    const x = Math.min(Math.max(aimRef.current, BOUND + def.r + 0.5), W - BOUND - def.r - 0.5)
     fruitsRef.current.push({
       id: idSeed.current++,
       level,
       x,
       // 出生在警戒线上方，从静止开始自由下落
-      y: Math.max(def.r + 1, LINE_Y - def.r - 1),
+      y: Math.max(BOUND + def.r + 0.5, LINE_Y - def.r - 1),
       vx: 0,
       vy: 0,
       r: def.r,
       age: 0,
+      // 出生即在线上方：wasBelow=false，下落穿线不算危险
+      wasBelow: false,
     })
     cooldownRef.current = DROP_COOLDOWN
     const next = Math.floor(Math.random() * SPAWN_MAX_LEVEL)
