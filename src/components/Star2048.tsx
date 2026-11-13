@@ -723,7 +723,7 @@ export default function Star2048({ myId, friendId, names }: Props) {
         <div className="animate-fade w-full max-w-xs space-y-3 rounded-2xl bg-white p-5 text-center shadow-xl">
           <div className="text-3xl">💌</div>
           <p className="text-sm font-bold text-slate-700">今日 {DAILY_LIMIT} 局已用完</p>
-          <p className="text-[11px] text-slate-400">认真回答这道真心话，提交后立刻多玩一局，答案会同步到真心话模块</p>
+          <p className="text-[11px] text-slate-400">认真回答这道真心话，提交后立刻再玩一局</p>
           <p className="rounded-xl bg-indigo-50 p-3 text-left text-xs font-medium leading-relaxed text-indigo-600">
             {passPanel.question}
           </p>
@@ -737,7 +737,7 @@ export default function Star2048({ myId, friendId, names }: Props) {
             disabled={passBusy}
           />
           <button type="button" className="btn-primary w-full py-2 text-xs" disabled={passBusy || !passAnswer.trim()} onClick={() => void submitPass()}>
-            {passBusy ? '提交中…' : '💌 提交回答，加玩一局'}
+            {passBusy ? '提交中…' : '💌 再开一局！'}
           </button>
           <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={() => setPassPanel(null)}>
             关闭
@@ -774,7 +774,7 @@ export default function Star2048({ myId, friendId, names }: Props) {
             </div>
             {!canPlay && (
               <p className="text-[11px] leading-relaxed text-amber-600">
-                今天的局数用完啦～点下面的开始按钮，回答一道真心话问题就能多玩一局，答案会同步到真心话模块。
+                今天的局数用完啦～点下面的开始按钮，回答一道真心话问题就能多玩一局。
               </p>
             )}
           </div>
@@ -802,7 +802,7 @@ export default function Star2048({ myId, friendId, names }: Props) {
             <span>{MAX_SIZE}×{MAX_SIZE} 地狱</span>
           </div>
           <button type="button" className="btn-primary w-full py-2 text-xs" onClick={() => begin(customSize)}>
-            {canPlay || !limited ? `用 ${customSize}×${customSize} 开始` : '💌 回答真心话，加玩一局'}
+            {canPlay || !limited ? `用 ${customSize}×${customSize} 开始` : '💌 再开一局'}
           </button>
         </div>
 
