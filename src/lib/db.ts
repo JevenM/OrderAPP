@@ -2653,7 +2653,23 @@ export async function createCoupleGamePass(userA: string, userB: string, game: s
     .select()
     .single()
   if (error || !data) fail(error, '提交加时申请')
-  return data as CoupleGamePassRow
+  const row = data as CoupleGamePassRow
+  // 给伴侣落一条铃铛提醒：TA 不一定正好停在 2048 页面，页面内 realtime 看不到就得靠铃铛；
+  // post_id 用申请 id 去重，重复触发也只提醒一次
+  const gameName = game === 'star2048' ? '星尘 2048' : '小游戏'
+  const partner = requesterId === userA ? userB : userA
+  void insertFeedNotices(
+    [partner],
+    {
+      sender_name: '⏳ 防沉迷加时',
+      type: 'game-pass',
+      post_id: row.id,
+      title: `🎮 TA 想多玩一局${gameName}`,
+      body: `任务已完成，等你确认：${clean.slice(0, 60)}`,
+    },
+    true
+  )
+  return row
 }
 
 /** 伴侣确认：确认后 requester 当天可多玩一局 */
@@ -3450,6 +3466,7 @@ export type FeedNoticeType =
   | 'love-unlocked'
   | 'scratch'
   | 'countdown'
+  | 'game-pass'
 
 export interface FeedNotificationRow {
   id: string

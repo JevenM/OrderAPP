@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useToast } from '../components/Toast'
 import Pager from '../components/Pager'
@@ -4123,6 +4124,16 @@ export default function CouplePage() {
   /** 关闭详情弹窗（不保存） */
   const closeCountdownEditor = () => setCountdownEditingId(null)
 
+  // 弹窗打开期间锁住页面滚动：触摸弹窗不会带动整页滚动，移动端点按钮不会点不到
+  useEffect(() => {
+    if (!countdownEditingId) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [countdownEditingId])
+
   /** 保存详情弹窗的修改：整体清单写回，对方实时同步 */
   const saveCountdownEdit = async () => {
     if (!countdownEditingId) return
@@ -6248,15 +6259,19 @@ export default function CouplePage() {
                 )
               })()}
 
-              {/* 详情弹窗：展示并编辑单条重要日，保存后双方实时同步；也可以在这里删除 */}
-              {countdownEditingId && (
+              {/* 详情弹窗：展示并编辑单条重要日，保存后双方实时同步；也可以在这里删除。
+                  必须用 Portal 挂到 document.body：本模块卡片(.card)有 :active 的 transform 缩放，
+                  CSS 规定祖先带 transform 时 fixed 会退化为相对该祖先定位，弹窗就会出现
+                  「按下去跳到卡片内、松开又跳回全屏」的内外跳动，根本没法点 */}
+              {countdownEditingId && createPortal(
                 <div
-                  className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 p-0 sm:items-center sm:p-4"
+                  className="fixed inset-0 z-50 flex touch-none items-end justify-center overscroll-contain bg-slate-900/50 p-0 backdrop-blur-sm sm:items-center sm:p-4"
                   onClick={closeCountdownEditor}
                 >
                   <div
-                    className="w-full max-w-sm space-y-3 rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl"
+                    className="max-h-[85vh] w-full max-w-sm space-y-3 overflow-y-auto rounded-t-3xl bg-white p-5 pb-safe shadow-2xl sm:rounded-3xl"
                     onClick={(event) => event.stopPropagation()}
+                    onTouchStart={(event) => event.stopPropagation()}
                   >
                     <div className="flex items-center justify-between">
                       <h4 className="text-sm font-semibold text-slate-700">重要日详情</h4>
@@ -6303,7 +6318,8 @@ export default function CouplePage() {
                       </button>
                     </div>
                   </div>
-                </div>
+                </div>,
+                document.body
               )}
             </section>
           )}
