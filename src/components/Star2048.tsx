@@ -5,14 +5,14 @@ import {
   addCoupleGameScore,
   confirmCoupleGamePass,
   createCoupleGamePass,
-  deleteCoupleGamePass,
+  createCoupleTruthDare,
   getCoupleGameProgress,
-  listCoupleDarePromptBank,
   listCoupleGamePasses,
+  listCoupleTruthPrompts,
   saveCoupleGameProgress,
   type CoupleGamePassRow,
 } from '../lib/db'
-import { DARES } from '../lib/darePrompts'
+import { TRUTH_PROMPTS } from '../lib/coupleQuestions'
 import { POLL, useRealtime } from '../lib/realtime'
 import { setSfxEnabled, sfx, sfxEnabled, subscribeSfx } from '../lib/sfx'
 import GameLeaderboard from './GameLeaderboard'
@@ -259,12 +259,12 @@ export default function Star2048({ myId, friendId, names }: Props) {
   /* ------------------------------ 防沉迷 ------------------------------ */
   /** 今天已开的局数（本地缓存起步，远端恢复后取更大值） */
   const [playsUsed, setPlaysUsed] = useState(() => loadLocalPlays(myId))
-  /** 今天的加时申请（双方共享一份）：pending=等确认，confirmed=已加一局 */
+  /** 今天的加时申请（双方共享一份）：回答真心话自动确认，confirmed 条数 = 加时局数 */
   const [passes, setPasses] = useState<CoupleGamePassRow[]>([])
-  /** 自定义大冒险题库（和内置池合并后抽任务） */
-  const [dareBank, setDareBank] = useState<string[]>([])
-  /** 防沉迷任务面板：null=关闭；task=抽到的任务文本 */
-  const [passPanel, setPassPanel] = useState<{ task: string } | null>(null)
+  /** 真心话加时面板：null=关闭；question=抽到的系统真心话题目 */
+  const [passPanel, setPassPanel] = useState<{ question: string } | null>(null)
+  /** 面板里正在输入的真心话回答 */
+  const [passAnswer, setPassAnswer] = useState('')
   const [passBusy, setPassBusy] = useState(false)
   const [sharing, setSharing] = useState(false)
   /** 截图下载成功后的临时提示 */
@@ -272,12 +272,8 @@ export default function Star2048({ myId, friendId, names }: Props) {
 
   /** 未配对时不限制（防沉迷依赖伴侣确认，没法确认就放开） */
   const limited = !!(myId && friendId)
-  /** 我的加时局数：今天被确认的申请条数 */
+  /** 我的加时局数：今天自动确认的真心话申请条数 */
   const myConfirmed = passes.filter((p) => p.status === 'confirmed' && p.requester_id === myId).length
-  /** 我发出去、还没被确认的申请 */
-  const myPending = passes.find((p) => p.status === 'pending' && p.requester_id === myId) ?? null
-  /** 对方发来的、等我确认的申请 */
-  const partnerPending = passes.find((p) => p.status === 'pending' && p.requester_id !== myId) ?? null
   const remaining = limited ? Math.max(0, DAILY_LIMIT - playsUsed + myConfirmed) : Infinity
   const canPlay = remaining > 0
 
@@ -369,12 +365,16 @@ export default function Star2048({ myId, friendId, names }: Props) {
   }, [reloadPasses])
 
   // 自定义大冒险题库：和内置池合并抽任务，加载一次即可
+  // 拉两个人已答过的真心话题目：加时抽题时避开（和真心话模块同一套「已答不重复」口径）
+  const truthUsedRef = useRef<Set<string>>(new Set())
   useEffect(() => {
     if (!myId || !friendId) return
-    listCoupleDarePromptBank(myId, friendId)
-      .then((rows) => setDareBank(rows.map((r) => r.prompt)))
+    listCoupleTruthPrompts(myId, friendId)
+      .then((prompts) => {
+        truthUsedRef.current = new Set(prompts)
+      })
       .catch(() => {
-        // 拉不到就用内置题池
+        // 拉不到就不过滤，直接从全池抽
       })
   }, [myId, friendId])
 
@@ -468,60 +468,48 @@ export default function Star2048({ myId, friendId, names }: Props) {
     setPlaysUsed((c) => c + 1)
   }, [myId, friendId])
 
-  /** 抽一个大冒险任务：内置池 + 自定义题库合并后随机 */
-  const drawTask = useCallback((): string => {
-    const pool = [...new Set([...DARES, ...dareBank])]
-    return pool[Math.floor(Math.random() * pool.length)]
-  }, [dareBank])
+  /** 抽一道系统真心话：避开两个人已经答过的；全答完就从全池重抽（真心话模块同款规则） */
+  const drawTruthQuestion = useCallback((): string => {
+    const used = truthUsedRef.current
+    const pool = TRUTH_PROMPTS.filter((q) => !used.has(q))
+    const source = pool.length ? pool : TRUTH_PROMPTS
+    return source[Math.floor(Math.random() * source.length)]
+  }, [])
 
-  /** 「我完成啦」：提交申请等伴侣确认 */
+  /** 提交真心话回答：答案存进真心话模块的已答列表（对方铃铛自动收到提醒），回答完立即加一局 */
   const submitPass = useCallback(async () => {
-    if (!passPanel || !myId || !friendId || myPending) return
+    if (!passPanel || !myId || !friendId) return
+    const answer = passAnswer.trim()
+    if (!answer) {
+      alert('先写下你的真心话答案吧～')
+      return
+    }
     setPassBusy(true)
     try {
-      await createCoupleGamePass(myId, friendId, 'star2048', myId, passPanel.task)
+      // 1. 回答进真心话模块：存 couple_truth_dare 已答列表 + 给对方落铃铛提醒（函数内置）
+      await createCoupleTruthDare({
+        userA: myId,
+        userB: friendId,
+        senderId: myId,
+        senderName: names[myId] ?? '我',
+        type: 'truth',
+        prompt: passPanel.question,
+        answer,
+      })
+      truthUsedRef.current.add(passPanel.question)
+      // 2. 加时申请自动确认：回答完就能多玩一局，无需伴侣审批
+      const pass = await createCoupleGamePass(myId, friendId, 'star2048', myId, `真心话：${passPanel.question}`)
+      await confirmCoupleGamePass(pass.id, friendId)
       await reloadPasses()
       setPassPanel(null)
+      setPassAnswer('')
     } catch (error) {
-      console.warn('提交加时申请失败', error)
+      console.warn('提交真心话加时失败', error)
       alert((error as Error).message || '提交失败，稍后再试')
     } finally {
       setPassBusy(false)
     }
-  }, [passPanel, myId, friendId, myPending, reloadPasses])
-
-  /** 确认对方的申请：TA 今天可以多玩一局 */
-  const approvePass = useCallback(
-    async (id: string) => {
-      if (!myId) return
-      setPassBusy(true)
-      try {
-        await confirmCoupleGamePass(id, myId)
-        await reloadPasses()
-      } catch (error) {
-        console.warn('确认加时申请失败', error)
-      } finally {
-        setPassBusy(false)
-      }
-    },
-    [myId, reloadPasses]
-  )
-
-  /** 拒绝对方的申请 */
-  const rejectPass = useCallback(
-    async (id: string) => {
-      setPassBusy(true)
-      try {
-        await deleteCoupleGamePass(id)
-        await reloadPasses()
-      } catch (error) {
-        console.warn('拒绝加时申请失败', error)
-      } finally {
-        setPassBusy(false)
-      }
-    },
-    [reloadPasses]
-  )
+  }, [passPanel, passAnswer, myId, friendId, names, reloadPasses])
 
   const start = useCallback((nextSize: number) => {
     const fresh = makeTiles(nextSize)
@@ -540,7 +528,7 @@ export default function Star2048({ myId, friendId, names }: Props) {
     setPhase('playing')
   }, [])
 
-  /** 从选择页开一局：还有次数就直接开，没次数就打开任务面板 */
+  /** 从选择页开一局：还有次数就直接开，没次数就打开真心话加时面板 */
   const begin = useCallback(
     (nextSize: number) => {
       if (!limited || canPlay) {
@@ -548,16 +536,16 @@ export default function Star2048({ myId, friendId, names }: Props) {
         start(nextSize)
         return
       }
-      setPassPanel({ task: myPending ? myPending.task : drawTask() })
+      setPassPanel({ question: drawTruthQuestion() })
     },
-    [limited, canPlay, consumePlay, start, myPending, drawTask]
+    [limited, canPlay, consumePlay, start, drawTruthQuestion]
   )
 
   /** 重开当前难度；已经有分数就先记一局榜，再开新的（重开也算一局，计入防沉迷）。
-      次数用完时不重开，改为弹出大冒险任务面板 */
+      次数用完时不重开，改为弹出真心话加时面板 */
   const reset = useCallback(() => {
     if (limited && remaining <= 0) {
-      setPassPanel({ task: myPending ? myPending.task : drawTask() })
+      setPassPanel({ question: drawTruthQuestion() })
       return
     }
     report(scoreRef.current, movesRef.current, false, size)
@@ -573,7 +561,7 @@ export default function Star2048({ myId, friendId, names }: Props) {
     snapshotRef.current = null
     setCanUndo(false)
     roundRef.current += 1
-  }, [size, report, consumePlay, limited, remaining, myPending, drawTask])
+  }, [size, report, consumePlay, limited, remaining, drawTruthQuestion])
 
   /** 换难度：先把当前这局记上账，再清掉存档回到选择页，避免分数白打 */
   const exitToSetup = useCallback(() => {
@@ -727,27 +715,30 @@ export default function Star2048({ myId, friendId, names }: Props) {
     }
   }
 
-  /** 防沉迷任务面板：setup / playing 两个分支都可能弹出，提取成公共 Portal 节点 */
+  /** 防沉迷真心话加时面板：setup / playing 两个分支都可能弹出，提取成公共 Portal 节点 */
   const passPanelNode =
     passPanel &&
     createPortal(
       <div className="fixed inset-0 z-50 flex touch-none items-center justify-center overscroll-contain bg-slate-900/45 p-4 backdrop-blur-sm">
         <div className="animate-fade w-full max-w-xs space-y-3 rounded-2xl bg-white p-5 text-center shadow-xl">
-          <div className="text-3xl">⏳</div>
+          <div className="text-3xl">💌</div>
           <p className="text-sm font-bold text-slate-700">今日 {DAILY_LIMIT} 局已用完</p>
-          <p className="text-[11px] text-slate-400">完成这个大冒险任务，等 TA 确认后就能多玩一局</p>
-          <p className="rounded-xl bg-rose-50 p-3 text-left text-xs font-medium leading-relaxed text-rose-600">
-            {passPanel.task}
+          <p className="text-[11px] text-slate-400">认真回答这道真心话，提交后立刻多玩一局，答案会同步到真心话模块</p>
+          <p className="rounded-xl bg-indigo-50 p-3 text-left text-xs font-medium leading-relaxed text-indigo-600">
+            {passPanel.question}
           </p>
-          {myPending ? (
-            <p className="rounded-lg bg-amber-50 p-2 text-[11px] text-amber-700">
-              🕐 已提交，等 TA 在 TA 的 2048 页面点「确认」（确认后这里自动解锁）
-            </p>
-          ) : (
-            <button type="button" className="btn-primary w-full py-2 text-xs" disabled={passBusy} onClick={() => void submitPass()}>
-              ✅ 我完成啦，请 TA 确认
-            </button>
-          )}
+          <textarea
+            className="input w-full resize-none text-xs"
+            rows={3}
+            placeholder="写下你的真心话答案…"
+            maxLength={300}
+            value={passAnswer}
+            onChange={(event) => setPassAnswer(event.target.value)}
+            disabled={passBusy}
+          />
+          <button type="button" className="btn-primary w-full py-2 text-xs" disabled={passBusy || !passAnswer.trim()} onClick={() => void submitPass()}>
+            {passBusy ? '提交中…' : '💌 提交回答，加玩一局'}
+          </button>
           <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={() => setPassPanel(null)}>
             关闭
           </button>
@@ -771,58 +762,19 @@ export default function Star2048({ myId, friendId, names }: Props) {
   if (phase === 'setup') {
     return (
       <div className="space-y-3">
-        <div className="rounded-2xl bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 p-4 text-center">
-          <div className="text-3xl">✨</div>
-          <h3 className="mt-1 text-sm font-bold text-indigo-600">选一个棋盘大小</h3>
-          {/* <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-            盘越大越难，默认 4×4，合并出 2048 就算通关，还能继续往大合。
-          </p> */}
-        </div>
-
-        {/* 防沉迷：每日局数上限 + 加时申请（完成大冒险任务 → TA 确认） */}
+        {/* 防沉迷：每日局数上限 + 真心话加时（回答一道真心话 → 自动加一局） */}
         {limited && (
           <div className="space-y-2 rounded-xl bg-amber-50 p-3 ring-1 ring-amber-100">
             <div className="flex items-center justify-between text-xs">
               <span className="font-semibold text-amber-700">⏳ 防沉迷</span>
               <span className="tabular-nums text-amber-600">
                 今日 {Math.min(playsUsed, DAILY_LIMIT + myConfirmed)}/{DAILY_LIMIT + myConfirmed} 局
-                {myConfirmed > 0 ? `（含任务加时 +${myConfirmed}）` : ''}
+                {myConfirmed > 0 ? `（含真心话加时 +${myConfirmed}）` : ''}
               </span>
             </div>
-            {partnerPending && (
-              <div className="space-y-1.5 rounded-lg bg-white p-2.5">
-                <p className="text-[11px] text-slate-600">💪 TA 说完成了一个大冒险任务，确认后 TA 今天可以多玩一局：</p>
-                <p className="rounded-md bg-rose-50 p-2 text-[11px] font-medium leading-relaxed text-rose-600">
-                  {partnerPending.task}
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    className="btn-primary flex-1 py-1.5 text-xs"
-                    disabled={passBusy}
-                    onClick={() => void approvePass(partnerPending.id)}
-                  >
-                    ✅ 确认 +1 局
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-ghost flex-1 py-1.5 text-xs"
-                    disabled={passBusy}
-                    onClick={() => void rejectPass(partnerPending.id)}
-                  >
-                    ❌ 不算
-                  </button>
-                </div>
-              </div>
-            )}
-            {myPending && (
-              <p className="rounded-lg bg-white p-2 text-[11px] text-slate-500">
-                🕐 你的大冒险任务已提交，等 TA 确认后自动 +1 局
-              </p>
-            )}
-            {!canPlay && !myPending && (
+            {!canPlay && (
               <p className="text-[11px] leading-relaxed text-amber-600">
-                今天的局数用完啦～点下面的开始按钮，完成一个大冒险任务、经 TA 确认就能多玩一局。
+                今天的局数用完啦～点下面的开始按钮，回答一道真心话问题就能多玩一局，答案会同步到真心话模块。
               </p>
             )}
           </div>
@@ -850,11 +802,7 @@ export default function Star2048({ myId, friendId, names }: Props) {
             <span>{MAX_SIZE}×{MAX_SIZE} 地狱</span>
           </div>
           <button type="button" className="btn-primary w-full py-2 text-xs" onClick={() => begin(customSize)}>
-            {canPlay || !limited
-              ? `用 ${customSize}×${customSize} 开始`
-              : myPending
-                ? '🕐 等待 TA 确认加时…'
-                : '🎯 完成大冒险任务，加玩一局'}
+            {canPlay || !limited ? `用 ${customSize}×${customSize} 开始` : '💌 回答真心话，加玩一局'}
           </button>
         </div>
 
