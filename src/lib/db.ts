@@ -2202,6 +2202,31 @@ export async function upsertCoupleCountdown(userA: string, userB: string, state:
   if (error) fail(error, '同步重要日倒计时')
 }
 
+/**
+ * 重要日当天的铃铛提醒：给情侣双方各写一条消息。
+ * post_id 用「条目 id + 日期」做去重键（insertFeedNotices 的 dedupeByPostId），
+ * 谁先进页面触发检查都只提醒一次，同一天不会重复弹。
+ */
+export async function notifyCountdownToday(
+  userA: string,
+  userB: string,
+  item: { id: string; title: string; date: string }
+): Promise<void> {
+  if (!userA || !userB || userA === userB) return
+  if (!item.id || !item.date) return
+  await insertFeedNotices(
+    [userA, userB],
+    {
+      sender_name: '⏳ 重要日提醒',
+      type: 'countdown',
+      post_id: `countdown-${item.id}-${item.date}`,
+      title: `⏳ 今天是「${item.title}」`,
+      body: '这个重要的日子到了，记得一起好好过～',
+    },
+    true
+  )
+}
+
 /* ------------------------------ 情侣刮刮乐 ------------------------------ */
 
 export interface CoupleScratchCard {
@@ -3424,6 +3449,7 @@ export type FeedNoticeType =
   | 'love'
   | 'love-unlocked'
   | 'scratch'
+  | 'countdown'
 
 export interface FeedNotificationRow {
   id: string

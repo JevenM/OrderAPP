@@ -4,7 +4,7 @@ import { listFeedNotifications, markFeedNotificationRead, markFeedNotificationsR
 import { timeCn } from '../lib/date'
 import { useUnread, useUnreadBellCount } from '../store/unread'
 
-const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️', quiz: '💞', truth: '🎲', together: '💕', chat: '💌', board: '🎯', mines: '💣', wufu: '♟️', gomoku: '⚫', watermelon: '🍉', dice: '🎲', love: '💌', 'love-unlocked': '💖', scratch: '🎫' }
+const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️', quiz: '💞', truth: '🎲', together: '💕', chat: '💌', board: '🎯', mines: '💣', wufu: '♟️', gomoku: '⚫', watermelon: '🍉', dice: '🎲', love: '💌', 'love-unlocked': '💖', scratch: '🎫', countdown: '⏳' }
 /** 全部消息视图：一次只取最新的 30 条（不查全表总数），在这 30 条内本地分页 */
 const FULL_SIZE = 30
 /** 全部消息视图每页显示条数（30 条最新消息 → 最多 3 页） */
@@ -106,6 +106,8 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
       navigate('/couple?module=love&focus=1')
     } else if (notice.type === 'scratch') {
       navigate('/couple?module=scratch&focus=1')
+    } else if (notice.type === 'countdown') {
+      navigate('/couple?module=countdown&focus=1')
     } else if (notice.type === 'together') {
       // 同在检测的入口 💕 就在顶栏，任何页面都有，留在当前页即可
     } else {

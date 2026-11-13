@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useToast } from '../components/Toast'
+import Pager from '../components/Pager'
 import CoupleModuleGrid from '../components/couple/CoupleModuleGrid'
 import {
   appendCoupleEvent,
@@ -23,6 +24,7 @@ import {
   notifyGomokuTurn,
   notifyGomokuNew,
   notifyWatermelonScore,
+  notifyCountdownToday,
   fetchCoupleWedding,
   upsertCoupleWedding,
   type CoupleWeddingRow,
@@ -161,6 +163,10 @@ type DrawnWish = Wish & { drawer: string }
 type ChatItem = { id: string; sender_id: string; receiver_id: string; content: string; created_at: string }
 
 const HISTORY_PAGE_SIZE = 10
+/** 重要日图标：新增表单和详情弹窗共用一套 */
+const COUNTDOWN_EMOJIS = ['📅', '🎂', '💖', '💍', '✈️', '🏠', '🎓', '🎉', '🌸', '🍰', '🌟', '🎁']
+/** 已经过去的重要日进「历史重要日」列表，每页 10 条 */
+const COUNTDOWN_HISTORY_PAGE_SIZE = 10
 /** 刮刮乐记录单独按 5 条一页：第一页正好是最近刮出的 5 条 */
 const SCRATCH_PAGE_SIZE = 5
 /**
@@ -1448,6 +1454,12 @@ export default function CouplePage() {
   const [countdownTitle, setCountdownTitle] = useState('')
   const [countdownDate, setCountdownDate] = useState('')
   const [countdownEmoji, setCountdownEmoji] = useState('')
+  /** 详情弹窗里正在编辑的条目 id；null = 弹窗关闭 */
+  const [countdownEditingId, setCountdownEditingId] = useState<string | null>(null)
+  /** 编辑表单（弹窗内的临时值，保存后才落库） */
+  const [countdownEditForm, setCountdownEditForm] = useState({ emoji: '📅', title: '', date: '' })
+  /** 历史重要日列表页码 */
+  const [countdownHistoryPage, setCountdownHistoryPage] = useState(0)
 
   const [scratchGame, setScratchGame] = useState<CoupleScratchRow | null>(null)
   const [scratchLoaded, setScratchLoaded] = useState(false)
@@ -4098,6 +4110,57 @@ export default function CouplePage() {
     await saveCountdownItems((countdownGame?.state.items ?? []).filter((item) => item.id !== id))
   }
 
+  /** 点开列表条目：把当前值装进编辑表单，弹出详情 */
+  const openCountdownEditor = (item: CoupleCountdownItem) => {
+    setCountdownEditingId(safeDisplayText(item?.id))
+    setCountdownEditForm({
+      emoji: safeDisplayText(item?.emoji, '📅'),
+      title: safeDisplayText(item?.title),
+      date: safeDisplayText(item?.date),
+    })
+  }
+
+  /** 关闭详情弹窗（不保存） */
+  const closeCountdownEditor = () => setCountdownEditingId(null)
+
+  /** 保存详情弹窗的修改：整体清单写回，对方实时同步 */
+  const saveCountdownEdit = async () => {
+    if (!countdownEditingId) return
+    const title = countdownEditForm.title.trim()
+    if (!title) return toast.show('请填写重要日名称，比如「领证纪念日」', 'err')
+    if (!countdownEditForm.date) return toast.show('请选择目标日期', 'err')
+    const items = (countdownGame?.state.items ?? [])
+      .map((item) =>
+        item.id === countdownEditingId
+          ? { ...item, title, date: countdownEditForm.date, emoji: countdownEditForm.emoji.trim() || '📅' }
+          : item
+      )
+      .sort((x, y) => x.date.localeCompare(y.date))
+    await saveCountdownItems(items)
+    setCountdownEditingId(null)
+    toast.show('✅ 重要日已更新')
+  }
+
+  /**
+   * 重要日当天提醒：清单里有日子落在今天，就给情侣双方各写一条铃铛消息。
+   * 去重交给服务端（post_id = 条目 id + 日期），谁先进页面触发检查都只提醒一次。
+   */
+  useEffect(() => {
+    if (!memberId || !friendId || !countdownGame) return
+    const day = todayStr()
+    const items = Array.isArray(countdownGame.state.items) ? countdownGame.state.items : []
+    for (const item of items) {
+      if (safeDisplayText(item?.date) !== day) continue
+      void notifyCountdownToday(memberId, friendId, {
+        id: safeDisplayText(item?.id),
+        title: safeDisplayText(item?.title, '重要日'),
+        date: day,
+      }).catch(() => {
+        // 提醒失败不影响倒计时展示，下次进页面会再试
+      })
+    }
+  }, [memberId, friendId, countdownGame])
+
   /* ------------------------------ 情侣刮刮乐 ------------------------------ */
 
   /**
@@ -6105,40 +6168,141 @@ export default function CouplePage() {
                 <p className="mt-1 text-xs text-slate-400">纪念日、生日、旅行日……添加多个重要日期，一起倒数还有多少天。</p>
               </div>
               <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-[64px_1fr_150px_auto]">
-                <select className="input w-full px-1 text-center text-lg" value={typeof countdownEmoji === 'string' && ['📅', '🎂', '💖', '💍', '✈️', '🏠', '🎓', '🎉', '🌸', '🍰', '🌟', '🎁'].includes(countdownEmoji) ? countdownEmoji : '📅'} onChange={(event) => setCountdownEmoji(event.target.value)}>
-                  {['📅', '🎂', '💖', '💍', '✈️', '🏠', '🎓', '🎉', '🌸', '🍰', '🌟', '🎁'].map((emoji) => <option key={emoji} value={emoji}>{emoji}</option>)}
+                <select className="input w-full px-1 text-center text-lg" value={COUNTDOWN_EMOJIS.includes(countdownEmoji) ? countdownEmoji : '📅'} onChange={(event) => setCountdownEmoji(event.target.value)}>
+                  {COUNTDOWN_EMOJIS.map((emoji) => <option key={emoji} value={emoji}>{emoji}</option>)}
                 </select>
                 <input className="input" placeholder="名称" value={countdownTitle} onChange={(event) => setCountdownTitle(event.target.value)} maxLength={30} />
                 <input className="input" type="date" value={countdownDate} onChange={(event) => setCountdownDate(event.target.value)} />
                 <button type="button" className="btn-primary" disabled={countdownSaving || !memberId || !friendId} onClick={() => void addCountdown()}>添加</button>
               </div>
-              {(!Array.isArray(countdownGame?.state.items) || countdownGame.state.items.length === 0) ? (
-                <p className="py-4 text-center text-xs text-slate-400">还没有重要日，添加一个吧～</p>
-              ) : (
-                <div className="space-y-2">
-                  {(Array.isArray(countdownGame?.state.items) ? countdownGame.state.items : []).map((item, index) => {
-                    const itemId = safeDisplayText(item?.id, `countdown-${index}`)
-                    const itemTitle = safeDisplayText(item.title, '未命名重要日')
-                    const itemDate = safeDisplayText(item.date)
-                    const itemEmoji = safeDisplayText(item.emoji, '📅')
-                    const target = new Date(`${itemDate}T00:00:00`)
-                    const today = new Date()
-                    today.setHours(0, 0, 0, 0)
-                    const days = Math.ceil((target.getTime() - today.getTime()) / 86_400_000)
-                    const label = days > 0 ? `还有 ${days} 天` : days === 0 ? '🎉 就是今天！' : `已过去 ${-days} 天`
-                    const soon = days >= 0 && days <= 7
-                    return (
-                      <div key={itemId} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3">
-                        <span className="text-xl">{itemEmoji || '📅'}</span>
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-semibold text-slate-700">{itemTitle}</div>
-                          <div className="text-[11px] text-slate-400">{itemDate}</div>
-                        </div>
-                        <span className={`chip shrink-0 ${days === 0 ? 'border-rose-200 bg-rose-50 text-rose-600' : soon ? 'border-amber-200 bg-amber-50 text-amber-600' : 'border-brand-200 bg-brand-50 text-brand-600'}`}>{label}</span>
-                        <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs text-rose-500" disabled={countdownSaving} onClick={() => void removeCountdown(itemId)}>删除</button>
+              {(() => {
+                const allItems = Array.isArray(countdownGame?.state.items) ? countdownGame.state.items : []
+                const today = todayStr()
+                // 今天及以后 → 主列表（日期升序）；已过去 → 历史列表（日期倒序，分页展示）
+                const upcoming = allItems.filter((item) => safeDisplayText(item?.date) >= today)
+                const past = allItems
+                  .filter((item) => safeDisplayText(item?.date) < today)
+                  .sort((x, y) => safeDisplayText(y?.date).localeCompare(safeDisplayText(x?.date)))
+                const pages = Math.max(1, Math.ceil(past.length / COUNTDOWN_HISTORY_PAGE_SIZE))
+                const safePage = Math.min(Math.max(countdownHistoryPage, 0), pages - 1)
+                const pagedPast = past.slice(safePage * COUNTDOWN_HISTORY_PAGE_SIZE, (safePage + 1) * COUNTDOWN_HISTORY_PAGE_SIZE)
+
+                /** 一条重要日：整行可点，点开详情弹窗（编辑 / 保存 / 删除都在弹窗里） */
+                const row = (item: CoupleCountdownItem, index: number, isPast: boolean) => {
+                  const itemId = safeDisplayText(item?.id, `countdown-${index}`)
+                  const itemTitle = safeDisplayText(item.title, '未命名重要日')
+                  const itemDate = safeDisplayText(item.date)
+                  const itemEmoji = safeDisplayText(item.emoji, '📅')
+                  const target = new Date(`${itemDate}T00:00:00`)
+                  const now = new Date()
+                  now.setHours(0, 0, 0, 0)
+                  const days = Math.ceil((target.getTime() - now.getTime()) / 86_400_000)
+                  const label = days > 0 ? `还有 ${days} 天` : days === 0 ? '🎉 就是今天！' : `已过去 ${-days} 天`
+                  const soon = days >= 0 && days <= 7
+                  const chipClass = isPast
+                    ? 'border-slate-200 bg-slate-50 text-slate-400'
+                    : days === 0
+                      ? 'border-rose-200 bg-rose-50 text-rose-600'
+                      : soon
+                        ? 'border-amber-200 bg-amber-50 text-amber-600'
+                        : 'border-brand-200 bg-brand-50 text-brand-600'
+                  return (
+                    <button
+                      key={itemId}
+                      type="button"
+                      className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 text-left transition active:scale-[0.99]"
+                      title="点击查看详情、编辑保存"
+                      onClick={() => openCountdownEditor(item)}
+                    >
+                      <span className="text-xl">{itemEmoji || '📅'}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className={`truncate text-sm font-semibold ${isPast ? 'text-slate-500' : 'text-slate-700'}`}>{itemTitle}</div>
+                        <div className="text-[11px] text-slate-400">{itemDate}</div>
                       </div>
-                    )
-                  })}
+                      <span className={`chip shrink-0 ${chipClass}`}>{label}</span>
+                    </button>
+                  )
+                }
+
+                if (allItems.length === 0) {
+                  return <p className="py-4 text-center text-xs text-slate-400">还没有重要日，添加一个吧～</p>
+                }
+                return (
+                  <>
+                    {upcoming.length === 0 ? (
+                      <p className="py-3 text-center text-xs text-slate-400">当前没有还没到的重要日，看看下面的历史记录吧～</p>
+                    ) : (
+                      <div className="space-y-2">{upcoming.map((item, index) => row(item, index, false))}</div>
+                    )}
+                    {past.length > 0 && (
+                      <div className="space-y-2 rounded-xl bg-slate-50 p-2">
+                        <div className="flex items-center justify-between px-1">
+                          <h4 className="text-xs font-semibold text-slate-500">📜 历史重要日</h4>
+                          <span className="text-[10px] text-slate-400">共 {past.length} 个</span>
+                        </div>
+                        <div className="space-y-2">{pagedPast.map((item, index) => row(item, index, true))}</div>
+                        <Pager page={safePage} total={past.length} pageSize={COUNTDOWN_HISTORY_PAGE_SIZE} onChange={setCountdownHistoryPage} />
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+
+              {/* 详情弹窗：展示并编辑单条重要日，保存后双方实时同步；也可以在这里删除 */}
+              {countdownEditingId && (
+                <div
+                  className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 p-0 sm:items-center sm:p-4"
+                  onClick={closeCountdownEditor}
+                >
+                  <div
+                    className="w-full max-w-sm space-y-3 rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-semibold text-slate-700">重要日详情</h4>
+                      <button type="button" className="btn-ghost px-2 py-1 text-xs" onClick={closeCountdownEditor}>关闭</button>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-center text-3xl">{COUNTDOWN_EMOJIS.includes(countdownEditForm.emoji) ? countdownEditForm.emoji : '📅'}</div>
+                      <select
+                        className="input w-full"
+                        value={COUNTDOWN_EMOJIS.includes(countdownEditForm.emoji) ? countdownEditForm.emoji : '📅'}
+                        onChange={(event) => setCountdownEditForm((form) => ({ ...form, emoji: event.target.value }))}
+                      >
+                        {COUNTDOWN_EMOJIS.map((emoji) => <option key={emoji} value={emoji}>{emoji}</option>)}
+                      </select>
+                      <input
+                        className="input w-full"
+                        placeholder="名称"
+                        maxLength={30}
+                        value={countdownEditForm.title}
+                        onChange={(event) => setCountdownEditForm((form) => ({ ...form, title: event.target.value }))}
+                      />
+                      <input
+                        className="input w-full"
+                        type="date"
+                        value={countdownEditForm.date}
+                        onChange={(event) => setCountdownEditForm((form) => ({ ...form, date: event.target.value }))}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className="btn-ghost flex-1 py-2 text-xs text-rose-500"
+                        disabled={countdownSaving}
+                        onClick={() => {
+                          const id = countdownEditingId
+                          closeCountdownEditor()
+                          void removeCountdown(id)
+                        }}
+                      >
+                        删除
+                      </button>
+                      <button type="button" className="btn-primary flex-1 py-2 text-xs" disabled={countdownSaving} onClick={() => void saveCountdownEdit()}>
+                        {countdownSaving ? '保存中…' : '保存'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </section>

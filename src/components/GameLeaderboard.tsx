@@ -78,6 +78,12 @@ export default function GameLeaderboard({ game, myId, friendId, names, version }
         const board = await listCoupleGame2048Board(myId, friendId)
         setRecords(board.records)
         setTodayRows(board.today)
+      } else if (game === 'animalmatch') {
+        // 消消乐只看今天：本地 0 点转 UTC 范围查询，东八区不会差一天，每天 0 点榜单清空重开；
+        // 库内每人每天只留一条最高分，所以这里的每条 = 该玩家今天的最好成绩（含关卡）
+        const dayStart = new Date()
+        dayStart.setHours(0, 0, 0, 0)
+        setRows(await listCoupleGameScores(myId, friendId, game, 10, dayStart.toISOString()))
       } else {
         setRows(await listCoupleGameScores(myId, friendId, game, 10))
       }
@@ -149,7 +155,11 @@ export default function GameLeaderboard({ game, myId, friendId, names, version }
       <div className="flex items-center justify-between gap-2">
         <h4 className="text-xs font-semibold text-slate-600">🏆 情侣排行榜</h4>
         <span className="text-[10px] text-slate-400">
-          {is2048 ? '共同纪录 + 今日前 10' : '每局结束自动上榜'}
+          {is2048
+            ? '共同纪录 + 今日前 10'
+            : game === 'animalmatch'
+              ? '今日排行 · 每天零点重置'
+              : '每局结束自动上榜'}
         </span>
       </div>
 
@@ -210,7 +220,9 @@ export default function GameLeaderboard({ game, myId, friendId, names, version }
           </div>
         )
       ) : rows.length === 0 ? (
-        <p className="py-2 text-center text-[11px] text-slate-400">还没有成绩，第一个上榜的就是你～</p>
+        <p className="py-2 text-center text-[11px] text-slate-400">
+          {game === 'animalmatch' ? '今天还没有成绩，第一个上榜的就是你～' : '还没有成绩，第一个上榜的就是你～'}
+        </p>
       ) : (
         <ol className="space-y-1">
           {rows.map((row, i) => (
