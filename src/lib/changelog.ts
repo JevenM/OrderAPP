@@ -25,6 +25,15 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.10.19',
+    date: '2026-11-14',
+    title: '互动空间新增「💡 关灯挑战」',
+    items: [
+      { kind: 'new', text: '单机小游戏加入新成员「关灯挑战」：5×5 点灯翻转解谜，点击任意格子自身和上下左右一起翻转，把所有灯熄灭即胜利，统计点击步数' },
+      { kind: 'improve', text: '开局灯阵从全灭随机生成，保证必有解；支持「新一局」和「重置本局」，胜利弹窗带撒花特效，适配电脑和手机' },
+    ],
+  },
+  {
     version: '1.10.18',
     date: '2026-11-14',
     title: '刮刮乐刮得更轻松：40% 揭晓 · 刮痕加宽',

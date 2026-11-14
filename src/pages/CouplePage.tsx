@@ -142,6 +142,7 @@ import ScratchTicket from '../components/ScratchTicket'
 import Star2048 from '../components/Star2048'
 import AnimalMatch from '../components/AnimalMatch'
 import WatermelonGame from '../components/WatermelonGame'
+import LightsOut from '../components/LightsOut'
 import {
   LOVE_TREE_LOOKBACK,
   isDormantTree,
@@ -4550,6 +4551,7 @@ export default function CouplePage() {
                 { id: 'star2048', icon: '✨', title: '星尘 2048', detail: '滑动合并方块' },
                 { id: 'animalmatch', icon: '🐾', title: '动物世界消消乐', detail: '7 卡槽三消，多层堆叠' },
                 { id: 'bigwatermelon', icon: '🍈', title: '合成大西瓜', detail: '点击放水果，合出大西瓜' },
+                { id: 'lightsout', icon: '💡', title: '关灯挑战', detail: '5×5 翻转解谜，全灭即胜利' },
               ],
             },
             {
@@ -6773,6 +6775,19 @@ export default function CouplePage() {
                 friendId={friendId ?? ''}
                 names={{ [myId ?? '']: memberName, [friendId ?? '']: friendName }}
               />
+            </section>
+          )}
+
+          {/* 💡 关灯挑战：5×5 点灯翻转解谜，纯单机 */}
+          {activeModule === 'lightsout' && (
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
+              <div>
+                <h3 className="font-semibold">💡 关灯挑战</h3>
+                <p className="mt-1 text-xs text-slate-400">
+                  点击任意格子，它和上下左右一起翻转亮灭；把 25 盏灯全部熄灭即胜利，看谁用的步数少。
+                </p>
+              </div>
+              <LightsOut />
             </section>
           )}
 
