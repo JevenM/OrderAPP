@@ -6784,7 +6784,7 @@ export default function CouplePage() {
               <div>
                 <h3 className="font-semibold">💡 关灯挑战</h3>
                 <p className="mt-1 text-xs text-slate-400">
-                  点击任意格子，它和上下左右一起翻转亮灭；把 25 盏灯全部熄灭即胜利，看谁用的步数少。
+                  点击任意格子，它和上下左右一起翻转亮灭，全部熄灭即胜利。
                 </p>
               </div>
               <LightsOut />
