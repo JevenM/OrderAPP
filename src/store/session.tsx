@@ -10,14 +10,14 @@ const KEY = 'order-app-session-v2'
 const ACTIVITY_KEY = 'order-app-session-active-at'
 
 /**
- * 闲置多久就自动退出登录（毫秒）。改这一个常量即可，默认 30 分钟。
+ * 闲置多久就自动退出登录（毫秒）。改这一个常量即可，默认 60 分钟。
  * 手机落在桌上、或在公共设备上登录完忘了退，登录态不该一直挂着。
  *
  * 注意：本项目是「邀请码 + Supabase RPC 校验」，登录态只存在于浏览器 localStorage，
  * 并没有服务端会话，所以这个过期只能在前端判定。若要真正的服务端会话（别的设备也能
  * 感知、服务端可强制踢下线），需要引入会话表或改用 Supabase Auth。
  */
-export const SESSION_IDLE_TIMEOUT = 30 * 60 * 1000
+export const SESSION_IDLE_TIMEOUT = 60 * 60 * 1000
 /** 活动时间的写入节流：鼠标动一下就写一次 localStorage 太浪费 */
 const ACTIVITY_FLUSH_MS = 20_000
 /** 多久检查一次有没有超时 */

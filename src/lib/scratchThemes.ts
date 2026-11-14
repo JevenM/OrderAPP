@@ -103,8 +103,8 @@ export const SCRATCH_THEMES: ScratchTheme[] = [
     slogan: '黑金鎏光 · 点石成金',
     image: `${import.meta.env.BASE_URL}scratch-themes/dianshichengjin.jpg`,
     fallback: 'linear-gradient(158deg,#0e0d10 0%,#221b11 40%,#4b3618 70%,#0b0a0c 100%)',
-    ink: '#f7e7c2',
-    inkSoft: 'rgba(247,231,194,0.62)',
+    ink: '#616155',
+    inkSoft: 'rgba(48, 45, 39, 0.62)',
     accent: '#f0c466',
     panel: '#1b1712',
     panelInk: '#f2d391',
@@ -261,7 +261,7 @@ export const SCRATCH_CELL_COUNT = 9
 export const SCRATCH_CELL_MAX = 9
 
 /** 单格刮开多少比例算「这格刮开了」 */
-export const CELL_REVEAL_RATIO = 0.6
+export const CELL_REVEAL_RATIO = 0.4
 
 /** 没中奖的格子里刮出来的安慰小字（等概率随机，尽量不重复） */
 export const SCRATCH_CELL_FILLER: string[] = [

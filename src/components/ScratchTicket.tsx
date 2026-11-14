@@ -15,7 +15,7 @@ import {
  * - 票头：主题名、副标题、彩票编号
  * - 多格玩法：票面印着「中奖号码」，刮奖区 3×3 小涂层格，
  *   每格藏着「号码 + 文字」，号码对上就赢该格奖励，全部刮开整票揭晓
- * - 单格玩法（老票兼容）：一整块涂层，刮开 60% 自动整张揭晓
+ * - 单格玩法（老票兼容）：一整块涂层，刮开 40% 自动整张揭晓
  * - 票尾：纯娱乐提示（没有任何充值 / 兑奖入口）
  *
  * 涂层只存在于前端；「是否已揭晓」由父组件按数据库状态决定，所以刷新后依然是揭开的票面。
@@ -28,7 +28,7 @@ const COVER_H = 360
 const CELL_W = 200
 const CELL_H = 150
 /** 刮开比例达到这个值就自动揭晓 */
-const REVEAL_RATIO = 0.6
+const REVEAL_RATIO = 0.4
 
 const TIER_META: Record<ScratchTier, { icon: string; label: string }> = {
   big: { icon: '🏆', label: '甜蜜大奖' },
@@ -87,7 +87,7 @@ function paintCover(ctx: CanvasRenderingContext2D, w: number, h: number, hint = 
   ctx.fillText('🎫  刮开涂层', w / 2, h / 2 - 12)
   ctx.fillStyle = 'rgba(104,116,134,0.72)'
   ctx.font = '500 13px system-ui,-apple-system,sans-serif'
-  ctx.fillText('刮开 60% 自动揭晓', w / 2, h / 2 + 20)
+  ctx.fillText('刮开 40% 自动揭晓', w / 2, h / 2 + 20)
 }
 
 /**
@@ -161,17 +161,17 @@ function ScratchLayer({
     ctx.globalCompositeOperation = 'destination-out'
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    // 从上一点连到当前点，快速滑动也不会断成一串圆点
+    // 从上一点连到当前点，快速滑动也不会断成一串圆点；刮痕加宽后刮开速度明显更快
     const last = lastRef.current
     if (last) {
-      ctx.lineWidth = 46 * radiusScale
+      ctx.lineWidth = 58 * radiusScale
       ctx.beginPath()
       ctx.moveTo(last.x, last.y)
       ctx.lineTo(x, y)
       ctx.stroke()
     }
     ctx.beginPath()
-    ctx.arc(x, y, 23 * radiusScale, 0, Math.PI * 2)
+    ctx.arc(x, y, 29 * radiusScale, 0, Math.PI * 2)
     ctx.fill()
     lastRef.current = { x, y }
 
@@ -398,7 +398,7 @@ export default function ScratchTicket({
         {/* 刮奖区 */}
         <div className="flex flex-1 items-center py-2">
           {multi ? (
-            /* 多格：3×3 小涂层，每格独立刮开 60% 揭晓该格 */
+            /* 多格：3×3 小涂层，每格独立刮开 40% 揭晓该格 */
             <div className="grid w-full grid-cols-3 gap-1.5">
               {cells!.map((cell, i) => {
                 const open = isOpen(i)
@@ -461,7 +461,7 @@ export default function ScratchTicket({
               })}
             </div>
           ) : (
-            /* 单格（老票兼容）：一整块涂层，刮开 60% 自动整张揭晓 */
+            /* 单格（老票兼容）：一整块涂层，刮开 40% 自动整张揭晓 */
             <div
               className="relative aspect-video w-full overflow-hidden rounded-xl"
               style={{ background: theme.panel, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.08)' }}

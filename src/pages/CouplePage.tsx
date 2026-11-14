@@ -1029,7 +1029,7 @@ function readScratchTheme(): ScratchThemeId {
 
 /**
  * 单张票的票面与涂层都在 ScratchTicket 里：
- * 主题背景、票头编号、刮奖区银粉涂层、60% 自动揭晓、刮擦音效。
+ * 主题背景、票头编号、刮奖区银粉涂层、40% 自动揭晓、刮擦音效。
  * 这个页面只负责「抽卡 / 揭晓 / 同步」这三件事。
  */
 
@@ -4234,7 +4234,7 @@ export default function CouplePage() {
     }
   }
 
-  /** 刮开自己的票揭晓：刮满 60% 自动触发；记录里写「谁刮的 + 结果」，双方都看得到 */
+  /** 刮开自己的票揭晓：刮满 40% 自动触发；记录里写「谁刮的 + 结果」，双方都看得到 */
   const revealScratch = async () => {
     if (!memberId || !friendId || scratchSaving) return
     setScratchSaving(true)
@@ -6525,7 +6525,7 @@ export default function CouplePage() {
                 <div>
                   <h3 className="font-semibold">🎫 情侣刮刮乐</h3>
                   <p className="mt-1 text-xs text-slate-400">
-                    每天各抽一张，票面上印着「中奖号码」，刮奖区有 9 个小涂层格——刮出和它相同的号码，就能赢得那格下的奖励；全刮开整票揭晓。纯娱乐，不涉及真实金钱。
+                    刮开刮奖区和「中奖号码」相同的号码，就能赢得那格下的奖励；全刮开整票揭晓。
                   </p>
                 </div>
                 <button
