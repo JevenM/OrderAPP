@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 
 /**
  * 回声洞窟：全黑暗洞穴探路游戏，纯单机。
@@ -406,6 +405,8 @@ export default function EchoCavern() {
   const [isTouch] = useState(() => typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0))
   /** 横屏全屏模式（进入对局后可一键开启，手机上同时锁定横屏） */
   const [fullscreen, setFullscreen] = useState(false)
+  /** 全屏后提示手机打开自动旋转 / 横过来玩（几秒后自动消失） */
+  const [fsHint, setFsHint] = useState(false)
 
   const worldRef = useRef<World | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -422,6 +423,8 @@ export default function EchoCavern() {
   const ballBarRef = useRef<HTMLDivElement>(null)
   /** 触屏投掷盘的环形力度反馈（conic-gradient 由主循环驱动） */
   const ballRingRef = useRef<HTMLDivElement>(null)
+  /** 竖屏下方「扔球」按钮的蓄力条 */
+  const ballBar2Ref = useRef<HTMLDivElement>(null)
   const facingRef = useRef({ x: 0, y: -1 })
   const audioRef = useRef<AudioContext | null>(null)
   const droneGainRef = useRef<GainNode | null>(null)
@@ -592,6 +595,14 @@ export default function EchoCavern() {
     }
   }, [throwBall])
 
+  /** 脚下轻声发声（空格 / 竖屏下方「发声」按钮共用）：比点击 ping 更轻、范围更小 */
+  const footPing = useCallback(() => {
+    const w = worldRef.current
+    if (!w || w.state !== 'play') return
+    doEmit(w.player.x, w.player.y, 0.85, 440, 0, 440)
+    playPing(0.08)
+  }, [doEmit, playPing])
+
   const onCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (phase !== 'playing') return
     ensureAudio()
@@ -653,11 +664,7 @@ export default function EchoCavern() {
       if (e.repeat) return
       if (e.code === 'Space') {
         // 空格：在脚下发声（比点击的 ping 更轻、照明与引怪范围也更小）
-        const w = worldRef.current
-        if (w && w.state === 'play') {
-          doEmit(w.player.x, w.player.y, 0.85, 440, 0, 440)
-          playPing(0.08)
-        }
+        footPing()
       } else if (e.code === 'KeyE') {
         // 按住 E 蓄力，松手甩出
         if (chargeAtRef.current === null) chargeAtRef.current = performance.now()
@@ -685,7 +692,7 @@ export default function EchoCavern() {
       window.removeEventListener('blur', blur)
       keysRef.current.clear()
     }
-  }, [phase, levelIdx, doEmit, playPing, releaseBallCharge, startLevel, ensureAudio])
+  }, [phase, levelIdx, footPing, releaseBallCharge, startLevel, ensureAudio])
 
   /* ------------------------------ 主循环 ------------------------------ */
 
@@ -933,6 +940,7 @@ export default function EchoCavern() {
         chargeRef.current = Math.min(1, (performance.now() - chargeAtRef.current) / THROW_CHARGE_MS)
       }
       if (ballBarRef.current) ballBarRef.current.style.width = `${(chargeRef.current * 100).toFixed(1)}%`
+      if (ballBar2Ref.current) ballBar2Ref.current.style.width = `${(chargeRef.current * 100).toFixed(1)}%`
       if (ballRingRef.current) {
         ballRingRef.current.style.background =
           chargeRef.current > 0.005
@@ -1203,17 +1211,26 @@ export default function EchoCavern() {
     const el = stageRef.current
     if (!el) return
     void el.requestFullscreen().catch(() => {})
+    // 锁横屏在 iOS 等环境常不可用：提示用户手动打开自动旋转后横过来
+    if (isTouch) {
+      setFsHint(true)
+      window.setTimeout(() => setFsHint(false), 4000)
+    }
     try {
       const so = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }
       void so.lock?.('landscape').catch(() => {})
     } catch {
       // 桌面端或不支持方向锁定的浏览器：忽略即可，全屏本身已生效
     }
-  }, [])
+  }, [isTouch])
 
   useEffect(() => {
     if (phase !== 'playing') return
-    const onFs = () => setFullscreen(Boolean(document.fullscreenElement))
+    const onFs = () => {
+      const fs = Boolean(document.fullscreenElement)
+      setFullscreen(fs)
+      if (!fs) setFsHint(false)
+    }
     document.addEventListener('fullscreenchange', onFs)
     return () => {
       document.removeEventListener('fullscreenchange', onFs)
@@ -1286,6 +1303,31 @@ export default function EchoCavern() {
     onPointerCancel: releaseBallCharge,
   }
 
+  /* ------------------------------ 竖屏下方按钮（触屏非全屏时） ------------------------------ */
+
+  /** 方向按钮复用键盘输入通道：按下往 keysRef 加键、松手删键，主循环无需感知来源 */
+  const padDir = (dir: 'up' | 'down' | 'left' | 'right') => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault()
+      ensureAudio()
+      keysRef.current.add(dir)
+    },
+    onPointerUp: (e: React.PointerEvent) => {
+      e.preventDefault()
+      keysRef.current.delete(dir)
+    },
+    onPointerLeave: () => keysRef.current.delete(dir),
+    onPointerCancel: () => keysRef.current.delete(dir),
+  })
+
+  /** 退出全屏时摇杆 / 下方按钮随之卸载，清掉可能残留的按住状态 */
+  useEffect(() => {
+    if (!fullscreen) {
+      keysRef.current.clear()
+      joyReset()
+    }
+  }, [fullscreen, joyReset])
+
   /* ------------------------------ 关卡选择页 ------------------------------ */
 
   if (phase === 'intro') {
@@ -1296,7 +1338,7 @@ export default function EchoCavern() {
           <ul className="space-y-1 text-[11px] leading-relaxed text-slate-400">
             <li>· 点击 / 轻触任意处发出声波，波前触壁便会短暂描出轮廓，几秒后消退；远处的墙要等更久才成像</li>
             <li>· 暖色小人是你，青色光点是目标：WASD / 方向键移动，空格在脚下发声，R 重开本层</li>
-            <li>· 手机端点右上 ⛶ 一键横屏全屏，左下角滑动摇杆控制方向</li>
+            <li>· 手机竖屏玩：画面下方按钮移动 / 发声 / 蓄力扔球，不遮挡画面；点右上 ⛶ 全屏并横过来，改用更顺手的摇杆 + 投掷盘</li>
             <li>· 拾尽青色光点即可深入下一层；每层 3 颗心，被影扑掉一颗回出生点</li>
             <li>· 每层 2 枚「回音球」：按住 E / 右下投掷盘蓄力、松手甩出——球沿抛物线飞出、撞墙反弹，撞得多重照得多远；停下后转为常亮灯笼，持续照亮周围一圈，当地标或诱饵都行（它的响动比你的 ping 更引影）</li>
             <li>· 注意：你的每一次发声，也会把 560 内的游走的影引过来；它贴近 210 就会追你</li>
@@ -1420,8 +1462,8 @@ export default function EchoCavern() {
           </div>
         </div>
 
-        {/* 触屏滑动摇杆：浅色透明，左下角，支持斜向与半速 */}
-        {isTouch && (
+        {/* 摇杆：仅横屏全屏时显示（竖屏用画面下方的按钮，不遮挡画面） */}
+        {isTouch && fullscreen && (
           <div
             ref={joyBaseRef}
             className="absolute bottom-4 left-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-white/20 bg-white/10 backdrop-blur-sm"
@@ -1435,8 +1477,8 @@ export default function EchoCavern() {
           </div>
         )}
 
-        {/* 触屏投掷盘：右下角，按住蓄力（环形力度反馈），松手沿面朝方向甩出 */}
-        {isTouch && (
+        {/* 投掷盘：仅横屏全屏时显示，右下角，按住蓄力（环形力度反馈） */}
+        {isTouch && fullscreen && (
           <div
             className={`absolute bottom-4 right-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-white/20 bg-white/10 backdrop-blur-sm transition ${hud.balls <= 0 ? 'opacity-40' : ''}`}
             {...ballPadHandlers}
@@ -1446,18 +1488,17 @@ export default function EchoCavern() {
             <span className="pointer-events-none absolute bottom-1.5 text-[10px] text-white/40">{hud.balls > 0 ? '按住蓄力' : '已用完'}</span>
           </div>
         )}
-      </div>
 
-      {!fullscreen && (
-        <p className="text-center text-[11px] leading-relaxed text-slate-400">
-          点屏幕发声音探路 · WASD / 方向键移动{isTouch ? ' · 左下摇杆移动 / 右下按住蓄力甩球' : ''} · 空格脚下发声 · R 重开
-        </p>
-      )}
+        {/* 全屏横屏提示：锁屏方向不可用时的引导 */}
+        {fullscreen && fsHint && (
+          <div className="pointer-events-none absolute left-1/2 top-12 -translate-x-1/2 whitespace-nowrap rounded-lg bg-black/70 px-3 py-1.5 text-[11px] text-amber-200 ring-1 ring-amber-400/40">
+            建议打开手机「自动旋转」并横过来玩，摇杆与投掷盘已就位
+          </div>
+        )}
 
-      {/* 结算弹窗 */}
-      {result &&
-        createPortal(
-          <div className="fixed inset-0 z-50 flex touch-none items-center justify-center overscroll-contain bg-black/70 p-4 backdrop-blur-sm">
+        {/* 结算弹窗：渲染在舞台内部——全屏模式下也能正常弹出（全屏顶层会盖住 portal 到 body 的弹窗） */}
+        {result && (
+          <div className="absolute inset-0 z-20 flex touch-none items-center justify-center overscroll-contain bg-black/70 p-4 backdrop-blur-sm">
             <div className="animate-fade w-full max-w-xs space-y-3 rounded-2xl border border-cyan-400/30 bg-slate-900 p-5 text-center shadow-xl">
               <div className="text-4xl">{result.kind === 'clear' ? (result.isLast ? '🏆' : '🧭') : '🌑'}</div>
               <p className="font-bold tracking-widest text-cyan-200">
@@ -1498,9 +1539,69 @@ export default function EchoCavern() {
                 </div>
               )}
             </div>
-          </div>,
-          document.body
+          </div>
         )}
+      </div>
+
+      {/* 竖屏触屏：画面下方按钮排，不遮挡游戏画面 */}
+      {isTouch && !fullscreen && (
+        <div className="flex items-end justify-between gap-3 px-0.5">
+          <div className="grid grid-cols-3 gap-1.5">
+            <span />
+            <button type="button" className="flex h-12 w-12 touch-none select-none items-center justify-center rounded-xl border border-slate-600/50 bg-slate-800/70 text-lg leading-none text-cyan-200 transition active:bg-cyan-500/30" {...padDir('up')}>
+              ▲
+            </button>
+            <span />
+            <button type="button" className="flex h-12 w-12 touch-none select-none items-center justify-center rounded-xl border border-slate-600/50 bg-slate-800/70 text-lg leading-none text-cyan-200 transition active:bg-cyan-500/30" {...padDir('left')}>
+              ◀
+            </button>
+            <button type="button" className="flex h-12 w-12 touch-none select-none items-center justify-center rounded-xl border border-slate-600/50 bg-slate-800/70 text-lg leading-none text-cyan-200 transition active:bg-cyan-500/30" {...padDir('down')}>
+              ▼
+            </button>
+            <button type="button" className="flex h-12 w-12 touch-none select-none items-center justify-center rounded-xl border border-slate-600/50 bg-slate-800/70 text-lg leading-none text-cyan-200 transition active:bg-cyan-500/30" {...padDir('right')}>
+              ▶
+            </button>
+          </div>
+          <div className="flex items-end gap-2">
+            <button
+              type="button"
+              className="flex h-12 touch-none select-none items-center rounded-xl border border-slate-600/50 bg-slate-800/70 px-3 text-xs font-semibold text-cyan-200 transition active:bg-cyan-500/30"
+              onClick={footPing}
+            >
+              📢 发声
+            </button>
+            <button
+              type="button"
+              className={`relative flex h-12 touch-none select-none items-center overflow-hidden rounded-xl border border-slate-600/50 bg-slate-800/70 px-3 text-xs font-semibold text-amber-200 transition active:bg-amber-500/25 ${hud.balls <= 0 ? 'opacity-40' : ''}`}
+              onPointerDown={(e) => {
+                e.preventDefault()
+                ensureAudio()
+                const w = worldRef.current
+                if (w && w.state === 'play' && w.ballsLeft > 0) {
+                  chargeAtRef.current = performance.now()
+                  e.currentTarget.setPointerCapture(e.pointerId)
+                }
+              }}
+              onPointerUp={(e) => {
+                e.preventDefault()
+                releaseBallCharge()
+              }}
+              onPointerCancel={releaseBallCharge}
+            >
+              <div ref={ballBar2Ref} className="absolute inset-x-0 bottom-0 h-1 bg-amber-400" style={{ width: '0%' }} />
+              🎾 蓄力 {hud.balls}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!fullscreen && (
+        <p className="text-center text-[11px] leading-relaxed text-slate-400">
+          点屏幕发声音探路 ·
+          {isTouch ? ' 下方按钮移动 / 发声 / 扔球 · 顶部 ⛶ 全屏后用摇杆更顺手' : ' WASD / 方向键移动 · 空格脚下发声'} · R 重开
+        </p>
+      )}
+
     </div>
   )
 }
