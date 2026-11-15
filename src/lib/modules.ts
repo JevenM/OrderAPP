@@ -18,6 +18,7 @@ export type ModuleKey =
   | 'animalmatch'
   | 'bigwatermelon'
   | 'lightsout'
+  | 'echocavern'
   | 'changelog'
   | 'about'
 
@@ -56,6 +57,7 @@ export const MODULE_DEFS: ModuleDef[] = [
   { key: 'animalmatch', icon: '🐾', title: '动物世界消消乐', desc: '羊了个羊式多层遮挡三消', group: 'game' },
   { key: 'bigwatermelon', icon: '🍈', title: '合成大西瓜', desc: '点击放水果，同款相融合体', group: 'game' },
   { key: 'lightsout', icon: '💡', title: '关灯挑战', desc: '5×5 点灯翻转解谜，全部熄灭即胜利', group: 'game' },
+  { key: 'echocavern', icon: '🕳️', title: '回声洞窟', desc: '全黑洞穴声波探路，捡光点、躲游走的影', group: 'game' },
   { key: 'changelog', icon: '📋', title: '更新日志', desc: '右上角「更多」里的更新日志入口与自动弹窗', group: 'app' },
   { key: 'about', icon: '💕', title: '关于我们', desc: '右上角「更多」里的关于我们页面入口', group: 'app' },
 ]

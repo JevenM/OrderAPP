@@ -143,6 +143,7 @@ import Star2048 from '../components/Star2048'
 import AnimalMatch from '../components/AnimalMatch'
 import WatermelonGame from '../components/WatermelonGame'
 import LightsOut from '../components/LightsOut'
+import EchoCavern from '../components/EchoCavern'
 import {
   LOVE_TREE_LOOKBACK,
   isDormantTree,
@@ -4552,6 +4553,7 @@ export default function CouplePage() {
                 { id: 'animalmatch', icon: '🐾', title: '动物世界消消乐', detail: '7 卡槽三消，多层堆叠' },
                 { id: 'bigwatermelon', icon: '🍈', title: '合成大西瓜', detail: '点击放水果，合出大西瓜' },
                 { id: 'lightsout', icon: '💡', title: '关灯挑战', detail: '5×5 翻转解谜，全灭即胜利' },
+                { id: 'echocavern', icon: '🕳️', title: '回声洞窟', detail: '全黑声波探路，捡光点躲影' },
               ],
             },
             {
@@ -6788,6 +6790,19 @@ export default function CouplePage() {
                 </p>
               </div>
               <LightsOut />
+            </section>
+          )}
+
+          {/* 🕳️ 回声洞窟：全黑声波探路，捡光点躲影，纯单机 */}
+          {activeModule === 'echocavern' && (
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
+              <div>
+                <h3 className="font-semibold">🕳️ 回声洞窟</h3>
+                <p className="mt-1 text-xs text-slate-400">
+                  白点是你，点击发出声波吸引影；捡齐蓝闪光点过关，别撞到游走的影。
+                </p>
+              </div>
+              <EchoCavern />
             </section>
           )}
 
