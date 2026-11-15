@@ -17,8 +17,10 @@ import { createPortal } from 'react-dom'
  * 补偿线索：贴身 128px 墙壁微亮、影隔 1~2s 冒窸窣微光、影被回声扫到显形、
  * 靠近时屏幕暗红警戒 + 低频轰鸣。三条命，被扑掉一条回出生点。
  *
- * 回音球：每层 2 枚，扔出去后它会自己弹墙探路，沿途定时发出小声波；
- * 影会被它的回声引到它那边——扔到远处当诱饵，本体趁暗摸路。
+ * 回音球：每层 2 枚，按住蓄力松手甩出——带重力抛物线飞行、撞壁按恢复系数 0.62 反弹、
+ * 速度指数衰减，最终在低洼处滚动停下。物理事件自己成为声学事件：撞墙就是一次微型 ping
+ * （照明半径 = 140 + 0.8×撞击速度，上限 340），沿飞行路径每 40px 打一个声记点拖出暖色亮带。
+ * 球的可视范围刻意小于玩家 ping，引怪半径却更大（×1.6）——球是更好的诱饵，玩家是更好的探照灯。
  *
  * 三层固定布局（背图循环）：浅层洞穴 → 回声回廊 → 深渊核心。
  * 拾尽青色光点即深入下一层；结算给用时与发声次数，最佳纪录存 localStorage。
@@ -35,16 +37,25 @@ const GH = H / CELL
 const SPEED = 520 // 声波扩散 px/s
 const LIFE = 2.2 // 回声在墙上停留秒数
 const BANDT = 0.2 // 波前亮带宽度（秒）
-const MAXP = 5 // 同时存在的声波上限
+const MAXP = 24 // 同时存在的声波上限（球沿路打声记点，消耗快）
 const WALL_R = 128 // 贴身感知半径
 const BORDER = 26 // 洞壁外框厚度
 const PING_ALERT_R = 560 // 影被声波惊动的半径
 const CHASE_R = 210 // 影贴到这个距离转追击
 const PLAYER_SPEED = 172
-const BALL_SPEED = 300 // 回音球初速
-const BALL_LIFE = 7 // 回音球寿命 s
-const BALL_PING_GAP = 0.85 // 回音球发声间隔 s
-const BALL_PING_MAX = 6 // 回音球最多发声次数
+/* --- 回音球物理：重力抛物线 + 恢复系数反弹 + 指数衰减，撞壁本身就是声学事件 --- */
+const BALL_GRAV = 300 // 重力加速度 px/s²（球抛出后沿抛物线坠落，最终滚向洞窟低处停住）
+const BALL_REST = 0.62 // 撞壁恢复系数 e
+const BALL_REST_MIN = 60 // 撞击速度低于此值不再反弹（直接贴壁滚动，避免抖动）
+const BALL_DRAG = 0.8 // 空气阻力（速度指数衰减系数 /s）
+const BALL_STOP_SPEED = 16 // 低于该速度视为滚动停下
+const BALL_LANTERN_R = 180 // 停下的球作为常亮灯笼的照明半径（暖光）
+const THROW_MIN = 240 // 最小蓄力初速
+const THROW_MAX = 560 // 满蓄力初速（用力甩球照得更远）
+const THROW_CHARGE_MS = 1100 // 蓄力到满所需时间
+const TRAIL_GAP = 40 // 声记点间距 px
+const TRAIL_MIN_SPEED = 70 // 低于该速度不再打声记（滚动时安静）
+const TRAIL_R = 150 // 声记点照明半径
 const BALLS_PER_LEVEL = 2
 const DANGER_R = 250 // 暗红警戒触发半径
 
@@ -162,6 +173,8 @@ let shared: {
   echoImg: ImageData
   echo32: Uint32Array
   acc: Float32Array
+  /** 暖色能量缓冲（球撞击的暖色回声），与 acc 按比例混色 */
+  warm: Float32Array
 } | null = null
 
 function getShared(): typeof shared {
@@ -183,6 +196,7 @@ function getShared(): typeof shared {
     echoImg,
     echo32: new Uint32Array(echoImg.data.buffer),
     acc: new Float32Array(GW * GH),
+    warm: new Float32Array(GW * GH),
   }
   return shared
 }
@@ -194,6 +208,10 @@ interface Pulse {
   y: number
   t0: number
   power: number
+  /** 照明半径上限：波前超过该距离不再点亮墙壁（玩家 ping 560 / 球撞击 140~340） */
+  maxD: number
+  /** 暖色占比 0~1：0=玩家 ping 的锐利青蓝，1=球撞击的柔和暖色 */
+  warm: number
 }
 
 interface Shadow {
@@ -213,15 +231,16 @@ interface Shadow {
   skitter: number
 }
 
-/** 回音球：扔出去自动弹墙探路，沿途定时发出小声波 */
+/** 回音球：蓄力甩出，带重力抛物线飞行、撞壁反弹（恢复系数 0.62）、速度指数衰减，
+ *  撞壁本身就是一次微型 ping（半径随撞击速度），沿飞行路径每 40px 打一个声记点 */
 interface EchoBall {
   x: number
   y: number
   vx: number
   vy: number
   bornAt: number
-  nextPingAt: number
-  pings: number
+  /** 距上个声记点的累计飞行距离 */
+  dist: number
 }
 
 interface World {
@@ -396,6 +415,13 @@ export default function EchoCavern() {
   const joyRef = useRef({ x: 0, y: 0, active: false })
   const joyBaseRef = useRef<HTMLDivElement>(null)
   const joyThumbRef = useRef<HTMLDivElement>(null)
+  /** 回音球蓄力起始时间（按住 E / 按钮期间非空，松手时按持有时长换算力度） */
+  const chargeAtRef = useRef<number | null>(null)
+  /** 蓄力进度镜像（0~1），供按钮指示条直接操作 DOM */
+  const chargeRef = useRef(0)
+  const ballBarRef = useRef<HTMLDivElement>(null)
+  /** 触屏投掷盘的环形力度反馈（conic-gradient 由主循环驱动） */
+  const ballRingRef = useRef<HTMLDivElement>(null)
   const facingRef = useRef({ x: 0, y: -1 })
   const audioRef = useRef<AudioContext | null>(null)
   const droneGainRef = useRef<GainNode | null>(null)
@@ -500,18 +526,21 @@ export default function EchoCavern() {
 
   /* ------------------------------ 发声 / 回音球 ------------------------------ */
 
-  /** 发出声波：回音球的声波不计入「我的发声」，但同样会把影引到声源处 */
-  const doEmit = useCallback((x: number, y: number, power: number, fromBall = false) => {
+  /**
+   * 发出声波。maxD 决定照明半径（波前超过即不再点亮），warm>0 渲染为球撞击的柔和暖色，
+   * alertR 为引怪半径（球撞击刻意更大 = 更好的诱饵）。回音球的声波不计入「我的发声」。
+   */
+  const doEmit = useCallback((x: number, y: number, power: number, maxD: number, warm = 0, alertR = PING_ALERT_R, fromBall = false) => {
     const w = worldRef.current
     if (!w || w.state !== 'play') return
     x = Math.max(4, Math.min(W - 4, x))
     y = Math.max(4, Math.min(H - 4, y))
-    w.pulses.push({ x, y, t0: performance.now() / 1000, power })
+    w.pulses.push({ x, y, t0: performance.now() / 1000, power, maxD, warm })
     if (w.pulses.length > MAXP) w.pulses.shift()
     if (!fromBall) w.pingsUsed += 1
     for (const s of w.shadows) {
       const d = Math.hypot(s.x - x, s.y - y)
-      if (d < PING_ALERT_R) {
+      if (d < alertR) {
         s.alert = 5.0
         s.chase = false
         s.ax = x
@@ -523,30 +552,45 @@ export default function EchoCavern() {
 
   const pingAt = useCallback(
     (x: number, y: number) => {
-      doEmit(x, y, 1.0)
+      // 玩家 ping：锐利、亮、硬朗的波前，照明与引怪半径同为 560
+      doEmit(x, y, 1.0, PING_ALERT_R, 0, PING_ALERT_R)
       playPing()
     },
     [doEmit, playPing]
   )
 
-  /** 扔回音球：沿玩家朝向飞出，弹墙探路、定时小声波，把影引到它那边 */
-  const throwBall = useCallback(() => {
-    const w = worldRef.current
-    if (!w || w.state !== 'play' || w.ballsLeft <= 0) return
-    w.ballsLeft -= 1
-    const f = facingRef.current
-    const len = Math.hypot(f.x, f.y) || 1
-    w.balls.push({
-      x: w.player.x,
-      y: w.player.y,
-      vx: (f.x / len) * BALL_SPEED,
-      vy: (f.y / len) * BALL_SPEED,
-      bornAt: performance.now() / 1000,
-      nextPingAt: 0,
-      pings: 0,
-    })
-    playTone(980, 0.18, 0.07)
-  }, [playTone])
+  /** 按蓄力程度（0~1）甩出回音球：用力越大初速越快，撞击声波越强、照得越远 */
+  const throwBall = useCallback(
+    (charge: number) => {
+      const w = worldRef.current
+      if (!w || w.state !== 'play' || w.ballsLeft <= 0) return
+      w.ballsLeft -= 1
+      const f = facingRef.current
+      const len = Math.hypot(f.x, f.y) || 1
+      const speed = THROW_MIN + (THROW_MAX - THROW_MIN) * Math.max(0, Math.min(1, charge))
+      w.balls.push({
+        x: w.player.x,
+        y: w.player.y,
+        vx: (f.x / len) * speed,
+        vy: (f.y / len) * speed,
+        bornAt: performance.now() / 1000,
+        dist: 0,
+      })
+      playTone(980, 0.18, 0.07)
+    },
+    [playTone]
+  )
+
+  /** 结束蓄力并按持有时长换算力度甩球（键盘松开 / 按钮松手共用） */
+  const releaseBallCharge = useCallback(() => {
+    const start = chargeAtRef.current
+    chargeAtRef.current = null
+    chargeRef.current = 0
+    if (start !== null) {
+      const charge = Math.max(0.08, Math.min(1, (performance.now() - start) / THROW_CHARGE_MS))
+      throwBall(charge)
+    }
+  }, [throwBall])
 
   const onCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (phase !== 'playing') return
@@ -608,14 +652,15 @@ export default function EchoCavern() {
       if (e.code === 'Space' || e.code === 'KeyR' || e.code === 'KeyE') e.preventDefault()
       if (e.repeat) return
       if (e.code === 'Space') {
-        // 空格：在脚下发声
+        // 空格：在脚下发声（比点击的 ping 更轻、照明与引怪范围也更小）
         const w = worldRef.current
         if (w && w.state === 'play') {
-          doEmit(w.player.x, w.player.y, 0.85)
+          doEmit(w.player.x, w.player.y, 0.85, 440, 0, 440)
           playPing(0.08)
         }
       } else if (e.code === 'KeyE') {
-        throwBall()
+        // 按住 E 蓄力，松手甩出
+        if (chargeAtRef.current === null) chargeAtRef.current = performance.now()
       } else if (e.code === 'KeyR') {
         startLevel(levelIdx)
       }
@@ -623,8 +668,14 @@ export default function EchoCavern() {
     const up = (e: KeyboardEvent) => {
       const d = DIRS[e.code]
       if (d) keysRef.current.delete(d)
+      else if (e.code === 'KeyE') releaseBallCharge()
     }
-    const blur = () => keysRef.current.clear()
+    const blur = () => {
+      keysRef.current.clear()
+      // 失焦时不误甩，只取消蓄力
+      chargeAtRef.current = null
+      chargeRef.current = 0
+    }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
     window.addEventListener('blur', blur)
@@ -634,7 +685,7 @@ export default function EchoCavern() {
       window.removeEventListener('blur', blur)
       keysRef.current.clear()
     }
-  }, [phase, levelIdx, doEmit, playPing, throwBall, startLevel, ensureAudio])
+  }, [phase, levelIdx, doEmit, playPing, releaseBallCharge, startLevel, ensureAudio])
 
   /* ------------------------------ 主循环 ------------------------------ */
 
@@ -645,7 +696,7 @@ export default function EchoCavern() {
     if (!canvas || !s) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    const { echoCv, echoCtx, echoImg, echo32, acc } = s
+    const { echoCv, echoCtx, echoImg, echo32, acc, warm } = s
     let raf = 0
     let lastT = performance.now() / 1000
 
@@ -822,31 +873,48 @@ export default function EchoCavern() {
           }
         }
 
-        /* --- 回音球 --- */
-        for (let i = w.balls.length - 1; i >= 0; i--) {
-          const b = w.balls[i]
-          const age = tNow - b.bornAt
-          if (age > BALL_LIFE || b.pings >= BALL_PING_MAX) {
-            w.balls.splice(i, 1)
-            continue
+        /* --- 回音球：重力抛物线 + 恢复系数反弹 + 指数衰减；撞壁本身是一次微型 ping --- */
+        const ballImpact = (b: EchoBall, impact: number) => {
+          if (impact < 30) return // 轻触不算声学事件
+          // 撞击半径由速度映射：r = 140 + 0.8·|v|，上限 340；引怪半径 ×1.6（球是更好的诱饵）
+          const r = Math.max(140, Math.min(340, 140 + 0.8 * impact))
+          doEmit(b.x, b.y, 0.45 + Math.min(0.45, impact / 900), r, 1, r * 1.6, true)
+          playTone(240 + impact * 0.5, 0.16, 0.05)
+        }
+        for (const b of w.balls) {
+          // 重力 + 指数空气阻力
+          b.vy += BALL_GRAV * dt
+          const drag = Math.exp(-BALL_DRAG * dt)
+          b.vx *= drag
+          b.vy *= drag
+          let sp = Math.hypot(b.vx, b.vy)
+          if (sp < BALL_STOP_SPEED) {
+            // 滚动停下：不再发出声音，转为常亮灯笼（暖光照亮周围一圈洞壁），直到本层结束
+            b.vx = 0
+            b.vy = 0
+            sp = 0
           }
-          const bx = b.x + b.vx * dt
-          const by = b.y + b.vy * dt
-          if (!blocked(w.solid, bx, b.y, 4)) b.x = bx
+          if (sp <= 0) continue
+          const nx = b.x + b.vx * dt
+          if (!blocked(w.solid, nx, b.y, 4)) b.x = nx
           else {
-            b.vx *= -0.92
-            playTone(420 + Math.random() * 120, 0.1, 0.035)
+            const impact = Math.abs(b.vx)
+            b.vx = impact > BALL_REST_MIN ? -b.vx * BALL_REST : 0
+            ballImpact(b, impact)
           }
-          if (!blocked(w.solid, b.x, by, 4)) b.y = by
+          const ny = b.y + b.vy * dt
+          if (!blocked(w.solid, b.x, ny, 4)) b.y = ny
           else {
-            b.vy *= -0.92
-            playTone(420 + Math.random() * 120, 0.1, 0.035)
+            const impact = Math.abs(b.vy)
+            b.vy = impact > BALL_REST_MIN ? -b.vy * BALL_REST : 0
+            ballImpact(b, impact)
           }
-          if (tNow >= b.nextPingAt) {
-            b.nextPingAt = tNow + BALL_PING_GAP
-            b.pings += 1
-            doEmit(b.x, b.y, 0.45, true)
-            playPing(0.05, 0.3)
+          // 声记点：沿飞行路径每 40px 打一个静止小声源 → 拖出连续晕开的暖色亮带
+          b.dist += sp * dt
+          if (b.dist >= TRAIL_GAP && sp > TRAIL_MIN_SPEED) {
+            b.dist = 0
+            doEmit(b.x, b.y, 0.22, TRAIL_R, 0.8, 0, true)
+            playPing(0.03, 0.22)
           }
         }
 
@@ -860,6 +928,18 @@ export default function EchoCavern() {
       /* ---------------- 低频轰鸣：danger² 驱动 ---------------- */
       if (droneGainRef.current) droneGainRef.current.gain.value = mutedRef.current ? 0 : w.danger * w.danger * 0.075
 
+      /* ---------------- 蓄力指示：直接驱动按钮进度条 / 投掷盘力度环（绕过 React 渲染） ---------------- */
+      if (chargeAtRef.current !== null) {
+        chargeRef.current = Math.min(1, (performance.now() - chargeAtRef.current) / THROW_CHARGE_MS)
+      }
+      if (ballBarRef.current) ballBarRef.current.style.width = `${(chargeRef.current * 100).toFixed(1)}%`
+      if (ballRingRef.current) {
+        ballRingRef.current.style.background =
+          chargeRef.current > 0.005
+            ? `conic-gradient(rgba(255,185,80,0.95) ${(chargeRef.current * 360).toFixed(0)}deg, rgba(255,255,255,0.12) 0deg)`
+            : 'rgba(255,255,255,0.12)'
+      }
+
       /* ================= 渲染 ================= */
       ctx.globalCompositeOperation = 'source-over'
       ctx.fillStyle = '#03050b'
@@ -867,11 +947,13 @@ export default function EchoCavern() {
 
       /* --- 回声层：边界单元逐环渲染（核心） --- */
       acc.fill(0)
+      warm.fill(0)
       const { xs: edgeX, ys: edgeY, idx: edgeI, n } = w.edges
       for (let k = 0; k < n; k++) {
         const x = edgeX[k]
         const y = edgeY[k]
         let v = 0
+        let wv = 0
 
         // 1) 贴身感知：离玩家越近，墙壁微微发亮（触觉）
         const pdx = x - w.player.x
@@ -879,21 +961,36 @@ export default function EchoCavern() {
         const pd = Math.sqrt(pdx * pdx + pdy * pdy)
         if (pd < WALL_R) v += 0.34 * (1 - pd / WALL_R)
 
+        // 1.5) 停下的回音球 = 常亮灯笼：暖光持续照亮周围一圈洞壁（无延迟、不消退）
+        for (const b of w.balls) {
+          if (b.vx !== 0 || b.vy !== 0) continue
+          const bdx = x - b.x
+          const bdy = y - b.y
+          const bd = Math.sqrt(bdx * bdx + bdy * bdy)
+          if (bd < BALL_LANTERN_R) {
+            const lv = 0.3 * (1 - bd / BALL_LANTERN_R)
+            v += lv
+            wv += lv
+          }
+        }
+
         // 2) 声波回声：按「到声源的距离」决定点亮时刻（远处延迟更久才成像），
-        //    抵达后波前亮带 + 距离能量衰减 + 生命周期淡出
+        //    抵达后波前亮带 + 距离能量衰减 + 生命周期淡出；maxD 之外一概不亮
         for (const p of w.pulses) {
           const waveR = (tNow - p.t0) * SPEED
           if (waveR <= 0) continue
           const dx = x - p.x
           const dy = y - p.y
           const d = Math.sqrt(dx * dx + dy * dy)
-          if (d > waveR) continue // 波还没到 → 仍然是黑的
+          if (d > waveR || d > p.maxD) continue // 波还没到 / 超出照明半径 → 仍然是黑的
           const since = (waveR - d) / SPEED // 被照亮了多久
           if (since > LIFE) continue // 早已消退
           const fade = 1 - since / LIFE
           const energy = 1 / (1 + d / 470) // 距离能量衰减
           const band = 0.55 + 0.45 * Math.exp(-(since / BANDT) * (since / BANDT)) // 波前最亮
-          v += fade * energy * band * p.power
+          const c = fade * energy * band * p.power
+          v += c
+          if (p.warm > 0) wv += c * p.warm
         }
 
         if (v < 0.014) continue
@@ -905,9 +1002,16 @@ export default function EchoCavern() {
         acc[i + 1] += v * 0.45
         acc[i - GW] += v * 0.45
         acc[i + GW] += v * 0.45
+        if (wv > 0) {
+          warm[i] += wv
+          warm[i - 1] += wv * 0.45
+          warm[i + 1] += wv * 0.45
+          warm[i - GW] += wv * 0.45
+          warm[i + GW] += wv * 0.45
+        }
       }
 
-      // 4) 写入 ImageData（青蓝 → 高亮处转白），Uint32 直写
+      // 4) 写入 ImageData（玩家 ping=青蓝锐利 / 球撞击=琥珀暖色，按暖色占比混色，高亮处转白），Uint32 直写
       for (let i = 0, len = acc.length; i < len; i++) {
         const v = acc[i]
         if (v <= 0.0015) {
@@ -916,9 +1020,11 @@ export default function EchoCavern() {
         }
         const c = v > 1.6 ? 1.6 : v
         const k = c > 1 ? 1 : c
-        let r = k * 72
-        let g = k * 240
-        let b = k * 215
+        // 暖色占比：该像素被球回声照到的能量份额
+        const wr = Math.max(0, Math.min(1, warm[i] / v))
+        let r = k * (72 + 165 * wr)
+        let g = k * (240 - 85 * wr)
+        let b = k * (215 - 135 * wr)
         if (c > 0.85) {
           const t = Math.min(1, (c - 0.85) / 0.6)
           r = r * (1 - t) + 205 * t
@@ -932,13 +1038,14 @@ export default function EchoCavern() {
       ctx.imageSmoothingEnabled = true
       ctx.drawImage(echoCv, 0, 0, W, H)
 
-      /* --- 自由空间的波前细环（声波到哪儿了） --- */
+      /* --- 自由空间的波前细环（声波到哪儿了；球的是暖色拖尾感） --- */
       for (const p of w.pulses) {
         const waveR = (tNow - p.t0) * SPEED
-        if (waveR <= 0) continue
-        const a = Math.max(0, 0.16 * (1 - waveR / 1000)) * p.power
+        if (waveR <= 0 || waveR > p.maxD) continue
+        const a = Math.max(0, 0.16 * (1 - waveR / p.maxD)) * p.power
         if (a <= 0.004) continue
-        ctx.strokeStyle = `rgba(90,220,235,${a})`
+        ctx.strokeStyle =
+          p.warm > 0 ? `rgba(255,190,120,${a * 0.9})` : `rgba(90,220,235,${a})`
         ctx.lineWidth = 1.4
         ctx.beginPath()
         ctx.arc(p.x, p.y, waveR, 0, Math.PI * 2)
@@ -959,16 +1066,19 @@ export default function EchoCavern() {
         ctx.fill()
       }
 
-      /* --- 回音球 --- */
+      /* --- 回音球：飞行中亮暖光；停下后转为常亮灯笼（呼吸脉动） --- */
       for (const b of w.balls) {
-        const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, 16)
-        g.addColorStop(0, 'rgba(120,240,255,0.75)')
+        const stopped = b.vx === 0 && b.vy === 0
+        const breath = stopped ? 0.5 + 0.12 * Math.sin(tNow * 2.2) : 0.75
+        const gr = stopped ? 30 : 16
+        const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, gr)
+        g.addColorStop(0, `rgba(255,200,130,${breath})`)
         g.addColorStop(1, 'rgba(0,0,0,0)')
         ctx.fillStyle = g
         ctx.beginPath()
-        ctx.arc(b.x, b.y, 16, 0, Math.PI * 2)
+        ctx.arc(b.x, b.y, gr, 0, Math.PI * 2)
         ctx.fill()
-        ctx.fillStyle = '#dffbff'
+        ctx.fillStyle = stopped ? '#ffe9c8' : '#fff2dd'
         ctx.beginPath()
         ctx.arc(b.x, b.y, 3.5, 0, Math.PI * 2)
         ctx.fill()
@@ -1022,6 +1132,14 @@ export default function EchoCavern() {
         ctx.beginPath()
         ctx.arc(px, py + 11, 8, 0, Math.PI * 2)
         ctx.fill()
+        // 蓄力环：正在蓄力时绕玩家画一圈进度弧，直观显示当前力度
+        if (chargeAtRef.current !== null && chargeRef.current > 0.02) {
+          ctx.strokeStyle = 'rgba(255,185,80,0.9)'
+          ctx.lineWidth = 2.6
+          ctx.beginPath()
+          ctx.arc(px, py - 2, 14, -Math.PI / 2, -Math.PI / 2 + chargeRef.current * Math.PI * 2)
+          ctx.stroke()
+        }
       }
 
       /* --- 影：被回声扫到 / 靠近 / 窸窣时才显形 --- */
@@ -1149,6 +1267,25 @@ export default function EchoCavern() {
     onPointerCancel: joyReset,
   }
 
+  /* ------------------------------ 投掷盘（触屏，右下角） ------------------------------ */
+
+  /** 与 HUD 小按钮同一套蓄力逻辑，但触控目标 112px，且环形力度反馈直接由主循环驱动 */
+  const ballPadHandlers = {
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault()
+      ensureAudio()
+      const w = worldRef.current
+      if (!w || w.state !== 'play' || w.ballsLeft <= 0) return
+      chargeAtRef.current = performance.now()
+      e.currentTarget.setPointerCapture(e.pointerId)
+    },
+    onPointerUp: (e: React.PointerEvent) => {
+      e.preventDefault()
+      releaseBallCharge()
+    },
+    onPointerCancel: releaseBallCharge,
+  }
+
   /* ------------------------------ 关卡选择页 ------------------------------ */
 
   if (phase === 'intro') {
@@ -1161,7 +1298,7 @@ export default function EchoCavern() {
             <li>· 暖色小人是你，青色光点是目标：WASD / 方向键移动，空格在脚下发声，R 重开本层</li>
             <li>· 手机端点右上 ⛶ 一键横屏全屏，左下角滑动摇杆控制方向</li>
             <li>· 拾尽青色光点即可深入下一层；每层 3 颗心，被影扑掉一颗回出生点</li>
-            <li>· 每层有 2 枚「回音球」（E 键或按钮）：扔出去自动弹墙探路，还能把影引到它那边</li>
+            <li>· 每层 2 枚「回音球」：按住 E / 右下投掷盘蓄力、松手甩出——球沿抛物线飞出、撞墙反弹，撞得多重照得多远；停下后转为常亮灯笼，持续照亮周围一圈，当地标或诱饵都行（它的响动比你的 ping 更引影）</li>
             <li>· 注意：你的每一次发声，也会把 560 内的游走的影引过来；它贴近 210 就会追你</li>
             <li>· 贴身 128 内的墙有触觉微亮；影隔 1~2s 冒一下窸窣微光；靠近时屏幕泛暗红、低频轰鸣变响</li>
             <li>· 三层布局固定，第二遍走会明显更快——闭着眼也知道墙在哪</li>
@@ -1244,11 +1381,28 @@ export default function EchoCavern() {
             </span>
             <button
               type="button"
-              className="rounded-md border border-slate-600/50 bg-slate-900/60 px-2 py-1 text-slate-200 transition hover:bg-cyan-500/20 disabled:opacity-40"
+              className="relative overflow-hidden rounded-md border border-slate-600/50 bg-slate-900/60 px-2 py-1 text-slate-200 transition hover:bg-cyan-500/20 disabled:opacity-40"
               disabled={hud.balls <= 0}
-              onClick={throwBall}
-              title="回音球：扔出去自动弹墙探路（E 键）"
+              onPointerDown={(e) => {
+                e.preventDefault()
+                ensureAudio()
+                if (hud.balls > 0) {
+                  chargeAtRef.current = performance.now()
+                  e.currentTarget.setPointerCapture(e.pointerId)
+                }
+              }}
+              onPointerUp={(e) => {
+                e.preventDefault()
+                releaseBallCharge()
+              }}
+              onPointerCancel={releaseBallCharge}
+              title="回音球：按住蓄力，松手甩出——甩得越用力撞墙照得越远；停下后转为常亮灯笼（E 键同样按住蓄力）"
             >
+              <div
+                ref={ballBarRef}
+                className="absolute inset-x-0 bottom-0 h-[3px] bg-amber-400"
+                style={{ width: '0%' }}
+              />
               🎾 {hud.balls}
             </button>
             <button type="button" className="rounded-md border border-slate-600/50 bg-slate-900/60 px-2 py-1 text-slate-200 transition hover:bg-cyan-500/20" onClick={toggleMute} title="音效开关">
@@ -1280,11 +1434,23 @@ export default function EchoCavern() {
             />
           </div>
         )}
+
+        {/* 触屏投掷盘：右下角，按住蓄力（环形力度反馈），松手沿面朝方向甩出 */}
+        {isTouch && (
+          <div
+            className={`absolute bottom-4 right-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-white/20 bg-white/10 backdrop-blur-sm transition ${hud.balls <= 0 ? 'opacity-40' : ''}`}
+            {...ballPadHandlers}
+          >
+            <div ref={ballRingRef} className="pointer-events-none absolute inset-0 rounded-full" style={{ background: 'rgba(255,255,255,0.12)' }} />
+            <span className="pointer-events-none relative text-3xl">🎾</span>
+            <span className="pointer-events-none absolute bottom-1.5 text-[10px] text-white/40">{hud.balls > 0 ? '按住蓄力' : '已用完'}</span>
+          </div>
+        )}
       </div>
 
       {!fullscreen && (
         <p className="text-center text-[11px] leading-relaxed text-slate-400">
-          点屏幕发声音探路 · WASD / 方向键移动{isTouch ? ' · 左下角摇杆移动' : ''} · 空格脚下发声 · E 扔回音球 · R 重开
+          点屏幕发声音探路 · WASD / 方向键移动{isTouch ? ' · 左下摇杆移动 / 右下按住蓄力甩球' : ''} · 空格脚下发声 · R 重开
         </p>
       )}
 
