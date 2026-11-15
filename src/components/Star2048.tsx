@@ -14,6 +14,7 @@ import {
 } from '../lib/db'
 import { TRUTH_PROMPTS } from '../lib/coupleQuestions'
 import { POLL, useRealtime } from '../lib/realtime'
+import { flushPendingSync, onPendingSyncFlushed, queuePendingProgress, queuePendingScore } from '../lib/pendingSync'
 import { setSfxEnabled, sfx, sfxEnabled, subscribeSfx } from '../lib/sfx'
 import GameLeaderboard from './GameLeaderboard'
 
@@ -23,7 +24,7 @@ import GameLeaderboard from './GameLeaderboard'
  * - 分数 / 最高分 / 步数；最高分按棋盘大小分别记，当前局面存 localStorage（刷新接着玩）
  * - 键盘方向键（含 WASD）、触摸滑动、屏幕按钮三种操作
  * - 撤销一步、音效开关、合并 pop 动画与飘分
- * - 每局结束把成绩上传到情侣榜（前 10）
+ * - 每局结束把成绩上传到情侣榜（前 10）；断网时先暂存本机，恢复联网后自动补传
  */
 
 type Dir = 'left' | 'right' | 'up' | 'down'
@@ -308,14 +309,19 @@ export default function Star2048({ myId, friendId, names }: Props) {
     }
     const savePlays = (count: number) =>
       saveCoupleGameProgress({ userId: myId, friendId, game: 'star2048', day: dayKey(), progress: { playsUsed: count } })
-    void savePlays(playsUsed).catch((error) => {
-      // 写失败不能静默丢进度：3 秒后用最新局数重试一次，玩完直接退出页面时最后一局也能存上
-      console.warn('保存防沉迷局数失败，稍后重试', error)
-      window.setTimeout(() => {
-        void savePlays(playsRef.current).catch(() => {})
-      }, 3000)
+    void savePlays(playsUsed).catch(() => {
+      // 写失败（断网等）不静默丢进度：先暂存本机，恢复联网后自动补传（同 key 幂等覆盖，只留最新）
+      queuePendingProgress({ userId: myId, friendId, game: 'star2048', day: dayKey(), progress: { playsUsed: playsRef.current } })
     })
   }, [playsUsed, myId, friendId])
+
+  // 断网期间暂存的成绩 / 进度：进页面就尝试补传；补传成功或后台传完都刷新榜单
+  useEffect(() => {
+    void flushPendingSync().then((n) => {
+      if (n > 0) setLbVersion((v) => v + 1)
+    })
+    return onPendingSyncFlushed(() => setLbVersion((v) => v + 1))
+  }, [])
 
   // 远端恢复：重新登录 / 换设备后，把今天的局数从数据库找回来
   useEffect(() => {
@@ -437,17 +443,19 @@ export default function Star2048({ myId, friendId, names }: Props) {
       if (reportedRef.current === roundRef.current) return
       if (finalScore <= 0 || !myId || !friendId) return
       reportedRef.current = roundRef.current
-      void addCoupleGameScore({
+      const payload: Parameters<typeof addCoupleGameScore>[0] = {
         userA: myId,
         userB: friendId,
         game: 'star2048',
         playerId: myId,
         score: finalScore,
         detail: `${gameSize}×${gameSize} · ${finalMoves} 步${achieved ? ' · 达成 2048' : ''}`,
-      })
+      }
+      void addCoupleGameScore(payload)
         .then(() => setLbVersion((v) => v + 1))
         .catch(() => {
-          // 成绩上传失败不影响继续玩
+          // 上传失败（断网 / 瞬时抖动）先暂存本机，恢复联网后自动补传进情侣榜
+          queuePendingScore(payload)
         })
     },
     [myId, friendId]

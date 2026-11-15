@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { addCoupleGameScore, getCoupleGameProgress, saveCoupleGameProgress } from '../lib/db'
+import { flushPendingSync, onPendingSyncFlushed, queuePendingScore } from '../lib/pendingSync'
 import { setSfxEnabled, sfx, sfxEnabled, subscribeSfx } from '../lib/sfx'
 import GameLeaderboard from './GameLeaderboard'
 
@@ -521,17 +522,19 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
   function reportScore(final: number) {
     if (final <= 0 || !myId || !friendId || reportedRef.current) return
     reportedRef.current = true
-    void addCoupleGameScore({
+    const payload: Parameters<typeof addCoupleGameScore>[0] = {
       userA: myId,
       userB: friendId,
       game: 'bigwatermelon',
       playerId: myId,
       score: final,
       detail: '合成大西瓜',
-    })
+    }
+    void addCoupleGameScore(payload)
       .then(() => setLbVersion((v) => v + 1))
       .catch(() => {
-        // 上传失败不影响游戏
+        // 上传失败（断网 / 瞬时抖动）先暂存本机，恢复联网后自动补传进情侣榜
+        queuePendingScore(payload)
       })
   }
 
@@ -783,6 +786,14 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
   }, [persistState])
 
   useEffect(() => subscribeSfx(() => setSfxOn(sfxEnabled())), [])
+
+  // 断网期间暂存的成绩：进页面就尝试补传，传完刷新榜单
+  useEffect(() => {
+    void flushPendingSync().then((n) => {
+      if (n > 0) setLbVersion((v) => v + 1)
+    })
+    return onPendingSyncFlushed(() => setLbVersion((v) => v + 1))
+  }, [])
 
   // 结束弹窗打开时锁住页面滚动，触摸弹窗不会带动整页滚动
   useEffect(() => {

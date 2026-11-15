@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { addCoupleGameScore, getCoupleGameProgress, saveCoupleGameProgress } from '../lib/db'
+import { flushPendingSync, onPendingSyncFlushed, queuePendingScore } from '../lib/pendingSync'
 import { setSfxEnabled, sfx, sfxEnabled, subscribeSfx } from '../lib/sfx'
 import GameLeaderboard from './GameLeaderboard'
 
@@ -535,21 +536,31 @@ export default function AnimalMatch({ myId, friendId, names }: Props) {
       }
       const detail = `第 ${level} 关 · ${kind === 'win' ? '通关' : '失败'}`
       if (finalScore <= 0 || !myId || !friendId) return
-      void addCoupleGameScore({
+      const payload: Parameters<typeof addCoupleGameScore>[0] = {
         userA: myId,
         userB: friendId,
         game: 'animalmatch',
         playerId: myId,
         score: finalScore,
         detail,
-      })
+      }
+      void addCoupleGameScore(payload)
         .then(() => setLbVersion((v) => v + 1))
         .catch(() => {
-          // 上传失败不影响游戏
+          // 上传失败（断网 / 瞬时抖动）先暂存本机，恢复联网后自动补传进情侣榜
+          queuePendingScore(payload)
         })
     },
     [level, myId, friendId]
   )
+
+  // 断网期间暂存的成绩：进页面就尝试补传，传完刷新榜单
+  useEffect(() => {
+    void flushPendingSync().then((n) => {
+      if (n > 0) setLbVersion((v) => v + 1)
+    })
+    return onPendingSyncFlushed(() => setLbVersion((v) => v + 1))
+  }, [])
 
   const clickCard = useCallback(
     (card: Card) => {
