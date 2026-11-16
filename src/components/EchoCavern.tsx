@@ -13,8 +13,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  *   后放大绘制（globalCompositeOperation='lighter' + 双线性插值得到柔光）。
  *
  * 信息稀缺带来的张力：发声有代价——560px 内的影警觉、朝声源调查；贴近 210px 转追击。
- * 补偿线索：贴身 128px 墙壁微亮、影隔 1~2s 冒窸窣微光、影被回声扫到显形、
- * 靠近时屏幕暗红警戒 + 低频轰鸣。三条命，被扑掉一条回出生点。
+ * 影在黑暗中完全隐形，只有回声波前扫过它、或停下的回音球灯笼照亮它时才显形；
+ * 唯一的存在感线索是靠近时屏幕暗红警戒 + 低频轰鸣。三条命，被扑掉一条回出生点。
  *
  * 回音球：每层 2 枚，按住蓄力松手甩出——带重力抛物线飞行、撞壁按恢复系数 0.62 反弹、
  * 速度指数衰减，最终在低洼处滚动停下。物理事件自己成为声学事件：撞墙就是一次微型 ping
@@ -89,76 +89,96 @@ const LEVELS: LevelDef[] = [
   {
     key: 'shallow',
     name: '浅层洞穴',
-    desc: '六块散落岩石，空间开阔 · 1 只影',
+    desc: '散石与短墙构成松散通道 · 1 只影',
     start: [78, 560],
     rocks: [
-      { t: 'c', x: 330, y: 190, r: 58 },
-      { t: 'c', x: 620, y: 300, r: 66 },
-      { t: 'r', x: 140, y: 330, w: 150, h: 70 },
-      { t: 'c', x: 810, y: 170, r: 48 },
-      { t: 'r', x: 400, y: 470, w: 200, h: 56 },
-      { t: 'c', x: 760, y: 500, r: 52 },
+      { t: 'r', x: 240, y: 90, w: 200, h: 52 },
+      { t: 'c', x: 620, y: 180, r: 66 },
+      { t: 'r', x: 430, y: 260, w: 220, h: 52 },
+      { t: 'c', x: 300, y: 420, r: 58 },
+      { t: 'r', x: 640, y: 380, w: 52, h: 180 },
+      { t: 'r', x: 130, y: 540, w: 180, h: 52 },
+      { t: 'c', x: 860, y: 520, r: 54 },
     ],
     orbs: [
-      [250, 120],
-      [700, 120],
-      [480, 340],
-      [860, 560],
+      [150, 180],
+      [520, 180],
+      [880, 120],
+      [760, 300],
+      [360, 560],
+      [860, 600],
     ],
-    shadows: [[520, 580]],
+    shadows: [[700, 560]],
   },
   {
     key: 'gallery',
     name: '回声回廊',
-    desc: '长墙与圆岩交错，逼你贴边走 · 2 只影',
+    desc: '迷宫回廊：岔路交错，回声会骗人 · 2 只影',
     start: [78, 560],
     rocks: [
-      { t: 'r', x: 150, y: 140, w: 90, h: 330 },
-      { t: 'c', x: 430, y: 170, r: 62 },
-      { t: 'r', x: 380, y: 300, w: 320, h: 60 },
-      { t: 'c', x: 820, y: 250, r: 70 },
-      { t: 'c', x: 300, y: 520, r: 58 },
-      { t: 'r', x: 620, y: 470, w: 230, h: 70 },
-      { t: 'c', x: 170, y: 570, r: 46 },
+      // 上层横墙（留两处豁口）
+      { t: 'r', x: 180, y: 160, w: 260, h: 50 },
+      { t: 'r', x: 560, y: 160, w: 240, h: 50 },
+      // 中层横墙（留三处豁口）
+      { t: 'r', x: 60, y: 380, w: 240, h: 50 },
+      { t: 'r', x: 360, y: 380, w: 200, h: 50 },
+      { t: 'r', x: 640, y: 380, w: 260, h: 50 },
+      // 竖墙把豁口错开，制造 T 形岔路
+      { t: 'r', x: 460, y: 90, w: 50, h: 130 },
+      { t: 'r', x: 300, y: 470, w: 50, h: 120 },
+      { t: 'r', x: 760, y: 470, w: 50, h: 120 },
+      // 圆岩堵在通道转角
+      { t: 'c', x: 180, y: 300, r: 55 },
+      { t: 'c', x: 880, y: 300, r: 60 },
+      { t: 'c', x: 520, y: 540, r: 58 },
     ],
     orbs: [
-      [110, 90],
-      [350, 240],
-      [600, 200],
-      [890, 430],
-      [480, 580],
+      [100, 80],
+      [380, 300],
+      [700, 300],
+      [900, 60],
+      [150, 600],
+      [880, 600],
     ],
     shadows: [
-      [700, 130],
-      [250, 590],
+      [420, 560],
+      [880, 120],
     ],
   },
   {
     key: 'abyss',
-    name: '深渊核心',
-    desc: '双柱十字纵深，安全区狭小 · 3 只影',
+    name: '深渊迷宫',
+    desc: '层叠墙体步步收紧，三条岔路通向同一片黑暗 · 3 只影',
     start: [78, 80],
     rocks: [
-      { t: 'c', x: 300, y: 200, r: 70 },
-      { t: 'c', x: 620, y: 200, r: 70 },
-      { t: 'r', x: 420, y: 120, w: 60, h: 260 },
-      { t: 'r', x: 120, y: 380, w: 300, h: 60 },
-      { t: 'c', x: 560, y: 480, r: 76 },
-      { t: 'r', x: 760, y: 100, w: 60, h: 300 },
-      { t: 'c', x: 200, y: 560, r: 54 },
-      { t: 'r', x: 700, y: 480, w: 200, h: 60 },
+      // 上区竖墙：错位悬挂，只留贴边或绕行的缝隙
+      { t: 'r', x: 200, y: 0, w: 50, h: 200 },
+      { t: 'r', x: 420, y: 120, w: 50, h: 200 },
+      { t: 'r', x: 640, y: 0, w: 50, h: 200 },
+      { t: 'r', x: 860, y: 120, w: 50, h: 240 },
+      // 中层横墙
+      { t: 'r', x: 80, y: 300, w: 300, h: 50 },
+      { t: 'r', x: 480, y: 300, w: 200, h: 50 },
+      { t: 'r', x: 760, y: 380, w: 200, h: 50 },
+      // 下层横墙：与中层错开半个身位
+      { t: 'r', x: 260, y: 480, w: 260, h: 50 },
+      { t: 'r', x: 620, y: 480, w: 340, h: 50 },
+      // 圆岩镇守转角
+      { t: 'c', x: 140, y: 520, r: 55 },
+      { t: 'c', x: 320, y: 160, r: 48 },
     ],
     orbs: [
-      [150, 200],
-      [510, 72],
-      [850, 560],
-      [350, 520],
-      [160, 480],
+      [120, 180],
+      [500, 80],
+      [720, 80],
+      [880, 600],
+      [160, 600],
+      [600, 600],
     ],
     shadows: [
-      [400, 590],
-      [880, 300],
-      [620, 585],
+      [470, 580],
+      [760, 100],
+      [300, 240],
     ],
   },
 ]
@@ -225,9 +245,6 @@ interface Shadow {
   chase: boolean
   ax: number
   ay: number
-  /** 窸窣微光强度（0~1，随时间衰减） */
-  glow: number
-  skitter: number
 }
 
 /** 回音球：蓄力甩出，带重力抛物线飞行、撞壁反弹（恢复系数 0.62）、速度指数衰减，
@@ -348,8 +365,6 @@ function buildWorld(level: LevelDef): World {
       chase: false,
       ax: x,
       ay: y,
-      glow: 0,
-      skitter: 0.5 + Math.random(),
     })),
     player: { x: level.start[0], y: level.start[1], vx: 0, vy: 0, r: 11, inv: 0 },
     hearts: 3,
@@ -426,6 +441,8 @@ export default function EchoCavern() {
   /** 竖屏下方「扔球」按钮的蓄力条 */
   const ballBar2Ref = useRef<HTMLDivElement>(null)
   const facingRef = useRef({ x: 0, y: -1 })
+  /** 下一次影耳语的允许时间（s），避免连发 */
+  const whisperAtRef = useRef(0)
   const audioRef = useRef<AudioContext | null>(null)
   const droneGainRef = useRef<GainNode | null>(null)
   const mutedRef = useRef(muted)
@@ -446,18 +463,28 @@ export default function EchoCavern() {
     }
     try {
       const c = new AudioContext()
-      const o = c.createOscillator()
-      o.type = 'sawtooth'
-      o.frequency.value = 51
+      // 双失谐锯齿（48 / 51.3Hz）：拍频天然令人不安；慢速 LFO 推低通，轰鸣像在「呼吸」
       const f = c.createBiquadFilter()
       f.type = 'lowpass'
       f.frequency.value = 190
+      for (const freq of [48, 51.3]) {
+        const o = c.createOscillator()
+        o.type = 'sawtooth'
+        o.frequency.value = freq
+        o.connect(f)
+        o.start()
+      }
+      const lfo = c.createOscillator()
+      lfo.frequency.value = 0.13
+      const lg = c.createGain()
+      lg.gain.value = 55
+      lfo.connect(lg)
+      lg.connect(f.frequency)
+      lfo.start()
       const g = c.createGain()
       g.gain.value = 0
-      o.connect(f)
       f.connect(g)
       g.connect(c.destination)
-      o.start()
       audioRef.current = c
       droneGainRef.current = g
       return c
@@ -466,23 +493,28 @@ export default function EchoCavern() {
     }
   }, [])
 
-  /** 声波：1150Hz 滑到 240Hz 的短促音 */
+  /** 声波：880→190Hz 暗沉下滑 + 两次渐弱回响，像声音在岩壁间弹射 */
   const playPing = useCallback((vol = 0.1, dur = 0.45) => {
     const c = audioRef.current
     if (!c || mutedRef.current) return
     const t = c.currentTime
-    const o = c.createOscillator()
-    const g = c.createGain()
-    o.type = 'sine'
-    o.frequency.setValueAtTime(1150, t)
-    o.frequency.exponentialRampToValueAtTime(240, t + dur)
-    g.gain.setValueAtTime(0.0001, t)
-    g.gain.exponentialRampToValueAtTime(vol, t + 0.01)
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.05)
-    o.connect(g)
-    g.connect(c.destination)
-    o.start(t)
-    o.stop(t + dur + 0.1)
+    const mk = (t0: number, v: number) => {
+      const o = c.createOscillator()
+      const g = c.createGain()
+      o.type = 'sine'
+      o.frequency.setValueAtTime(880, t0)
+      o.frequency.exponentialRampToValueAtTime(190, t0 + dur)
+      g.gain.setValueAtTime(0.0001, t0)
+      g.gain.exponentialRampToValueAtTime(v, t0 + 0.01)
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur + 0.05)
+      o.connect(g)
+      g.connect(c.destination)
+      o.start(t0)
+      o.stop(t0 + dur + 0.1)
+    }
+    mk(t, vol)
+    mk(t + 0.21, vol * 0.38)
+    mk(t + 0.43, vol * 0.16)
   }, [])
 
   /** 短音（拾取 / 过关 / 回音球撞墙） */
@@ -504,11 +536,38 @@ export default function EchoCavern() {
     o.stop(t + dur + 0.05)
   }, [])
 
-  /** 被扑住：低通噪声 */
+  /** 被扑住：低频闷爆下坠 + 双失谐锯齿尖啸 + 噪声冲击三层叠加 */
   const playHit = useCallback(() => {
     const c = audioRef.current
     if (!c || mutedRef.current) return
     const t = c.currentTime
+    // 1) 52→28Hz 低频闷爆，胸腔震动感
+    const o = c.createOscillator()
+    const og = c.createGain()
+    o.type = 'sine'
+    o.frequency.setValueAtTime(52, t)
+    o.frequency.exponentialRampToValueAtTime(28, t + 0.5)
+    og.gain.setValueAtTime(0.5, t)
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.55)
+    o.connect(og)
+    og.connect(c.destination)
+    o.start(t)
+    o.stop(t + 0.6)
+    // 2) 620 / 657Hz 双锯齿同时下坠——失谐音程像尖叫
+    for (const f0 of [620, 657]) {
+      const s = c.createOscillator()
+      const sg = c.createGain()
+      s.type = 'sawtooth'
+      s.frequency.setValueAtTime(f0, t)
+      s.frequency.exponentialRampToValueAtTime(90, t + 0.55)
+      sg.gain.setValueAtTime(0.1, t)
+      sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.55)
+      s.connect(sg)
+      sg.connect(c.destination)
+      s.start(t)
+      s.stop(t + 0.6)
+    }
+    // 3) 低通噪声冲击，滤波快速闭合
     const len = Math.floor(c.sampleRate * 0.6)
     const buf = c.createBuffer(1, len, c.sampleRate)
     const ch = buf.getChannelData(0)
@@ -517,10 +576,89 @@ export default function EchoCavern() {
     src.buffer = buf
     const f = c.createBiquadFilter()
     f.type = 'lowpass'
-    f.frequency.value = 400
+    f.frequency.setValueAtTime(900, t)
+    f.frequency.exponentialRampToValueAtTime(160, t + 0.5)
     const g = c.createGain()
-    g.gain.setValueAtTime(0.5, t)
+    g.gain.setValueAtTime(0.45, t)
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.6)
+    src.connect(f)
+    f.connect(g)
+    g.connect(c.destination)
+    src.start(t)
+  }, [])
+
+  /** 影的窸窣耳语：贴近但看不见的影偶尔发出，是黑暗里唯一的听觉线索 */
+  const playWhisper = useCallback(() => {
+    const c = audioRef.current
+    if (!c || mutedRef.current) return
+    const t = c.currentTime
+    const len = Math.floor(c.sampleRate * 0.9)
+    const buf = c.createBuffer(1, len, c.sampleRate)
+    const ch = buf.getChannelData(0)
+    // 呼吸状包络：先吸后吐
+    for (let i = 0; i < len; i++) {
+      const u = i / len
+      const env = Math.sin(Math.PI * u) * Math.sin(Math.PI * u * 2.7)
+      ch[i] = (Math.random() * 2 - 1) * env * 0.6
+    }
+    const src = c.createBufferSource()
+    src.buffer = buf
+    const f = c.createBiquadFilter()
+    f.type = 'bandpass'
+    f.frequency.setValueAtTime(2400 + Math.random() * 800, t)
+    f.frequency.exponentialRampToValueAtTime(900, t + 0.85)
+    f.Q.value = 6
+    const g = c.createGain()
+    g.gain.value = 0.05
+    src.connect(f)
+    f.connect(g)
+    g.connect(c.destination)
+    src.start(t)
+  }, [])
+
+  /** 拾取光点：幽暗三音铃（含一个三全音，微带寒意但仍 rewarding） */
+  const playChime = useCallback(() => {
+    const c = audioRef.current
+    if (!c || mutedRef.current) return
+    const t = c.currentTime
+    for (const [f0, v] of [
+      [523, 0.07],
+      [740, 0.05],
+      [1046, 0.025],
+    ]) {
+      const o = c.createOscillator()
+      const g = c.createGain()
+      o.type = 'sine'
+      o.frequency.value = f0
+      g.gain.setValueAtTime(0.0001, t)
+      g.gain.exponentialRampToValueAtTime(v, t + 0.02)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.8)
+      o.connect(g)
+      g.connect(c.destination)
+      o.start(t)
+      o.stop(t + 0.85)
+    }
+  }, [])
+
+  /** 甩球：气声呼啸（带通噪声快速下扫） */
+  const playWhoosh = useCallback(() => {
+    const c = audioRef.current
+    if (!c || mutedRef.current) return
+    const t = c.currentTime
+    const len = Math.floor(c.sampleRate * 0.3)
+    const buf = c.createBuffer(1, len, c.sampleRate)
+    const ch = buf.getChannelData(0)
+    for (let i = 0; i < len; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / len)
+    const src = c.createBufferSource()
+    src.buffer = buf
+    const f = c.createBiquadFilter()
+    f.type = 'bandpass'
+    f.frequency.setValueAtTime(1800, t)
+    f.frequency.exponentialRampToValueAtTime(300, t + 0.28)
+    f.Q.value = 2.5
+    const g = c.createGain()
+    g.gain.setValueAtTime(0.12, t)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3)
     src.connect(f)
     f.connect(g)
     g.connect(c.destination)
@@ -548,7 +686,6 @@ export default function EchoCavern() {
         s.chase = false
         s.ax = x
         s.ay = y
-        s.glow = Math.max(s.glow, 0.5)
       }
     }
   }, [])
@@ -579,9 +716,9 @@ export default function EchoCavern() {
         bornAt: performance.now() / 1000,
         dist: 0,
       })
-      playTone(980, 0.18, 0.07)
+      playWhoosh()
     },
-    [playTone]
+    [playWhoosh]
   )
 
   /** 结束蓄力并按持有时长换算力度甩球（键盘松开 / 按钮松手共用） */
@@ -621,6 +758,8 @@ export default function EchoCavern() {
       setSession((v) => v + 1)
       setResult(null)
       setPhase('playing')
+      // 防御性同步：进入对局时以浏览器真实全屏状态为准，杜绝上局残留的假全屏
+      setFullscreen(Boolean(document.fullscreenElement))
       setHud({ hearts: 3, orbs: 0, total: LEVELS[idx].orbs.length, timeSec: 0, pings: 0, balls: BALLS_PER_LEVEL })
       ensureAudio()
     },
@@ -637,6 +776,12 @@ export default function EchoCavern() {
       return !m
     })
   }
+
+  /** 出洞：先显式退出全屏再回关卡页（监听常驻，state 会随后同步，不会残留假全屏） */
+  const exitToCave = useCallback(() => {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
+    setPhase('intro')
+  }, [])
 
   /* ------------------------------ 键盘 ------------------------------ */
 
@@ -780,7 +925,7 @@ export default function EchoCavern() {
           left += 1
           if (Math.hypot(o.x - w.player.x, o.y - w.player.y) < w.player.r + 11) {
             o.taken = true
-            playTone(880 + Math.random() * 200, 0.35, 0.09)
+            playChime()
           }
         }
         if (left === 0) {
@@ -844,14 +989,6 @@ export default function EchoCavern() {
             sh.vy *= -0.6
             sh.wy *= -1
           }
-
-          // 窸窣微光：隔 0.9~2.4s 冒一下
-          sh.skitter -= dt
-          if (sh.skitter <= 0) {
-            sh.skitter = 0.9 + Math.random() * 1.5
-            sh.glow = Math.max(sh.glow, 0.42)
-          }
-          if (sh.glow > 0) sh.glow = Math.max(0, sh.glow - dt * 1.6)
 
           if (dp < DANGER_R) w.danger = Math.max(w.danger, 1 - dp / DANGER_R)
 
@@ -932,8 +1069,14 @@ export default function EchoCavern() {
         }
       }
 
-      /* ---------------- 低频轰鸣：danger² 驱动 ---------------- */
-      if (droneGainRef.current) droneGainRef.current.gain.value = mutedRef.current ? 0 : w.danger * w.danger * 0.075
+      /* ---------------- 低频轰鸣：danger² 驱动（双失谐振荡器，增益减半防过响） ---------------- */
+      if (droneGainRef.current) droneGainRef.current.gain.value = mutedRef.current ? 0 : w.danger * w.danger * 0.05
+
+      /* ---------------- 影的窸窣耳语：贴近的影偶发呼吸声，替代已删除的视觉微光 ---------------- */
+      if (w.danger > 0.06 && tNow > whisperAtRef.current) {
+        whisperAtRef.current = tNow + 3.2 + Math.random() * 4
+        playWhisper()
+      }
 
       /* ---------------- 蓄力指示：直接驱动按钮进度条 / 投掷盘力度环（绕过 React 渲染） ---------------- */
       if (chargeAtRef.current !== null) {
@@ -1150,7 +1293,7 @@ export default function EchoCavern() {
         }
       }
 
-      /* --- 影：被回声扫到 / 靠近 / 窸窣时才显形 --- */
+      /* --- 影：只有回声波前扫过 / 灯笼照亮时才显形，黑暗中完全隐形 --- */
       for (const sh of w.shadows) {
         let vis = 0
         for (const p of w.pulses) {
@@ -1159,8 +1302,12 @@ export default function EchoCavern() {
           const since = (waveR - d) / SPEED
           if (since >= 0 && since < 1.0) vis = Math.max(vis, (1 - since) * 0.62 * p.power)
         }
-        const dp = Math.hypot(sh.x - w.player.x, sh.y - w.player.y)
-        vis = Math.max(vis, Math.max(0, 1 - dp / 150) * 0.3, sh.glow)
+        // 停下的回音球 = 灯笼：光圈内的影被照亮
+        for (const b of w.balls) {
+          if (b.vx !== 0 || b.vy !== 0) continue
+          const bd = Math.hypot(sh.x - b.x, sh.y - b.y)
+          if (bd < BALL_LANTERN_R) vis = Math.max(vis, (1 - bd / BALL_LANTERN_R) * 0.9)
+        }
         if (vis <= 0.025) continue
 
         const g = ctx.createRadialGradient(sh.x, sh.y, 0, sh.x, sh.y, sh.r * 2.4)
@@ -1198,7 +1345,7 @@ export default function EchoCavern() {
     }
     // bests / levelIdx 的最新值通过 worldRef 与闭包外的 ref 读取，这里只响应开局重启
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, levelIdx, session, playTone, playPing, playHit, doEmit])
+  }, [phase, levelIdx, session, playTone, playPing, playHit, playWhisper, doEmit])
 
   /* ------------------------------ 横屏全屏 ------------------------------ */
 
@@ -1224,19 +1371,23 @@ export default function EchoCavern() {
     }
   }, [isTouch])
 
+  /** 全屏监听常驻整个组件生命周期：任何进入 / 退出（含浏览器 Esc、出洞触发的退出）都同步 state。
+   *  旧实现按 [phase] 挂载——出洞时清理函数先移除监听再退全屏，fullscreenchange 事件无人接收，
+   *  state 卡在 true，重进后舞台渲染成「假全屏」，点 ✕ 反而走了进入分支，反复闪回全屏。 */
   useEffect(() => {
-    if (phase !== 'playing') return
     const onFs = () => {
       const fs = Boolean(document.fullscreenElement)
       setFullscreen(fs)
       if (!fs) setFsHint(false)
     }
     document.addEventListener('fullscreenchange', onFs)
-    return () => {
-      document.removeEventListener('fullscreenchange', onFs)
-      // 退出对局时若还在全屏里，一并退出
-      if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
-    }
+    return () => document.removeEventListener('fullscreenchange', onFs)
+  }, [])
+
+  /** 离开对局（出洞）时退出全屏；监听常驻，state 会随后自动同步 */
+  useEffect(() => {
+    if (phase !== 'intro') return
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
   }, [phase])
 
   /* ------------------------------ 虚拟摇杆（触屏） ------------------------------ */
@@ -1340,9 +1491,9 @@ export default function EchoCavern() {
             <li>· 暖色小人是你，青色光点是目标：WASD / 方向键移动，空格在脚下发声，R 重开本层</li>
             <li>· 手机竖屏玩：画面下方按钮移动 / 发声 / 蓄力扔球，不遮挡画面；点右上 ⛶ 全屏并横过来，改用更顺手的摇杆 + 投掷盘</li>
             <li>· 拾尽青色光点即可深入下一层；每层 3 颗心，被影扑掉一颗回出生点</li>
-            <li>· 每层 2 枚「回音球」：按住 E / 右下投掷盘蓄力、松手甩出——球沿抛物线飞出、撞墙反弹，撞得多重照得多远；停下后转为常亮灯笼，持续照亮周围一圈，当地标或诱饵都行（它的响动比你的 ping 更引影）</li>
-            <li>· 注意：你的每一次发声，也会把 560 内的游走的影引过来；它贴近 210 就会追你</li>
-            <li>· 贴身 128 内的墙有触觉微亮；影隔 1~2s 冒一下窸窣微光；靠近时屏幕泛暗红、低频轰鸣变响</li>
+            <li>· 每层 2 枚「回音球」：按住 E / 右下投掷盘蓄力、松手甩出——球沿抛物线飞出、撞墙反弹，撞得多重照得多远；停下后转为常亮灯笼，持续照亮周围一圈，还能照出光圈里的影</li>
+            <li>· 注意：影在黑暗中完全隐形，只有回声扫过它、或灯笼照亮它时才显形；你的每一次发声也会把 560 内的影引过来，它贴近 210 就会追你</li>
+            <li>· 影靠近时屏幕泛暗红、低频轰鸣变响，还会偶尔发出窸窣耳语——听见它，说明它就在附近</li>
             <li>· 三层布局固定，第二遍走会明显更快——闭着眼也知道墙在哪</li>
           </ul>
         </div>
@@ -1456,7 +1607,7 @@ export default function EchoCavern() {
             <button type="button" className="rounded-md border border-slate-600/50 bg-slate-900/60 px-2 py-1 text-slate-200 transition hover:bg-cyan-500/20" onClick={() => startLevel(levelIdx)} title="重开本层（R 键）">
               重来
             </button>
-            <button type="button" className="rounded-md border border-slate-600/50 bg-slate-900/60 px-2 py-1 text-slate-200 transition hover:bg-cyan-500/20" onClick={() => setPhase('intro')}>
+            <button type="button" className="rounded-md border border-slate-600/50 bg-slate-900/60 px-2 py-1 text-slate-200 transition hover:bg-cyan-500/20" onClick={exitToCave}>
               出洞
             </button>
           </div>
@@ -1524,7 +1675,7 @@ export default function EchoCavern() {
                   <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={() => startLevel(levelIdx)}>
                     再走一遍这层
                   </button>
-                  <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={() => setPhase('intro')}>
+                  <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={exitToCave}>
                     返回关卡选择
                   </button>
                 </div>
@@ -1533,7 +1684,7 @@ export default function EchoCavern() {
                   <button type="button" className="w-full rounded-lg border border-cyan-400/40 bg-cyan-500/15 py-2 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/25" onClick={() => startLevel(levelIdx)}>
                     再来一次
                   </button>
-                  <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={() => setPhase('intro')}>
+                  <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={exitToCave}>
                     返回关卡选择
                   </button>
                 </div>
