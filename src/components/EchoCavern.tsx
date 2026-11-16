@@ -41,7 +41,12 @@ const WALL_R = 128 // 贴身感知半径
 const BORDER = 26 // 洞壁外框厚度
 const PING_ALERT_R = 560 // 影被声波惊动的半径
 const CHASE_R = 210 // 影贴到这个距离转追击
+const MOVE_HEAR_R = 96 // 移动的微弱代价：只有贴到这个距离，影才听得见脚步
 const PLAYER_SPEED = 172
+/* --- 原地蓄力发声：只能在自己脚下炸响，越久半径越大、引怪越狠 --- */
+const VOICE_MIN_R = 200 // 轻点即发的最小声波半径
+const VOICE_MAX_R = 640 // 满蓄力声波半径（引怪半径同步变大）
+const VOICE_CHARGE_MS = 1300 // 蓄满所需时间
 /* --- 回音球物理：重力抛物线 + 恢复系数反弹 + 指数衰减，撞壁本身就是声学事件 --- */
 const BALL_GRAV = 300 // 重力加速度 px/s²（球抛出后沿抛物线坠落，最终滚向洞窟低处停住）
 const BALL_REST = 0.62 // 撞壁恢复系数 e
@@ -243,8 +248,14 @@ interface Shadow {
   wy: number
   alert: number
   chase: boolean
+  /** 调查目标（最新发声点） */
   ax: number
   ay: number
+  /** 最近一次发声的原始位置：抵达后就地围绕它巡查 */
+  ox: number
+  oy: number
+  /** 警觉来源是否为发声（移动触发的轻微察觉不会转追击） */
+  sound: boolean
 }
 
 /** 回音球：蓄力甩出，带重力抛物线飞行、撞壁反弹（恢复系数 0.62）、速度指数衰减，
@@ -365,6 +376,9 @@ function buildWorld(level: LevelDef): World {
       chase: false,
       ax: x,
       ay: y,
+      ox: x,
+      oy: y,
+      sound: false,
     })),
     player: { x: level.start[0], y: level.start[1], vx: 0, vy: 0, r: 11, inv: 0 },
     hearts: 3,
@@ -443,6 +457,12 @@ export default function EchoCavern() {
   const facingRef = useRef({ x: 0, y: -1 })
   /** 下一次影耳语的允许时间（s），避免连发 */
   const whisperAtRef = useRef(0)
+  /** 原地发声蓄力起始时间（按住画布 / 空格 / 📢 按钮期间非空） */
+  const voiceAtRef = useRef<number | null>(null)
+  /** 发声蓄力进度镜像（0~1），供蓄力环渲染 */
+  const voiceChargeRef = useRef(0)
+  /** 竖屏下方「发声」按钮的蓄力条 */
+  const voiceBarRef = useRef<HTMLDivElement>(null)
   const audioRef = useRef<AudioContext | null>(null)
   const droneGainRef = useRef<GainNode | null>(null)
   const mutedRef = useRef(muted)
@@ -684,20 +704,15 @@ export default function EchoCavern() {
       if (d < alertR) {
         s.alert = 5.0
         s.chase = false
+        s.sound = true
         s.ax = x
         s.ay = y
+        s.ox = x
+        s.oy = y
       }
     }
   }, [])
 
-  const pingAt = useCallback(
-    (x: number, y: number) => {
-      // 玩家 ping：锐利、亮、硬朗的波前，照明与引怪半径同为 560
-      doEmit(x, y, 1.0, PING_ALERT_R, 0, PING_ALERT_R)
-      playPing()
-    },
-    [doEmit, playPing]
-  )
 
   /** 按蓄力程度（0~1）甩出回音球：用力越大初速越快，撞击声波越强、照得越远 */
   const throwBall = useCallback(
@@ -732,21 +747,39 @@ export default function EchoCavern() {
     }
   }, [throwBall])
 
-  /** 脚下轻声发声（空格 / 竖屏下方「发声」按钮共用）：比点击 ping 更轻、范围更小 */
-  const footPing = useCallback(() => {
+  /* ------------------------------ 原地蓄力发声 ------------------------------ */
+
+  /** 结束蓄力：在玩家当前位置炸开一声——按得越久半径越大、照得越远，引怪也越狠 */
+  const releaseVoiceCharge = useCallback(() => {
+    const start = voiceAtRef.current
+    voiceAtRef.current = null
+    voiceChargeRef.current = 0
+    if (start === null) return
     const w = worldRef.current
     if (!w || w.state !== 'play') return
-    doEmit(w.player.x, w.player.y, 0.85, 440, 0, 440)
-    playPing(0.08)
+    const charge = Math.max(0.06, Math.min(1, (performance.now() - start) / VOICE_CHARGE_MS))
+    const r = VOICE_MIN_R + (VOICE_MAX_R - VOICE_MIN_R) * charge
+    doEmit(w.player.x, w.player.y, 0.5 + 0.5 * charge, r, 0, r)
+    playPing(0.05 + 0.07 * charge, 0.3 + 0.3 * charge)
   }, [doEmit, playPing])
 
   const onCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (phase !== 'playing') return
     ensureAudio()
-    const rect = e.currentTarget.getBoundingClientRect()
-    const x = (e.clientX - rect.left) * (W / rect.width)
-    const y = (e.clientY - rect.top) * (H / rect.height)
-    pingAt(x, y)
+    const w = worldRef.current
+    if (!w || w.state !== 'play') return
+    voiceAtRef.current = performance.now()
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const onCanvasPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.preventDefault()
+    releaseVoiceCharge()
+  }
+
+  const onCanvasPointerCancel = () => {
+    voiceAtRef.current = null
+    voiceChargeRef.current = 0
   }
 
   /* ------------------------------ 开局 / 收尾 ------------------------------ */
@@ -808,8 +841,8 @@ export default function EchoCavern() {
       if (e.code === 'Space' || e.code === 'KeyR' || e.code === 'KeyE') e.preventDefault()
       if (e.repeat) return
       if (e.code === 'Space') {
-        // 空格：在脚下发声（比点击的 ping 更轻、照明与引怪范围也更小）
-        footPing()
+        // 空格：按住蓄力，松手在脚下炸响——越久半径越大、引怪越狠
+        if (voiceAtRef.current === null) voiceAtRef.current = performance.now()
       } else if (e.code === 'KeyE') {
         // 按住 E 蓄力，松手甩出
         if (chargeAtRef.current === null) chargeAtRef.current = performance.now()
@@ -821,12 +854,15 @@ export default function EchoCavern() {
       const d = DIRS[e.code]
       if (d) keysRef.current.delete(d)
       else if (e.code === 'KeyE') releaseBallCharge()
+      else if (e.code === 'Space') releaseVoiceCharge()
     }
     const blur = () => {
       keysRef.current.clear()
-      // 失焦时不误甩，只取消蓄力
+      // 失焦时不误发，只取消蓄力
       chargeAtRef.current = null
       chargeRef.current = 0
+      voiceAtRef.current = null
+      voiceChargeRef.current = 0
     }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
@@ -837,7 +873,7 @@ export default function EchoCavern() {
       window.removeEventListener('blur', blur)
       keysRef.current.clear()
     }
-  }, [phase, levelIdx, footPing, releaseBallCharge, startLevel, ensureAudio])
+  }, [phase, levelIdx, releaseVoiceCharge, releaseBallCharge, startLevel, ensureAudio])
 
   /* ------------------------------ 主循环 ------------------------------ */
 
@@ -953,9 +989,20 @@ export default function EchoCavern() {
         for (const sh of w.shadows) {
           const dp = Math.hypot(w.player.x - sh.x, w.player.y - sh.y)
 
+          // 移动的微弱代价：只有贴到 96 内，影才听得见脚步——远弱于发声，不会大范围引怪
+          const psp = Math.hypot(w.player.vx, w.player.vy)
+          if (psp > 24 && dp < MOVE_HEAR_R && sh.alert <= 0) {
+            sh.alert = 2.4
+            sh.chase = false
+            sh.sound = false
+            sh.ax = w.player.x
+            sh.ay = w.player.y
+          }
+
           if (sh.alert > 0) {
             sh.alert -= dt
-            if (dp < CHASE_R) sh.chase = true
+            // 只有发声触发的警觉才可能转追击；脚步察觉只会让它凑过来闻一闻
+            if (dp < CHASE_R && sh.sound) sh.chase = true
             const tx = sh.chase ? w.player.x : sh.ax
             const ty = sh.chase ? w.player.y : sh.ay
             const dx = tx - sh.x
@@ -964,7 +1011,14 @@ export default function EchoCavern() {
             const sp = sh.chase ? 152 : 120
             sh.vx += ((dx / l) * sp - sh.vx) * Math.min(1, dt * 3.2)
             sh.vy += ((dy / l) * sp - sh.vy) * Math.min(1, dt * 3.2)
-            if (!sh.chase && Math.hypot(sh.ax - sh.x, sh.ay - sh.y) < 34) sh.alert = Math.min(sh.alert, 0.6)
+            if (!sh.chase && Math.hypot(sh.ax - sh.x, sh.ay - sh.y) < 34) {
+              // 抵达发声点：就地围绕「最后发声的位置」兜圈巡查，而不是立刻散去
+              sh.alert = Math.max(sh.alert, 1.8)
+              const a = Math.random() * Math.PI * 2
+              const rr = 50 + Math.random() * 80
+              sh.ax = sh.ox + Math.cos(a) * rr
+              sh.ay = sh.oy + Math.sin(a) * rr
+            }
           } else {
             sh.chase = false
             if (Math.random() < dt * 0.8) {
@@ -1090,6 +1144,11 @@ export default function EchoCavern() {
             ? `conic-gradient(rgba(255,185,80,0.95) ${(chargeRef.current * 360).toFixed(0)}deg, rgba(255,255,255,0.12) 0deg)`
             : 'rgba(255,255,255,0.12)'
       }
+      /* 原地发声蓄力：进度镜像 + 下方 📢 按钮蓄力条 */
+      if (voiceAtRef.current !== null) {
+        voiceChargeRef.current = Math.min(1, (performance.now() - voiceAtRef.current) / VOICE_CHARGE_MS)
+      }
+      if (voiceBarRef.current) voiceBarRef.current.style.width = `${(voiceChargeRef.current * 100).toFixed(1)}%`
 
       /* ================= 渲染 ================= */
       ctx.globalCompositeOperation = 'source-over'
@@ -1291,6 +1350,20 @@ export default function EchoCavern() {
           ctx.arc(px, py - 2, 14, -Math.PI / 2, -Math.PI / 2 + chargeRef.current * Math.PI * 2)
           ctx.stroke()
         }
+        // 原地发声蓄力：青色进度弧 + 当前声波半径的虚光圈（按得越久圈越大）
+        if (voiceAtRef.current !== null && voiceChargeRef.current > 0.02) {
+          const vr = VOICE_MIN_R + (VOICE_MAX_R - VOICE_MIN_R) * voiceChargeRef.current
+          ctx.strokeStyle = 'rgba(110,215,255,0.16)'
+          ctx.lineWidth = 1.5
+          ctx.beginPath()
+          ctx.arc(px, py, vr, 0, Math.PI * 2)
+          ctx.stroke()
+          ctx.strokeStyle = 'rgba(140,230,255,0.9)'
+          ctx.lineWidth = 2.6
+          ctx.beginPath()
+          ctx.arc(px, py - 2, 18, -Math.PI / 2, -Math.PI / 2 + voiceChargeRef.current * Math.PI * 2)
+          ctx.stroke()
+        }
       }
 
       /* --- 影：只有回声波前扫过 / 灯笼照亮时才显形，黑暗中完全隐形 --- */
@@ -1392,25 +1465,35 @@ export default function EchoCavern() {
 
   /* ------------------------------ 虚拟摇杆（触屏） ------------------------------ */
 
-  /** 把指针位置换算成摇杆模拟量，并直接挪动滑块（绕过 React 状态，避免 60fps 重渲染） */
+  /** 摇杆采用「相对起点」模型：以按下的位置为原点，拖动向量即方向。
+   *  旧的「指针相对盘心绝对位置」模型在手指落在盘面边缘时方向有歧义（想左却往右），
+   *  相对起点模型下「往哪拖就往哪走」，怎么按都不会反。 */
+  const joyOriginRef = useRef({ x: 0, y: 0 })
+
+  /** 把拖动向量换算成摇杆模拟量，并直接挪动滑块（绕过 React 状态，避免 60fps 重渲染） */
   const joyApply = (e: React.PointerEvent) => {
     const base = joyBaseRef.current
     if (!base) return
     const rect = base.getBoundingClientRect()
-    const cx = rect.left + rect.width / 2
-    const cy = rect.top + rect.height / 2
     const R = rect.width / 2
     const range = R * 0.62 // 滑块最大偏移
-    let dx = e.clientX - cx
-    let dy = e.clientY - cy
+    let dx = e.clientX - joyOriginRef.current.x
+    let dy = e.clientY - joyOriginRef.current.y
     const len = Math.hypot(dx, dy)
     if (len > range) {
       dx = (dx / len) * range
       dy = (dy / len) * range
     }
-    joyRef.current.x = dx / range
-    joyRef.current.y = dy / range
-    if (joyThumbRef.current) joyThumbRef.current.style.transform = `translate(${dx}px, ${dy}px)`
+    let vx = dx / range
+    let vy = dy / range
+    // 死区：起点附近的轻微抖动不产生移动
+    if (Math.hypot(vx, vy) < 0.12) {
+      vx = 0
+      vy = 0
+    }
+    joyRef.current.x = vx
+    joyRef.current.y = vy
+    if (joyThumbRef.current) joyThumbRef.current.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`
   }
 
   const joyReset = () => {
@@ -1425,6 +1508,7 @@ export default function EchoCavern() {
       e.preventDefault()
       ensureAudio()
       joyRef.current.active = true
+      joyOriginRef.current = { x: e.clientX, y: e.clientY }
       e.currentTarget.setPointerCapture(e.pointerId)
       joyApply(e)
     },
@@ -1487,12 +1571,13 @@ export default function EchoCavern() {
         <div className="space-y-2 rounded-xl bg-slate-900 p-4 text-slate-300 shadow-inner ring-1 ring-slate-700">
           <p className="text-sm font-bold text-cyan-300">🕳️ 全黑之中，你唯一的信息是回声</p>
           <ul className="space-y-1 text-[11px] leading-relaxed text-slate-400">
-            <li>· 点击 / 轻触任意处发出声波，波前触壁便会短暂描出轮廓，几秒后消退；远处的墙要等更久才成像</li>
+            <li>· 声波只能在自己脚下炸响：按住屏幕 / 空格 / 📢 蓄力、松手发声——按得越久半径越大、照得越远，但引怪也越狠；轻点只有一小圈，远处的墙天然延迟更久才成像</li>
             <li>· 暖色小人是你，青色光点是目标：WASD / 方向键移动，空格在脚下发声，R 重开本层</li>
             <li>· 手机竖屏玩：画面下方按钮移动 / 发声 / 蓄力扔球，不遮挡画面；点右上 ⛶ 全屏并横过来，改用更顺手的摇杆 + 投掷盘</li>
             <li>· 拾尽青色光点即可深入下一层；每层 3 颗心，被影扑掉一颗回出生点</li>
             <li>· 每层 2 枚「回音球」：按住 E / 右下投掷盘蓄力、松手甩出——球沿抛物线飞出、撞墙反弹，撞得多重照得多远；停下后转为常亮灯笼，持续照亮周围一圈，还能照出光圈里的影</li>
-            <li>· 注意：影在黑暗中完全隐形，只有回声扫过它、或灯笼照亮它时才显形；你的每一次发声也会把 560 内的影引过来，它贴近 210 就会追你</li>
+            <li>· 注意：影在黑暗中完全隐形，只有回声扫过它、或灯笼照亮它时才显形；你的发声会把半径内的影引到发声的位置就地巡查，它贴近 210 且听到过声音才会追你</li>
+            <li>· 移动本身很安静：只有贴到 96 内的影才听得见脚步——它会凑过来闻一闻，但不会像发声那样直接转追击</li>
             <li>· 影靠近时屏幕泛暗红、低频轰鸣变响，还会偶尔发出窸窣耳语——听见它，说明它就在附近</li>
             <li>· 三层布局固定，第二遍走会明显更快——闭着眼也知道墙在哪</li>
           </ul>
@@ -1551,6 +1636,8 @@ export default function EchoCavern() {
           className="block cursor-crosshair touch-none select-none"
           style={fullscreen ? { aspectRatio: '3 / 2', width: 'min(100vw, calc(100vh * 1.5))' } : { aspectRatio: '3 / 2', width: '100%' }}
           onPointerDown={onCanvasPointerDown}
+          onPointerUp={onCanvasPointerUp}
+          onPointerCancel={onCanvasPointerCancel}
         />
 
         {/* 顶部 HUD：叠在画布上 */}
@@ -1647,10 +1734,11 @@ export default function EchoCavern() {
           </div>
         )}
 
-        {/* 结算弹窗：渲染在舞台内部——全屏模式下也能正常弹出（全屏顶层会盖住 portal 到 body 的弹窗） */}
+        {/* 结算弹窗：fixed 定位——非全屏时脱离舞台 overflow-hidden 不再被裁剪；
+            全屏时舞台本身在顶层内且铺满视口，fixed 后代仍然显示在全屏层之上 */}
         {result && (
-          <div className="absolute inset-0 z-20 flex touch-none items-center justify-center overscroll-contain bg-black/70 p-4 backdrop-blur-sm">
-            <div className="animate-fade w-full max-w-xs space-y-3 rounded-2xl border border-cyan-400/30 bg-slate-900 p-5 text-center shadow-xl">
+          <div className="fixed inset-0 z-[70] flex touch-none items-center justify-center overscroll-contain bg-black/70 p-4 backdrop-blur-sm">
+            <div className="animate-fade max-h-[85vh] w-full max-w-xs space-y-3 overflow-y-auto rounded-2xl border border-cyan-400/30 bg-slate-900 p-5 text-center shadow-xl">
               <div className="text-4xl">{result.kind === 'clear' ? (result.isLast ? '🏆' : '🧭') : '🌑'}</div>
               <p className="font-bold tracking-widest text-cyan-200">
                 {result.kind === 'clear' ? (result.isLast ? '洞窟尽头' : '洞窟已探明') : '被影吞没'}
@@ -1716,10 +1804,24 @@ export default function EchoCavern() {
           <div className="flex items-end gap-2">
             <button
               type="button"
-              className="flex h-12 touch-none select-none items-center rounded-xl border border-slate-600/50 bg-slate-800/70 px-3 text-xs font-semibold text-cyan-200 transition active:bg-cyan-500/30"
-              onClick={footPing}
+              className="relative flex h-12 touch-none select-none items-center overflow-hidden rounded-xl border border-slate-600/50 bg-slate-800/70 px-3 text-xs font-semibold text-cyan-200 transition active:bg-cyan-500/30"
+              onPointerDown={(e) => {
+                e.preventDefault()
+                ensureAudio()
+                const w = worldRef.current
+                if (w && w.state === 'play') {
+                  voiceAtRef.current = performance.now()
+                  e.currentTarget.setPointerCapture(e.pointerId)
+                }
+              }}
+              onPointerUp={(e) => {
+                e.preventDefault()
+                releaseVoiceCharge()
+              }}
+              onPointerCancel={releaseVoiceCharge}
             >
-              📢 发声
+              <div ref={voiceBarRef} className="absolute inset-x-0 bottom-0 h-1 bg-cyan-400" style={{ width: '0%' }} />
+              📢 蓄声
             </button>
             <button
               type="button"
@@ -1748,8 +1850,8 @@ export default function EchoCavern() {
 
       {!fullscreen && (
         <p className="text-center text-[11px] leading-relaxed text-slate-400">
-          点屏幕发声音探路 ·
-          {isTouch ? ' 下方按钮移动 / 发声 / 扔球 · 顶部 ⛶ 全屏后用摇杆更顺手' : ' WASD / 方向键移动 · 空格脚下发声'} · R 重开
+          按住屏幕 / 空格蓄力、松手在脚下发声 ·
+          {isTouch ? ' 下方按钮移动 / 发声 / 扔球 · 顶部 ⛶ 全屏后用摇杆更顺手' : ' WASD / 方向键移动'} · R 重开
         </p>
       )}
 
