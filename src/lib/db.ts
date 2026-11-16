@@ -2046,6 +2046,112 @@ export async function notifyGomokuNew(recipient: string, senderName: string): Pr
   await insertFeedNotices([recipient], { sender_name: senderName, type: 'gomoku', post_id: null, title: '⚫ 五子棋新棋局开好啦', body: `${senderName} 创建了五子棋棋局，快去互动空间看看吧～` })
 }
 
+/* ------------------------------ 情侣坦克大战（同种子竞速） ------------------------------ */
+
+export interface TankProgress {
+  score: number
+  /** 剩余敌人数 */
+  left: number
+  lives: number
+  baseAlive: boolean
+  done: boolean
+  win: boolean
+  at: string
+}
+
+export interface CoupleTankState {
+  phase: 'waiting' | 'playing' | 'over'
+  /** 双方同打的种子地图 */
+  seed: number
+  /** 版本号：丢弃乱序到达的旧快照 */
+  rev: number
+  ready: [boolean, boolean]
+  winner: 'a' | 'b' | 'draw' | null
+  prog: [TankProgress | null, TankProgress | null]
+}
+
+export interface CoupleTankRow {
+  member_a: string
+  member_b: string
+  state: CoupleTankState
+  updated_at: string
+}
+
+export interface CoupleTankHistoryRow {
+  id: string
+  member_a: string
+  member_b: string
+  state: CoupleTankState
+  winner: string
+  finished_at: string
+}
+
+export async function fetchCoupleTank(userA: string, userB: string): Promise<CoupleTankRow | null> {
+  if (!userA || !userB || userA === userB) return null
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase.from('couple_tank').select('*').eq('member_a', memberA).eq('member_b', memberB).maybeSingle()
+  if (error) fail(error, '加载坦克大战对局')
+  return (data as CoupleTankRow | null) ?? null
+}
+
+export async function upsertCoupleTank(userA: string, userB: string, state: CoupleTankState): Promise<void> {
+  if (!userA || !userB || userA === userB) throw new Error('请先添加好友再开始坦克大战')
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_tank').upsert(
+    { member_a: memberA, member_b: memberB, state, updated_at: new Date().toISOString() },
+    { onConflict: 'member_a,member_b' }
+  )
+  if (error) fail(error, '同步坦克大战对局')
+}
+
+export async function deleteCoupleTank(userA: string, userB: string): Promise<void> {
+  if (!userA || !userB || userA === userB) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_tank').delete().eq('member_a', memberA).eq('member_b', memberB)
+  if (error) fail(error, '结束坦克大战对局')
+}
+
+export async function createCoupleTankHistory(userA: string, userB: string, state: CoupleTankState): Promise<void> {
+  if (!userA || !userB || userA === userB || !state.winner) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { error } = await supabase.from('couple_tank_history').insert({
+    member_a: memberA,
+    member_b: memberB,
+    state,
+    winner: state.winner,
+  })
+  if (error && !isMissingTable(error)) fail(error, '保存坦克大战战绩')
+}
+
+export async function listCoupleTankHistory(userA: string, userB: string, limit = 20): Promise<CoupleTankHistoryRow[]> {
+  if (!userA || !userB || userA === userB) return []
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_tank_history')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .order('finished_at', { ascending: false })
+    .limit(limit)
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载坦克大战战绩')
+  }
+  return (data ?? []) as CoupleTankHistoryRow[]
+}
+
+/** 坦克大战开局通知：对方离线也能在铃铛看到 */
+export async function notifyTankNew(recipient: string, senderName: string, seed: number): Promise<void> {
+  if (!recipient) return
+  await insertFeedNotices([recipient], {
+    sender_name: senderName,
+    type: 'tank',
+    post_id: null,
+    title: '💥 坦克大战开战啦',
+    body: `${senderName} 开了一局种子 ${seed} 的坦克大战，快去互动空间应战吧～`,
+  })
+}
+
 /* ------------------------------ 情侣骰子比大小 ------------------------------ */
 
 export type DiceBetChoice = 'small' | 'big' | null
@@ -3460,6 +3566,7 @@ export type FeedNoticeType =
   | 'mines'
   | 'wufu'
   | 'gomoku'
+  | 'tank'
   | 'watermelon'
   | 'dice'
   | 'love'

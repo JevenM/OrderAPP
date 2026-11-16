@@ -144,6 +144,7 @@ import AnimalMatch from '../components/AnimalMatch'
 import WatermelonGame from '../components/WatermelonGame'
 import LightsOut from '../components/LightsOut'
 import EchoCavern from '../components/EchoCavern'
+import TankBattle from '../components/TankBattle'
 import {
   LOVE_TREE_LOOKBACK,
   isDormantTree,
@@ -4540,6 +4541,7 @@ export default function CouplePage() {
                 { id: 'mines', icon: '💣', title: '情侣扫雷', detail: '轮流拆雷，踩雷做任务' },
                 { id: 'wufu', icon: '♟️', title: '摆方五福棋', detail: '摆子提子走子，吃到剩2子' },
                 { id: 'gomoku', icon: '⚫', title: '情侣五子棋', detail: '联网轮流落子，五连获胜' },
+                { id: 'tankbattle', icon: '💥', title: '坦克大战', detail: '同种子地图竞速对战' },
                 { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分' },
                 { id: 'dice', icon: '🎲', title: '骰子比大小', detail: '骰子押大小，围骰庄家通吃' },
               ],
@@ -6803,6 +6805,19 @@ export default function CouplePage() {
                 </p>
               </div>
               <EchoCavern />
+            </section>
+          )}
+
+          {/* 💥 坦克大战：种子随机地图，离线人机 + 情侣同种子竞速 */}
+          {activeModule === 'tankbattle' && (
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
+              <div>
+                <h3 className="font-semibold">💥 坦克大战</h3>
+                <p className="mt-1 text-xs text-slate-400">
+                  同一个种子就是同一张地图：离线打人机，联网比谁先清完敌人。
+                </p>
+              </div>
+              <TankBattle myId={myId} friendId={friendId ?? ''} friendName={friendName} myName={memberName || '对方'} />
             </section>
           )}
 

@@ -25,8 +25,8 @@ import Login from './pages/Login'
  * 于是 13 个管理页、CouplePage 里的题库与游戏逻辑都不再进首屏包，
  * 首屏 JS 从 735 KB 降到约 180 KB（gzip 后差距同样明显）。
  */
-const OrderPage = lazy(() => import('./pages/OrderPage'))
-const MealLogPage = lazy(() => import('./pages/MealLogPage'))
+// 点菜 / 三餐页由 DiningPage 按需懒加载（整合后 App 层不再直接引用）
+const DiningPage = lazy(() => import('./pages/DiningPage'))
 const FeedPage = lazy(() => import('./pages/FeedPage'))
 const CouplePage = lazy(() => import('./pages/CouplePage'))
 const AboutPage = lazy(() => import('./pages/AboutPage'))
@@ -62,7 +62,7 @@ function PageFallback() {
 /** 互动空间开关；好友管理面板不对普通用户展示 */
 export const ENABLE_FRIENDS = true
 
-const HOME: Record<Role, string> = { her: '/order', me: '/admin' }
+const HOME: Record<Role, string> = { her: '/dining', me: '/admin' }
 
 export default function App() {
   // 实时通道探测在 realtime.ts 模块加载时自动跑（早于 React 渲染），
@@ -106,9 +106,13 @@ function Shell() {
           <Routes>
             <Route element={<Layout />}>
               <Route path="/" element={<Navigate to={HOME[role]} replace />} />
-              <Route path="/order" element={<OrderPage />} />
-              <Route path="/meals" element={<MealLogPage />} />
-              <Route path="/feed" element={<FeedPage />} />
+              {/* 「干饭」整合页：点菜 / 三餐 / 饭圈 三个入口收进一张页，tab 走 URL 参数 */}
+              <Route path="/dining" element={<DiningPage />} />
+              {/* 旧路由无损重定向：通知深链 / 老书签都能到达对应 tab。
+                  /feed 只对普通成员重定向，管理端仍直达原页 */}
+              <Route path="/order" element={<Navigate to="/dining?tab=order" replace />} />
+              <Route path="/meals" element={<Navigate to="/dining?tab=meals" replace />} />
+              <Route path="/feed" element={role === 'her' ? <Navigate to="/dining?tab=feed" replace /> : <FeedPage />} />
               {ENABLE_FRIENDS && <Route path="/couple" element={<CouplePage />} />}
               {isEnabled('about') && <Route path="/about" element={<AboutPage />} />}
               {isAdmin && <Route path="/admin" element={<AdminHome />} />}
@@ -188,9 +192,7 @@ function Layout() {
   const tabs: { to: string; label: string; emoji: string; badge?: number }[] =
     role === 'her'
       ? [
-          { to: '/order', label: '点菜', emoji: '🧾' },
-          { to: '/meals', label: '三餐', emoji: '🍚' },
-          { to: '/feed', label: '饭圈', emoji: '📸' },
+          { to: '/dining', label: '干饭', emoji: '🍚' },
           ...(ENABLE_FRIENDS ? [{ to: '/couple', label: '互动', emoji: '💞' }] : []),
         ]
       : [
