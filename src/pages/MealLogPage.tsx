@@ -77,7 +77,28 @@ export default function MealLogPage() {
       }
 
       toast.show(posted ? '已提交，饭圈也更新啦 ❤️' : '已提交，他能看到啦 ❤️')
-      void load()
+      // 局部更新：只把当前餐的提交结果写进本地状态，不重新拉取全天记录——
+      // 其他餐的表单内容与 DOM 保持原样，也省一次全天数据的 REST 往返
+      setRecords((list) => {
+        const prev = list.find((r) => r.slot === slot)
+        const rec: Meal = {
+          id: prev?.id ?? `local-${slot}`,
+          day,
+          slot,
+          status: f.status,
+          content: f.content,
+          photo_url: f.photo_url,
+          note: f.note,
+          created_at: prev?.created_at ?? new Date().toISOString(),
+          read_at: prev?.read_at ?? null,
+          member_id: memberId,
+        }
+        return [...list.filter((r) => r.slot !== slot), rec]
+      })
+      setForms((fs) => ({
+        ...fs,
+        [slot]: { status: f.status, content: f.content, note: f.note, photo_url: f.photo_url },
+      }))
     } catch (e) {
       toast.show((e as Error).message, 'err')
     } finally {

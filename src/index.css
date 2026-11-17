@@ -4,6 +4,15 @@
 
 :root {
   color-scheme: light;
+  /* 品牌色默认值（樱粉）：themes.ts 的一键换肤会整体覆盖 --brand-* */
+  --brand-50: 255 241 245;
+  --brand-100: 255 228 236;
+  --brand-200: 254 205 217;
+  --brand-300: 253 164 189;
+  --brand-400: 251 113 151;
+  --brand-500: 244 63 112;
+  --brand-600: 225 29 81;
+  --brand-700: 190 18 60;
 }
 
 html,
@@ -16,7 +25,7 @@ body,
 
 body {
   margin: 0;
-  background: #fff7fa;
+  background: rgb(var(--brand-50));
   color: #1f2937;
   font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif;
   -webkit-tap-highlight-color: transparent;

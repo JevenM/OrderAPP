@@ -3,6 +3,7 @@ import { HashRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation, useN
 import { ToastProvider, useToast } from './components/Toast'
 import Avatar from './components/Avatar'
 import ProfileSheet from './components/ProfileSheet'
+import ThemePicker from './components/ThemePicker'
 import { saveMemberAvatar } from './components/AvatarSheet'
 import { updateMember } from './lib/db'
 import { configured } from './lib/supabase'
@@ -180,6 +181,7 @@ function Layout() {
   const toast = useToast()
   const [menu, setMenu] = useState<'member' | 'more' | 'feed' | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
+  const [themeOpen, setThemeOpen] = useState(false)
 
   /** 顶部头像：看到谁的脸就用谁的头像；「我」的视角用自己的 */
   const viewingMember = members.find((m) => m.id === memberId)
@@ -336,9 +338,10 @@ function Layout() {
                     </>
                   )}
                   <MenuItem onClick={() => run(() => setProfileOpen(true))}>个人资料</MenuItem>
+                  <MenuItem onClick={() => run(() => setThemeOpen(true))}>一键换肤</MenuItem>
                   {isEnabled('changelog') && <MenuItem onClick={() => run(openChangelog)}>更新日志</MenuItem>}
                   {isEnabled('about') && (
-                    <MenuItem onClick={() => run(() => navigate('/about'))}>💕关于我们</MenuItem>
+                    <MenuItem onClick={() => run(() => navigate('/about'))}>关于我们</MenuItem>
                   )}
                   <MenuItem danger onClick={() => run(doLogout)}>
                     退出登录
@@ -416,6 +419,8 @@ function Layout() {
           onClose={() => setProfileOpen(false)}
         />
       )}
+
+      {themeOpen && <ThemePicker onClose={() => setThemeOpen(false)} />}
 
       <nav className="pb-safe fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-md border-t border-brand-100 bg-white/95 backdrop-blur">
         {tabs.map((t) => {

@@ -13,6 +13,8 @@ type CartItem = { dish_id: string | null; dish_name: string; emoji: string; qty:
 /** 购物车里「自定义菜」的 key 前缀（菜单菜直接用 dish.id） */
 const CUSTOM_PREFIX = 'custom:'
 const CUSTOM_EMOJI = '✨'
+/** 转盘扇区配色：按展示池长度循环取色 */
+const WHEEL_COLORS = ['#fb7185', '#fbbf24', '#34d399', '#60a5fa', '#a78bfa', '#fb923c']
 /** 购物车每页显示的条目数：悬浮面板不高，超出就翻页（内部滚动条在苹果设备上划不动） */
 const CART_PAGE_SIZE = 6
 
@@ -29,6 +31,8 @@ export default function OrderPage() {
   const [submitting, setSubmitting] = useState(false)
   const [recent, setRecent] = useState<OrderWithItems[]>([])
   const [wheelOpen, setWheelOpen] = useState(false)
+  /** 转盘当前展示的菜品：每次开盘 / 每次随机都从全部在售菜品里重新抽样（必含中奖菜） */
+  const [wheelPool, setWheelPool] = useState<Dish[]>([])
   const [spinning, setSpinning] = useState(false)
   const [selectedDish, setSelectedDish] = useState<Dish | null>(null)
   const [wheelRotation, setWheelRotation] = useState(0)
@@ -104,18 +108,35 @@ export default function OrderPage() {
 
   const change = (d: Dish, delta: number) => changeKey(d.id, delta)
 
+  /** 从全部在售菜品随机抽样最多 6 道做转盘展示；exceptId（中奖菜）保证在池内随机位置 */
+  const sampleWheelPool = (exceptId?: string): Dish[] => {
+    const menu = dishes.filter((dish) => dish.available)
+    if (!menu.length) return []
+    const shuffled = [...menu].sort(() => Math.random() - 0.5)
+    const pool = shuffled.slice(0, Math.min(6, menu.length))
+    if (exceptId && !pool.some((dish) => dish.id === exceptId)) {
+      const winner = menu.find((dish) => dish.id === exceptId)
+      if (winner) pool[Math.floor(Math.random() * pool.length)] = winner
+    }
+    return pool
+  }
+
   const spinWheel = () => {
     const menu = dishes.filter((dish) => dish.available)
     if (!menu.length || spinning) return toast.show('当前菜单没有可抽选的菜品', 'err')
     const pickedDish = menu[Math.floor(Math.random() * menu.length)]
-    const displayMenu = menu.slice(0, 6)
-    const segment = displayMenu.length > 0 ? 360 / displayMenu.length : 360
+    const pool = sampleWheelPool(pickedDish.id)
+    const segment = 360 / pool.length
+    const stopAt = pool.findIndex((dish) => dish.id === pickedDish.id)
     const turns = 5 + Math.floor(Math.random() * 3)
-    const stopAt = displayMenu.findIndex((dish) => dish.id === pickedDish.id)
-    const target = turns * 360 + (stopAt < 0 ? Math.random() * 360 : 360 - (stopAt * segment + segment / 2))
+    // 用绝对角度落点：累计式「当前角度+目标」在第二次旋转起会转过头，指针停错格子
+    setWheelRotation((current) => {
+      const base = Math.ceil(current / 360) * 360
+      return base + turns * 360 + (360 - (stopAt * segment + segment / 2))
+    })
     setSelectedDish(null)
     setSpinning(true)
-    setWheelRotation((current) => current + target)
+    setWheelPool(pool)
     window.setTimeout(() => {
       setSelectedDish(pickedDish)
       setSpinning(false)
@@ -273,7 +294,7 @@ export default function OrderPage() {
 
       <div className="flex gap-2">
         <input className="input min-w-0 flex-1" placeholder="🔍 搜索菜名" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
-        <button className="btn-soft shrink-0 px-3 text-sm" onClick={() => { setSelectedDish(null); setWheelOpen(true) }}>不知道吃什么</button>
+        <button className="btn-soft shrink-0 px-3 text-sm" onClick={() => { setSelectedDish(null); setWheelPool(sampleWheelPool()); setWheelOpen(true) }}>不知道吃什么</button>
       </div>
 
       {grouped.length === 0 && (
@@ -360,13 +381,34 @@ export default function OrderPage() {
               <div className="absolute -top-1 left-1/2 z-10 -translate-x-1/2 border-x-[10px] border-t-[18px] border-x-transparent border-t-rose-500" />
               <div
                 className="absolute inset-0 overflow-hidden rounded-full border-4 border-white shadow-lg transition-transform duration-1000 ease-out"
-                style={{ transform: `rotate(${wheelRotation}deg)`, background: 'conic-gradient(#fb7185 0deg 60deg, #fbbf24 60deg 120deg, #34d399 120deg 180deg, #60a5fa 180deg 240deg, #a78bfa 240deg 300deg, #fb923c 300deg 360deg)' }}
+                style={{
+                  transform: `rotate(${wheelRotation}deg)`,
+                  // 扇区边界从 12 点钟方向顺时针排，与标签的「中心角-90°」换算保持同一坐标系
+                  background: `conic-gradient(${wheelPool
+                    .map(
+                      (_, i) =>
+                        `${WHEEL_COLORS[i % WHEEL_COLORS.length]} ${i * (360 / wheelPool.length)}deg ${(i + 1) * (360 / wheelPool.length)}deg`
+                    )
+                    .join(', ')})`,
+                }}
               >
-                {dishes.filter((dish) => dish.available).slice(0, 6).map((dish, index) => (
-                  <span key={dish.id} className="absolute left-1/2 top-1/2 w-[46%] origin-left -translate-y-1/2 truncate pl-7 text-center text-xs font-semibold text-white drop-shadow" style={{ transform: `rotate(${index * 60 + 30}deg)`, transformOrigin: '0 50%' }}>
-                    {dish.emoji} {dish.name}
-                  </span>
-                ))}
+                {wheelPool.map((dish, index) => {
+                  const seg = 360 / wheelPool.length
+                  return (
+                    <span
+                      key={dish.id}
+                      className="absolute left-1/2 top-1/2 w-[46%] truncate pl-7 text-center text-[10px] font-semibold text-white drop-shadow"
+                      style={{
+                        // conic-gradient 从 12 点钟起算，CSS rotate 从 3 点钟起算：中心角要减 90°
+                        // translateY(-50%) 让文字沿半径方向垂直居中，落在扇面中央
+                        transform: `rotate(${index * seg + seg / 2 - 90}deg) translateY(-50%)`,
+                        transformOrigin: '0 50%',
+                      }}
+                    >
+                      {dish.emoji} {dish.name}
+                    </span>
+                  )
+                })}
               </div>
               <button className="absolute left-1/2 top-1/2 z-10 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-4 border-white bg-slate-800 text-sm font-bold text-white shadow-lg disabled:opacity-60" disabled={spinning} onClick={spinWheel}>
                 {spinning ? '转动中' : '随机'}

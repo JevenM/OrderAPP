@@ -4,19 +4,21 @@ export default {
   theme: {
     extend: {
       colors: {
+        // 品牌色走 CSS 变量（rgb 三元组 + alpha-value）：
+        // 一键换肤 = 换 :root 上的 --brand-* 变量，全站 brand-* 类自动跟随
         brand: {
-          50: '#fff1f5',
-          100: '#ffe4ec',
-          200: '#fecdd9',
-          300: '#fda4bd',
-          400: '#fb7197',
-          500: '#f43f70',
-          600: '#e11d51',
-          700: '#be123c',
+          50: 'rgb(var(--brand-50) / <alpha-value>)',
+          100: 'rgb(var(--brand-100) / <alpha-value>)',
+          200: 'rgb(var(--brand-200) / <alpha-value>)',
+          300: 'rgb(var(--brand-300) / <alpha-value>)',
+          400: 'rgb(var(--brand-400) / <alpha-value>)',
+          500: 'rgb(var(--brand-500) / <alpha-value>)',
+          600: 'rgb(var(--brand-600) / <alpha-value>)',
+          700: 'rgb(var(--brand-700) / <alpha-value>)',
         },
       },
       boxShadow: {
-        card: '0 4px 20px -6px rgba(244, 63, 112, 0.18)',
+        card: '0 4px 20px -6px rgb(var(--brand-500) / 0.18)',
       },
       keyframes: {
         fade: { from: { opacity: '0' }, to: { opacity: '1' } },

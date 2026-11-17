@@ -145,6 +145,7 @@ import WatermelonGame from '../components/WatermelonGame'
 import LightsOut from '../components/LightsOut'
 import EchoCavern from '../components/EchoCavern'
 import TankBattle from '../components/TankBattle'
+import SnakeBattle from '../components/SnakeBattle'
 import {
   LOVE_TREE_LOOKBACK,
   isDormantTree,
@@ -4542,6 +4543,7 @@ export default function CouplePage() {
                 { id: 'wufu', icon: '♟️', title: '摆方五福棋', detail: '摆子提子走子，吃到剩2子' },
                 { id: 'gomoku', icon: '⚫', title: '情侣五子棋', detail: '联网轮流落子，五连获胜' },
                 { id: 'tankbattle', icon: '💥', title: '坦克大战', detail: '同种子地图竞速对战' },
+                { id: 'snake', icon: '🐍', title: '贪食蛇大作战', detail: '冲刺反杀吞身，冲击榜首' },
                 { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分' },
                 { id: 'dice', icon: '🎲', title: '骰子比大小', detail: '骰子押大小，围骰庄家通吃' },
               ],
@@ -6818,6 +6820,19 @@ export default function CouplePage() {
                 </p>
               </div>
               <TankBattle myId={myId} friendId={friendId ?? ''} friendName={friendName} myName={memberName || '对方'} />
+            </section>
+          )}
+
+          {/* 🐍 贪食蛇大作战：12 条 AI 蛇混战，冲刺反杀吞身，横屏全屏 */}
+          {activeModule === 'snake' && (
+            <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
+              <div>
+                <h3 className="font-semibold">🐍 贪食蛇大作战</h3>
+                <p className="mt-1 text-xs text-slate-400">
+                  冲刺耗长度和能量 · 撞对手反杀吞其一半 · 死亡掉落成食物
+                </p>
+              </div>
+              <SnakeBattle />
             </section>
           )}
 

@@ -1481,8 +1481,8 @@ export async function notifyCoupleMealNudge(recipient: string, senderName: strin
     sender_name: senderName,
     type: 'love',
     post_id: null,
-    title: '💌 催你打卡啦',
-    body: `${senderName} 已完成今日三餐打卡，就差你啦，打卡完就解锁今日情话～`,
+    title: '催你打卡啦',
+    body: `${senderName} 已完成今日三餐打卡，就差你啦～`,
   })
 }
 
@@ -1498,8 +1498,8 @@ export async function notifyLoveUnlocked(recipients: [string, string], senderNam
     sender_name: senderName,
     type: 'love-unlocked',
     post_id: `love-unlocked:${day}:${pair}`,
-    title: '💖 今日专属情话已解锁',
-    body: `${senderName} 和你今天的三餐打卡都齐啦，专属情话已经揭晓，快去看看吧～`,
+    title: '今日专属情话已解锁',
+    body: `你们俩今日三餐打卡都齐啦，快去看看吧～`,
   }, true)
 }
 
@@ -2400,7 +2400,7 @@ export async function notifyScratchRevealed(recipient: string, senderName: strin
     sender_name: senderName,
     type: 'scratch',
     post_id: null,
-    title: '🎫 刮刮乐被刮开啦',
+    title: '刮刮乐被刮开啦',
     body: `${senderName} 刮开了卡片，刮中了「${prize}」，快去看看～`,
   })
 }

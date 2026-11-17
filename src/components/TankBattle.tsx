@@ -700,6 +700,100 @@ export default function TankBattle({ myId, friendId, friendName, myName }: Props
     }
   }, [mode])
 
+  /* ------------------------------ 横屏全屏（仿回声洞窟） ------------------------------ */
+
+  const stageRef = useRef<HTMLDivElement>(null)
+  const [fullscreen, setFullscreen] = useState(false)
+  const [fsHint, setFsHint] = useState(false)
+  const joyActiveRef = useRef(false)
+  const joyOriginRef = useRef({ x: 0, y: 0 })
+  const joyBaseRef = useRef<HTMLDivElement>(null)
+  const joyThumbRef = useRef<HTMLDivElement>(null)
+
+  /** 进入 / 退出全屏；手机上顺带锁定横屏（不支持的环境静默跳过） */
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {})
+      return
+    }
+    const el = stageRef.current
+    if (!el) return
+    void el.requestFullscreen().catch(() => {})
+    if (isTouch) {
+      setFsHint(true)
+      window.setTimeout(() => setFsHint(false), 4000)
+    }
+    try {
+      void (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.('landscape')
+    } catch {
+      // 桌面端或不支持方向锁定的浏览器：忽略即可，全屏本身已生效
+    }
+  }, [isTouch])
+
+  /** 全屏监听常驻整个组件生命周期：任何进入 / 退出（含浏览器 Esc）都同步 state，杜绝假全屏 */
+  useEffect(() => {
+    const onFs = () => {
+      const fs = Boolean(document.fullscreenElement)
+      setFullscreen(fs)
+      if (!fs) setFsHint(false)
+      else keysRef.current.clear()
+    }
+    document.addEventListener('fullscreenchange', onFs)
+    return () => document.removeEventListener('fullscreenchange', onFs)
+  }, [])
+
+  /** 退出对战（返回模式选择）时顺带退出全屏；监听常驻，state 自动同步 */
+  useEffect(() => {
+    if (mode !== 'select') return
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
+  }, [mode])
+
+  /* ------------------------------ 虚拟摇杆（仅横屏全屏） ------------------------------ */
+
+  /** 与回声洞窟同款「相对起点」模型：以按下位置为原点，往哪拖就往哪走，怎么按都不会反 */
+  const joyApply = (e: React.PointerEvent) => {
+    const base = joyBaseRef.current
+    if (!base) return
+    const rect = base.getBoundingClientRect()
+    const R = rect.width / 2
+    const range = R * 0.62
+    let dx = e.clientX - joyOriginRef.current.x
+    let dy = e.clientY - joyOriginRef.current.y
+    const len = Math.hypot(dx, dy)
+    if (len > range) {
+      dx = (dx / len) * range
+      dy = (dy / len) * range
+    }
+    // 死区 + 主轴判定：坦克只需 4 向，取拖动向量的主导轴
+    if (Math.hypot(dx, dy) / range >= 0.12) {
+      keysRef.current.set('joy', Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : dy > 0 ? 2 : 0)
+    } else {
+      keysRef.current.delete('joy')
+    }
+    if (joyThumbRef.current) joyThumbRef.current.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`
+  }
+
+  const joyReset = () => {
+    joyActiveRef.current = false
+    keysRef.current.delete('joy')
+    if (joyThumbRef.current) joyThumbRef.current.style.transform = 'translate(0px, 0px)'
+  }
+
+  const joyHandlers = {
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault()
+      joyActiveRef.current = true
+      joyOriginRef.current = { x: e.clientX, y: e.clientY }
+      e.currentTarget.setPointerCapture(e.pointerId)
+      joyApply(e)
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      if (joyActiveRef.current) joyApply(e)
+    },
+    onPointerUp: joyReset,
+    onPointerCancel: joyReset,
+  }
+
   /* ------------------------------ 触屏 ------------------------------ */
 
   const holdBtn = (dir: number, label: string) => (
@@ -719,25 +813,6 @@ export default function TankBattle({ myId, friendId, friendName, myName }: Props
       onPointerLeave={() => keysRef.current.delete('hold')}
     >
       {label}
-    </button>
-  )
-
-  const fireBtn = (
-    <button
-      type="button"
-      className="flex h-16 w-16 touch-none select-none items-center justify-center rounded-full border border-rose-400/60 bg-rose-500/20 text-xs font-bold tracking-widest text-rose-200 transition active:bg-rose-500/40"
-      onPointerDown={(e) => {
-        e.preventDefault()
-        keysRef.current.set('fire', -1)
-      }}
-      onPointerUp={(e) => {
-        e.preventDefault()
-        keysRef.current.delete('fire')
-      }}
-      onPointerCancel={() => keysRef.current.delete('fire')}
-      onPointerLeave={() => keysRef.current.delete('fire')}
-    >
-      FIRE
     </button>
   )
 
@@ -870,6 +945,9 @@ export default function TankBattle({ myId, friendId, friendName, myName }: Props
         </div>
         <div className="flex items-center gap-1.5">
           {best > 0 && <span className="text-slate-400">最佳 {best}</span>}
+          <button type="button" className="rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-500 transition active:bg-slate-100" onClick={toggleFullscreen} title="横屏全屏">
+            ⛶
+          </button>
           <button type="button" className="rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-500 transition active:bg-slate-100" onClick={() => setMode('select')}>
             退出
           </button>
@@ -920,23 +998,101 @@ export default function TankBattle({ myId, friendId, friendName, myName }: Props
         </div>
       )}
 
-      {/* 舞台 */}
-      <div className="relative overflow-hidden rounded-2xl bg-black ring-1 ring-slate-600/30">
-        <canvas ref={canvasRef} width={SIZE} height={SIZE} className="block w-full touch-none select-none" style={{ aspectRatio: '1 / 1' }} />
+      {/* 舞台：全屏模式下铺满视口居中显示；非全屏时触屏按钮放在画面下方，不遮挡 */}
+      <div
+        ref={stageRef}
+        className={
+          fullscreen
+            ? 'fixed inset-0 z-[60] flex items-center justify-center bg-black'
+            : 'relative overflow-hidden rounded-2xl bg-black ring-1 ring-slate-600/30'
+        }
+      >
+        <canvas
+          ref={canvasRef}
+          width={SIZE}
+          height={SIZE}
+          className="block touch-none select-none"
+          style={fullscreen ? { aspectRatio: '1 / 1', width: 'min(100vw, 100vh)' } : { aspectRatio: '1 / 1', width: '100%' }}
+        />
 
-        {/* 触屏：左下方向键 + 右下开火 */}
-        {isTouch && (
+        {/* 全屏：顶部极简 HUD（常驻可关） */}
+        {fullscreen && (
+          <div className="absolute inset-x-0 top-0 flex items-center justify-center gap-2 p-2 text-xs">
+            <span className="rounded-md bg-black/60 px-2 py-1 text-slate-200">得分 {hud.score}</span>
+            <span className="rounded-md bg-black/60 px-2 py-1 text-slate-200">剩敌 {hud.left}</span>
+            <span className="rounded-md bg-black/60 px-2 py-1 text-slate-200">{'❤️'.repeat(Math.max(0, hud.lives))}</span>
+            {mode === 'online' && oppProg && (
+              <span className="rounded-md bg-rose-900/60 px-2 py-1 text-rose-200">
+                {friendName} 剩敌 {oppProg.left}
+              </span>
+            )}
+            <button
+              type="button"
+              className="rounded-md border border-slate-600/50 bg-black/60 px-2 py-1 text-slate-200 transition active:bg-slate-700/60"
+              onClick={toggleFullscreen}
+              title="退出全屏"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* 全屏：左下摇杆 + 右下开火（仿回声洞窟） */}
+        {isTouch && fullscreen && (
           <>
-            <div className="absolute bottom-2 left-2 grid grid-cols-3 gap-1" style={{ gridTemplateRows: '48px 48px' }}>
-              <span />
-              {holdBtn(0, '▲')}
-              <span />
-              {holdBtn(3, '◀')}
-              {holdBtn(2, '▼')}
-              {holdBtn(1, '▶')}
+            <div
+              ref={joyBaseRef}
+              className="absolute bottom-4 left-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-white/20 bg-white/10 backdrop-blur-sm"
+              {...joyHandlers}
+            >
+              <span className="pointer-events-none absolute text-[10px] text-white/30">移动</span>
+              <div ref={joyThumbRef} className="pointer-events-none h-12 w-12 rounded-full border border-white/30 bg-white/25 shadow-inner" />
             </div>
-            <div className="absolute bottom-3 right-3">{fireBtn}</div>
+            <div
+              className="absolute bottom-4 right-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-rose-400/40 bg-rose-500/20 backdrop-blur-sm transition active:bg-rose-500/40"
+              onPointerDown={(e) => {
+                e.preventDefault()
+                keysRef.current.set('fire', -1)
+                e.currentTarget.setPointerCapture(e.pointerId)
+              }}
+              onPointerUp={(e) => {
+                e.preventDefault()
+                keysRef.current.delete('fire')
+              }}
+              onPointerCancel={() => keysRef.current.delete('fire')}
+            >
+              <span className="pointer-events-none text-xs font-bold tracking-widest text-rose-200">FIRE</span>
+            </div>
           </>
+        )}
+
+        {/* 全屏横屏提示：锁屏方向不可用时的引导 */}
+        {fullscreen && fsHint && (
+          <div className="pointer-events-none absolute left-1/2 top-12 -translate-x-1/2 whitespace-nowrap rounded-lg bg-black/70 px-3 py-1.5 text-[11px] text-amber-200 ring-1 ring-amber-400/40">
+            建议打开手机「自动旋转」并横过来玩，摇杆与开火键已就位
+          </div>
+        )}
+
+        {/* 全屏结算：离线再来一局 / 联网开新局（非全屏时走下方操作条） */}
+        {fullscreen && sim?.over && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/75 p-4 text-center">
+            <div className="text-3xl">{sim.win ? '🏆' : '💀'}</div>
+            <div className="text-sm font-semibold text-slate-100">{sim.win ? '胜利！' : '战败…'} · 得分 {sim.score}</div>
+            {mode === 'offline' ? (
+              <button type="button" className="rounded-lg bg-emerald-500 px-5 py-2 text-sm font-semibold text-white transition active:bg-emerald-600" onClick={startOffline}>
+                再来一局
+              </button>
+            ) : mySide === 'a' ? (
+              <button type="button" className="rounded-lg bg-rose-500 px-5 py-2 text-sm font-semibold text-white transition active:bg-rose-600" onClick={() => void onlineRestart()}>
+                再来一局
+              </button>
+            ) : (
+              <div className="text-xs text-slate-400">等 {friendName} 开新局…</div>
+            )}
+            <button type="button" className="btn-ghost px-4 py-1.5 text-xs" onClick={toggleFullscreen}>
+              退出全屏
+            </button>
+          </div>
         )}
 
         {/* 联网开战按钮：waiting 且未就绪时盖住画布提示 */}
@@ -957,10 +1113,40 @@ export default function TankBattle({ myId, friendId, friendName, myName }: Props
         )}
       </div>
 
+      {/* 触屏非全屏：方向键 + 开火放画面下方，不遮挡游戏元素 */}
+      {isTouch && !fullscreen && (
+        <div className="flex items-center justify-between gap-4 px-2">
+          <div className="grid grid-cols-3 gap-1" style={{ gridTemplateRows: '48px 48px' }}>
+            <span />
+            {holdBtn(0, '▲')}
+            <span />
+            {holdBtn(3, '◀')}
+            {holdBtn(2, '▼')}
+            {holdBtn(1, '▶')}
+          </div>
+          <button
+            type="button"
+            className="flex h-20 w-20 touch-none select-none items-center justify-center rounded-full border border-rose-400/60 bg-rose-500/20 text-xs font-bold tracking-widest text-rose-200 transition active:bg-rose-500/40"
+            onPointerDown={(e) => {
+              e.preventDefault()
+              keysRef.current.set('fire', -1)
+              e.currentTarget.setPointerCapture(e.pointerId)
+            }}
+            onPointerUp={(e) => {
+              e.preventDefault()
+              keysRef.current.delete('fire')
+            }}
+            onPointerCancel={() => keysRef.current.delete('fire')}
+          >
+            FIRE
+          </button>
+        </div>
+      )}
+
       {/* 离线操作条 */}
       {mode === 'offline' && (
         <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
-          {isTouch ? <span className="text-slate-400">左下 ▲◀▼▶ 按住移动 · 右下 FIRE 开火</span> : <span className="text-slate-400">方向键 / WASD 移动 · 空格射击</span>}
+          {isTouch ? <span className="text-slate-400">下方 ▲◀▼▶ 按住移动 · FIRE 开火 · ⛶ 横屏全屏更好玩</span> : <span className="text-slate-400">方向键 / WASD 移动 · 空格射击 · ⛶ 全屏</span>}
           {(sim?.over || !sim) && (
             <>
               <input
