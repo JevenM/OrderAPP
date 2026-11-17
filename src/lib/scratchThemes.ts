@@ -107,7 +107,7 @@ export const SCRATCH_THEMES: ScratchTheme[] = [
     inkSoft: 'rgba(174, 168, 156, 0.62)',
     accent: '#f0c466',
     panel: '#1b1712',
-    panelInk: '#c0d994',
+    panelInk: '#3ae24a',
     motif: 'rgba(240,196,102,0.18)',
     decor: '✨',
     sealInk: '#2a1c05',

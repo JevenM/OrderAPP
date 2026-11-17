@@ -712,9 +712,12 @@ export default function SnakeBattle() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
 
-  // 画布鼠标：转向（按 CSS 缩放换算成画布内部坐标）+ 按住左键冲刺
+  // 画布鼠标：转向（按 CSS 缩放换算成画布内部坐标）+ 按住左键冲刺。
+  // 只认 mouse 指针：全屏触屏时手指划过画布若也写 mouse，摇杆回到死区会
+  // 立刻切到这条陈旧鼠标基准，方向乱跳（竖屏摇杆在画布外所以没这个问题）
   const canvasPointer = {
     onPointerMove: (e: RPointerEvent) => {
+      if (e.pointerType !== 'mouse') return
       const canvas = canvasRef.current
       const w = wRef.current
       if (!canvas || !w) return
@@ -904,6 +907,28 @@ export default function SnakeBattle() {
             建议打开手机「自动旋转」并横过来玩，摇杆与冲刺区已就位
           </div>
         )}
+
+        {/* 死亡结算：必须在舞台内部——全屏时只有全屏元素的后代才会渲染在全屏层，
+            放外面的话全屏下弹窗被挡住，退出全屏才看得到 */}
+        {dead && (
+          <div className="absolute inset-0 z-30 flex touch-none items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+            <div className="animate-slide-up w-full max-w-xs space-y-3 rounded-2xl border border-emerald-400/30 bg-slate-900 p-5 text-center shadow-xl">
+              <div className="text-4xl">💀</div>
+              <p className="font-bold tracking-widest text-emerald-200">{dead.reason}</p>
+              <div className="tabular-nums text-xs text-slate-400">
+                长度 {dead.len} · 击杀 {dead.kills} · 分数 {dead.score}
+                <br />
+                历史最长：{best}
+              </div>
+              <button type="button" className="w-full rounded-lg border border-emerald-400/40 bg-emerald-500/15 py-2 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25" onClick={startGame}>
+                再来一局
+              </button>
+              <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={() => setPhase('intro')}>
+                返回开始页
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 触屏非全屏：摇杆 + 冲刺放画面下方，不遮挡 */}
@@ -938,26 +963,6 @@ export default function SnakeBattle() {
         </div>
       )}
 
-      {/* 死亡结算：fixed 定位，全屏与非全屏都完整可见 */}
-      {dead && (
-        <div className="fixed inset-0 z-[70] flex touch-none items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="animate-slide-up w-full max-w-xs space-y-3 rounded-2xl border border-emerald-400/30 bg-slate-900 p-5 text-center shadow-xl">
-            <div className="text-4xl">💀</div>
-            <p className="font-bold tracking-widest text-emerald-200">{dead.reason}</p>
-            <div className="tabular-nums text-xs text-slate-400">
-              长度 {dead.len} · 击杀 {dead.kills} · 分数 {dead.score}
-              <br />
-              历史最长：{best}
-            </div>
-            <button type="button" className="w-full rounded-lg border border-emerald-400/40 bg-emerald-500/15 py-2 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25" onClick={startGame}>
-              再来一局
-            </button>
-            <button type="button" className="btn-ghost w-full py-2 text-xs" onClick={() => setPhase('intro')}>
-              返回开始页
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

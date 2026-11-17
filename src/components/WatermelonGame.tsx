@@ -50,13 +50,14 @@ const LINE_Y = 30
  * 不再有「必须在线上方停留 N 秒」的宽限——落定即结束。
  */
 const DROP_SETTLE = 0.35
-const FALLING_VY = 8
+const FALLING_VY = 18
 
 /** 警戒线越线警告的渐强时长（秒）：只影响线条画得多红多粗 */
 const DANGER_FADE = 0.3
 
-/** 重力加速度（逻辑单位 / s²）：柔和不生硬 */
-const GRAVITY = 110
+/** 重力加速度（逻辑单位 / s²）：足够大才有「下压堆叠」的实感——
+ *  太小时被挤上去的水果慢悠悠飘回来，像气球；世界高 120，360 约半秒多落到底 */
+const GRAVITY = 360
 
 /** 碰撞弹性系数：极低，水果落地几乎不弹，堆积稳定 */
 const RESTITUTION = 0.05
@@ -67,25 +68,27 @@ const BOUNCE_FLOOR = 0.15
 const FLOOR_FRICTION = 0.92
 
 /** 落地吸附速度：竖直速度小于它的水果落地后直接停住，不再微弹 */
-const LAND_ABSORB = 2
+const LAND_ABSORB = 6
 
 /** 单帧物理迭代次数：多迭代几轮让堆叠更稳定、重叠收敛得更干净 */
-const SOLVER_ITERATIONS = 5
+const SOLVER_ITERATIONS = 6
 
 /**
  * 位置分离参数：
  * - SLOP 允许的贴合余量（逻辑单位）：小于这个值的重叠不修，避免像素级抖动
- * - CORRECT 每轮推送比例：0.8 意味着一轮消掉 80% 的剩余重叠，5 轮后边界肉眼可见地贴合
+ * - CORRECT 每轮推送比例：配合 SOLVER_ITERATIONS 轮迭代把重叠收敛干净。
+ *   每轮推得越猛（0.8）挤压瞬间邻居被弹开得越远，配合弱重力就是「气球漂浮感」；
+ *   降到 0.6 并多一轮迭代，收敛效果相当，但挤压过程柔和、堆叠往下压
  */
 const SLOP = 0.35
-const CORRECT = 0.8
+const CORRECT = 0.6
 
 /**
  * 冲量门槛：相对速度小于它的接触对只做位置分离、不施加冲量。
  * 这是防「反复小幅弹动」的关键——重力每帧渗入的微小速度被位置分离消化，
  * 不会在水果之间来回注入能量形成持续震颤
  */
-const STOP_SPEED = 0.8
+const STOP_SPEED = 2.5
 
 /** 释放冷却（秒）：落一枚之后隔一会儿才能放下一枚 */
 const DROP_COOLDOWN = 0.55
@@ -363,8 +366,8 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
       // 阻尼：让运动整体柔和一点，也帮助更快静止
       f.vx *= 0.995
       f.vy *= 0.995
-      // 速度上限：防止极端情况穿透（比最大水果直径略小）
-      const vmax = 60
+      // 速度上限：防止极端情况穿透（仍远小于最小水果半径，不会隧穿）
+      const vmax = 100
       f.vx = Math.max(-vmax, Math.min(vmax, f.vx))
       f.vy = Math.max(-vmax, Math.min(vmax, f.vy))
       f.x += f.vx * dt
