@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
+import { fetchCoupleSnakeBest, submitCoupleSnakeBest } from '../lib/db'
 
 /* ============================== 贪食蛇大作战（单机） ==============================
  * 参考 根目录 deepseek_html_20261117_70a3d8.html 移植：
@@ -117,7 +118,7 @@ function shade(hex: string, p: number): string {
 const BEST_KEY = 'snakeBestLen'
 const SKIN_KEY = 'snakeSkin'
 
-export default function SnakeBattle() {
+export default function SnakeBattle({ myId, friendId, friendName }: { myId: string; friendId: string; friendName: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const wRef = useRef<World | null>(null)
@@ -152,6 +153,36 @@ export default function SnakeBattle() {
   const [hud, setHud] = useState({ len: 12, kills: 0, score: 0, rank: '-' })
   const [dead, setDead] = useState<{ len: number; kills: number; score: number; reason: string } | null>(null)
   const [isTouch] = useState(() => typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0))
+
+  /* ------------------------------ 情侣得分排行榜 ------------------------------ */
+
+  /** 双方各自的历史最高分（云端 couple_snake_best，一人一列） */
+  const [coupleBoard, setCoupleBoard] = useState<{ myBest: number; friendBest: number } | null>(null)
+
+  const loadCoupleBoard = useCallback(async () => {
+    if (!myId || !friendId) return
+    try {
+      const row = await fetchCoupleSnakeBest(myId, friendId)
+      if (!row) {
+        setCoupleBoard(null)
+        return
+      }
+      const iAmA = myId < friendId // 与 db.couplePair 的有序对规则一致
+      setCoupleBoard({
+        myBest: iAmA ? row.best_a : row.best_b,
+        friendBest: iAmA ? row.best_b : row.best_a,
+      })
+    } catch {
+      // 网络抖动静默重试（下一轮轮询会再拉）
+    }
+  }, [myId, friendId])
+
+  // 挂载即拉一次 + 每 15 秒轮询：对方破纪录后这边自动跟上（realtime 是回合制基建，这里轮询足够）
+  useEffect(() => {
+    void loadCoupleBoard()
+    const timer = window.setInterval(() => void loadCoupleBoard(), 15000)
+    return () => window.clearInterval(timer)
+  }, [loadCoupleBoard])
 
   skinRef.current = skinIdx
 
@@ -285,6 +316,12 @@ export default function SnakeBattle() {
         })
         w.gameOver = true
         setDead({ len, kills: w.kills, score: Math.floor(w.score), reason: reason ?? '你死了' })
+        // 成绩上云（超过历史最高才写入）：对方 15 秒内轮询到新纪录
+        if (myId && friendId) {
+          void submitCoupleSnakeBest(myId, friendId, myId, Math.floor(w.score))
+            .catch(() => {})
+            .finally(() => window.setTimeout(() => void loadCoupleBoard(), 600))
+        }
       }
     }
 
@@ -808,6 +845,31 @@ export default function SnakeBattle() {
             ))}
           </div>
         </div>
+        {coupleBoard && (
+          <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-600">💞 情侣排行榜 · 历史最高分</span>
+              <span className="text-[10px] text-slate-400">自动刷新</span>
+            </div>
+            <div className="space-y-1.5">
+              {(
+                [
+                  { name: '我', score: coupleBoard.myBest, me: true },
+                  { name: friendName || 'TA', score: coupleBoard.friendBest, me: false },
+                ] as Array<{ name: string; score: number; me: boolean }>
+              )
+                .sort((a, b) => b.score - a.score)
+                .map((entry, idx) => (
+                  <div key={entry.name} className="flex items-center justify-between text-xs">
+                    <span className={entry.me ? 'font-semibold text-emerald-600' : 'text-slate-500'}>
+                      {idx === 0 ? '🥇' : '🥈'} {entry.name}
+                    </span>
+                    <span className={`tabular-nums ${entry.me ? 'font-semibold text-emerald-600' : 'text-slate-500'}`}>{entry.score}</span>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
         <button type="button" className="w-full rounded-xl bg-emerald-500 py-3 font-semibold text-white transition active:bg-emerald-600" onClick={startGame}>
           开始游戏
         </button>
@@ -919,6 +981,12 @@ export default function SnakeBattle() {
                 长度 {dead.len} · 击杀 {dead.kills} · 分数 {dead.score}
                 <br />
                 历史最长：{best}
+                {coupleBoard && (
+                  <>
+                    <br />
+                    情侣榜 · 我 {coupleBoard.myBest} · {friendName || 'TA'} {coupleBoard.friendBest}
+                  </>
+                )}
               </div>
               <button type="button" className="w-full rounded-lg border border-emerald-400/40 bg-emerald-500/15 py-2 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25" onClick={startGame}>
                 再来一局

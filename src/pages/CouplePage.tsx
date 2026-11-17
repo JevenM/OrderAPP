@@ -158,7 +158,7 @@ import {
 } from '../lib/loveTree'
 import { useRealtime } from '../lib/realtime'
 import { SLOT_LABEL, type Meal, type MealSlot } from '../lib/types'
-import { COUPLE_MODULE_KEYS, type ModuleKey } from '../lib/modules'
+import { COUPLE_MODULE_KEYS, markModuleSeen, type ModuleKey } from '../lib/modules'
 import { useFriends } from '../store/friends'
 import { useModuleFlags } from '../store/moduleFlags'
 import { useSession } from '../store/session'
@@ -2574,6 +2574,11 @@ export default function CouplePage() {
   useEffect(() => {
     if (activeModule && !isEnabled(activeModule as ModuleKey)) setActiveModule(null)
   }, [activeModule, isEnabled])
+
+  // 打开过的模块登记为「已知晓」：入口卡片的 NEW 角标不再显示（含通知深链进入）
+  useEffect(() => {
+    if (activeModule) markModuleSeen(activeModule)
+  }, [activeModule])
 
   // 高亮几秒后自动消退 + 滚动把模块带到视野内
   useEffect(() => {
@@ -5825,7 +5830,7 @@ export default function CouplePage() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h3 className="font-semibold">🍉情侣西瓜分</h3>
-                  <p className="mt-1 text-xs text-slate-500">信用分：给 {friendName} 加分或减分。</p>
+                  {/* <p className="mt-1 text-xs text-slate-500">信用分：给 {friendName} 加分或减分。</p> */}
                 </div>
                 <span className="chip shrink-0 border-emerald-200 bg-emerald-50 text-emerald-700">{watermelonLogs.length} 条记录</span>
               </div>
@@ -5858,7 +5863,7 @@ export default function CouplePage() {
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-amber-50 p-3 text-xs leading-relaxed text-slate-600">
-                <strong>规则说明：</strong>西瓜分代表你们之间的专属默契值。加分代表 TA 更可爱、更贴心；减分代表想提醒 TA 注意一点小细节。分数可以手动调整，并会保留最近明细。
+                西瓜分代表你们之间的专属默契值。加分代表 TA 更可爱、更贴心；减分代表想提醒 TA 注意一点小细节。
               </div>
 
               <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -5966,7 +5971,7 @@ export default function CouplePage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <h4 className="text-xs font-semibold text-slate-700">全部西瓜分历史记录</h4>
-                    <p className="text-[10px] text-slate-400">已完整保存所有加减分与备注</p>
+                    {/* <p className="text-[10px] text-slate-400">已完整保存所有加减分与备注</p> */}
                   </div>
                   <button type="button" className="btn-ghost text-xs" onClick={() => void reloadWatermelonLogs()}>刷新</button>
                 </div>
@@ -6832,7 +6837,7 @@ export default function CouplePage() {
                   冲刺耗长度和能量 · 撞对手反杀吞其一半 · 死亡掉落成食物
                 </p>
               </div>
-              <SnakeBattle />
+              <SnakeBattle myId={myId} friendId={friendId ?? ''} friendName={friendName} />
             </section>
           )}
 
@@ -6951,7 +6956,7 @@ export default function CouplePage() {
         <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <h3 className="break-words font-semibold">🎁秘密心愿抽签</h3>
-            <p className="text-[11px] text-slate-400">专属心愿池，抽到谁的心愿谁来完成</p>
+            <p className="text-[11px] text-slate-400">专属心愿池，抽到对方的心愿自己来完成</p>
           </div>
           <span className="chip border-brand-200 bg-brand-50 text-brand-600">{wishesList.length} 个❤</span>
         </div>

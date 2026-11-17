@@ -32,6 +32,12 @@ export interface ModuleDef {
   desc: string
   /** 分组：情侣日常 / 互动游戏 / 应用入口 */
   group: 'couple' | 'game' | 'app'
+  /**
+   * 新上线标记：模块是哪个版本新增的就填哪个版本号（如 '1.10.31'）。
+   * 入口卡片右上角会显示 NEW 角标，用户打开过该模块后（本设备）不再显示。
+   * 以后每新增一个功能模块，都要在这里补上 newIn —— 这是唯一的登记处
+   */
+  newIn?: string
 }
 
 /**
@@ -60,8 +66,8 @@ export const MODULE_DEFS: ModuleDef[] = [
   { key: 'bigwatermelon', icon: '🍈', title: '合成大西瓜', desc: '点击放水果，同款相融合体', group: 'game' },
   { key: 'lightsout', icon: '💡', title: '关灯挑战', desc: '5×5 点灯翻转解谜，全部熄灭即胜利', group: 'game' },
   { key: 'echocavern', icon: '🕳️', title: '回声洞窟', desc: '全黑洞穴声波探路，捡光点、躲游走的影', group: 'game' },
-  { key: 'tankbattle', icon: '💥', title: '坦克大战', desc: '种子随机地图，情侣同图竞速对战，也可离线人机', group: 'game' },
-  { key: 'snake', icon: '🐍', title: '贪食蛇大作战', desc: '12 条 AI 蛇混战，冲刺反杀吞身，横屏全屏开玩', group: 'game' },
+  { key: 'tankbattle', icon: '💥', title: '坦克大战', desc: '种子随机地图，情侣同图竞速对战，也可离线人机', group: 'game', newIn: '1.10.30' },
+  { key: 'snake', icon: '🐍', title: '贪食蛇大作战', desc: '12 条 AI 蛇混战，冲刺反杀吞身，横屏全屏开玩', group: 'game', newIn: '1.10.31' },
   { key: 'changelog', icon: '📋', title: '更新日志', desc: '右上角「更多」里的更新日志入口与自动弹窗', group: 'app' },
   { key: 'about', icon: '💕', title: '关于我们', desc: '右上角「更多」里的关于我们页面入口', group: 'app' },
 ]
@@ -83,6 +89,35 @@ export const modulesOfGroup = (group: ModuleDef['group']): ModuleDef[] => MODULE
 
 export const moduleDef = (key: ModuleKey): ModuleDef =>
   MODULE_DEFS.find((m) => m.key === key) ?? MODULE_DEFS[0]
+
+/* ------------------------------ 新模块 NEW 角标 ------------------------------ */
+
+/** 本设备已打开过的模块 key（localStorage）：打开即视为「已知晓新模块」 */
+const SEEN_KEY = 'modules-seen-keys'
+
+/** 模块是否该显示 NEW 角标：登记了 newIn 且本设备还没打开过 */
+export function isModuleNew(key: string): boolean {
+  const def = MODULE_DEFS.find((m) => m.key === key)
+  if (!def?.newIn) return false
+  try {
+    const seen = JSON.parse(localStorage.getItem(SEEN_KEY) ?? '[]') as string[]
+    return !seen.includes(key)
+  } catch {
+    return true
+  }
+}
+
+/** 打开模块时登记：之后这个设备上不再显示它的 NEW 角标 */
+export function markModuleSeen(key: string): void {
+  try {
+    const seen = JSON.parse(localStorage.getItem(SEEN_KEY) ?? '[]') as string[]
+    if (seen.includes(key)) return
+    seen.push(key)
+    localStorage.setItem(SEEN_KEY, JSON.stringify(seen))
+  } catch {
+    // localStorage 不可用时角标会一直显示，无伤大雅
+  }
+}
 
 /** 管理端按成员隔离存储时的回落标记 */
 export const GLOBAL_SCOPE = 'global'

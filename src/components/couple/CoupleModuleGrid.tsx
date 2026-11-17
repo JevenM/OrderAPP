@@ -1,4 +1,4 @@
-import type { ModuleKey } from '../../lib/modules'
+import { isModuleNew, type ModuleKey } from '../../lib/modules'
 
 type CoupleModule = {
   id: string
@@ -48,9 +48,15 @@ export default function CoupleModuleGrid({ sections, isEnabled, onSelect }: Prop
               <button
                 key={module.id}
                 type="button"
-                className="card flex min-h-28 flex-col items-start justify-between gap-3 text-left transition hover:border-brand-200"
+                className="card relative flex min-h-28 flex-col items-start justify-between gap-3 text-left transition hover:border-brand-200"
                 onClick={() => onSelect(module.id)}
               >
+                {/* 新模块角标：用户打开过该模块后不再显示（登记在 modules.ts） */}
+                {isModuleNew(module.id) && (
+                  <span className="animate-pop-in absolute -right-1 -top-1.5 rounded-full bg-gradient-to-r from-rose-500 to-orange-400 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-white shadow-sm">
+                    NEW
+                  </span>
+                )}
                 <span className="text-2xl">{module.icon}</span>
                 <span>
                   <span className="block text-sm font-semibold text-slate-700">{module.title}</span>

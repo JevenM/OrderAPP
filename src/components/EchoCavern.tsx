@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 /**
  * 回声洞窟：全黑暗洞穴探路游戏，纯单机。
@@ -1734,10 +1735,13 @@ export default function EchoCavern() {
           </div>
         )}
 
-        {/* 结算弹窗：fixed 定位——非全屏时脱离舞台 overflow-hidden 不再被裁剪；
-            全屏时舞台本身在顶层内且铺满视口，fixed 后代仍然显示在全屏层之上 */}
-        {result && (
-          <div className="fixed inset-0 z-[70] flex touch-none items-center justify-center overscroll-contain bg-black/70 p-4 backdrop-blur-sm">
+        {/* 结算弹窗：Portal 挂到 body——本组件嵌在 CouplePage 的 .card 里，
+            .card:active 有 transform，触摸弹窗瞬间会把内联 fixed 退化成相对卡片定位
+            （弹窗跳走，抬手又跳回 = 反复横跳点不中按钮）；挂到 body 后不受任何祖先影响。
+            全屏时弹窗也在 body 层，z-[70] 高于全屏舞台 z-[60] */}
+        {result &&
+          createPortal(
+            <div className="fixed inset-0 z-[70] flex touch-none items-center justify-center overscroll-contain bg-black/70 p-4 backdrop-blur-sm">
             <div className="animate-fade max-h-[85vh] w-full max-w-xs space-y-3 overflow-y-auto rounded-2xl border border-cyan-400/30 bg-slate-900 p-5 text-center shadow-xl">
               <div className="text-4xl">{result.kind === 'clear' ? (result.isLast ? '🏆' : '🧭') : '🌑'}</div>
               <p className="font-bold tracking-widest text-cyan-200">
@@ -1778,8 +1782,9 @@ export default function EchoCavern() {
                 </div>
               )}
             </div>
-          </div>
-        )}
+          </div>,
+            document.body
+          )}
       </div>
 
       {/* 竖屏触屏：画面下方按钮排，不遮挡游戏画面 */}

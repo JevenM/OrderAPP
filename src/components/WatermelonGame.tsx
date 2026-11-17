@@ -433,10 +433,13 @@ export default function WatermelonGame({ myId, friendId, names }: Props) {
           b.x += nx * push * (ma / total)
           b.y += ny * push * (ma / total)
 
-          // 法向冲量：只有明显相互接近（rel < -STOP_SPEED）才注入速度；
-          // 重力渗出的微小速度交给位置分离消化 → 堆里的水果不会反复小幅弹动
+          // 法向冲量：n 从 a 指向 b，rel = (v_a - v_b)·n > 0 表示相互接近。
+          // 只有明显接近（rel > STOP_SPEED）才注入冲量（弹开）；
+          // 重力渗出的微小速度交给位置分离消化 → 堆里的水果不会反复小幅弹动。
+          // ⚠ 此前写成 rel < -STOP_SPEED（分离时才施加、方向还指向对方），
+          // 等效于水果之间有个「吸回去」的力：离开接触面就被拉回、贴着弧面上漂打转
           const rel = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny
-          if (rel < -STOP_SPEED) {
+          if (rel > STOP_SPEED) {
             const impulse = (-(1 + RESTITUTION) * rel) / (1 / ma + 1 / mb)
             a.vx += (impulse / ma) * nx
             a.vy += (impulse / ma) * ny

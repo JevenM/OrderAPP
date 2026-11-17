@@ -2152,6 +2152,55 @@ export async function notifyTankNew(recipient: string, senderName: string, seed:
   })
 }
 
+/* ------------------------------ 贪食蛇情侣排行榜 ------------------------------ */
+
+export interface CoupleSnakeBestRow {
+  member_a: string
+  member_b: string
+  best_a: number
+  best_b: number
+  updated_at: string
+}
+
+/** 情侣蛇榜：双方各自的历史最高分（同跑 0046 模式，表缺失时静默返回 null） */
+export async function fetchCoupleSnakeBest(userA: string, userB: string): Promise<CoupleSnakeBestRow | null> {
+  if (!userA || !userB || userA === userB) return null
+  const [memberA, memberB] = couplePair(userA, userB)
+  const { data, error } = await supabase
+    .from('couple_snake_best')
+    .select('*')
+    .eq('member_a', memberA)
+    .eq('member_b', memberB)
+    .maybeSingle()
+  if (error) {
+    if (isMissingTable(error)) return null
+    fail(error, '加载情侣蛇榜')
+  }
+  return (data as CoupleSnakeBestRow | null) ?? null
+}
+
+/** 提交自己的贪食蛇最高分：只在超过已有成绩时写入（update 前先读，成绩落后不覆盖对方可见数据） */
+export async function submitCoupleSnakeBest(userA: string, userB: string, memberId: string, score: number): Promise<void> {
+  if (!userA || !userB || userA === userB || !memberId || !Number.isFinite(score)) return
+  const [memberA, memberB] = couplePair(userA, userB)
+  const isA = memberId === memberA
+  const current = await fetchCoupleSnakeBest(userA, userB)
+  const prev = current ? (isA ? current.best_a : current.best_b) : 0
+  if (score <= prev) return
+  const { error } = await supabase
+    .from('couple_snake_best')
+    .upsert(
+      {
+        member_a: memberA,
+        member_b: memberB,
+        ...(isA ? { best_a: score, best_b: current?.best_b ?? 0 } : { best_b: score, best_a: current?.best_a ?? 0 }),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'member_a,member_b' }
+    )
+  if (error && !isMissingTable(error)) fail(error, '提交情侣蛇榜成绩')
+}
+
 /* ------------------------------ 情侣骰子比大小 ------------------------------ */
 
 export type DiceBetChoice = 'small' | 'big' | null

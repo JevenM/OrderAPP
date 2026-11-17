@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useToast } from '../components/Toast'
-import { ALL_MODULE_KEYS, MODULE_GROUPS, modulesOfGroup, type ModuleKey } from '../lib/modules'
+import { ALL_MODULE_KEYS, isModuleNew, MODULE_GROUPS, modulesOfGroup, type ModuleKey } from '../lib/modules'
 import { useMembers } from '../store/members'
 import { useModuleFlags } from '../store/moduleFlags'
 
@@ -149,7 +149,15 @@ export default function AdminModuleFlags() {
                   >
                     <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-lg shadow-sm">{def.icon}</span>
                     <div className="min-w-0 flex-1">
-                      <div className="break-words text-sm font-semibold text-slate-700">{def.title}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="break-words text-sm font-semibold text-slate-700">{def.title}</span>
+                        {/* 新模块角标（管理页同样标注，方便管理员知道哪些是刚上线的） */}
+                        {isModuleNew(def.key) && (
+                          <span className="shrink-0 rounded-full bg-gradient-to-r from-rose-500 to-orange-400 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-white">
+                            NEW
+                          </span>
+                        )}
+                      </div>
                       <div className="mt-0.5 break-words text-[11px] text-slate-400">{def.desc}</div>
                     </div>
                     {isMemberScope && hasOwnFlag(def.key) && (
