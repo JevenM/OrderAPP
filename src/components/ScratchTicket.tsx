@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { sfx } from '../lib/sfx'
 import {
   CELL_REVEAL_RATIO,
@@ -283,6 +284,30 @@ export default function ScratchTicket({
     return new Set(readOpenCells(ticketNo + prize))
   })
 
+  /* ------------------------------ 中奖礼盒特效 ------------------------------ */
+
+  /** 整票刮完且中奖时弹出全屏开礼盒庆祝（谢谢参与不弹，避免扫兴） */
+  const [celebrate, setCelebrate] = useState(false)
+
+  /** 彩带粒子参数固定在会话内，避免每次渲染跳动 */
+  const bits = useMemo(
+    () =>
+      Array.from({ length: 20 }, (_, i) => ({
+        emoji: ['✨', '🎉', '💝', '⭐', '🎊', '💖'][i % 6],
+        left: `${3 + Math.random() * 94}%`,
+        delay: `${(Math.random() * 1.2).toFixed(2)}s`,
+        duration: `${(1.6 + Math.random() * 1.2).toFixed(2)}s`,
+        size: `${14 + Math.random() * 14}px`,
+      })),
+    []
+  )
+
+  useEffect(() => {
+    if (!celebrate) return
+    const timer = window.setTimeout(() => setCelebrate(false), 3200)
+    return () => window.clearTimeout(timer)
+  }, [celebrate])
+
   /** 刮开一格：记录进度、轻音效；全部格子都开了才整票揭晓（上报数据库） */
   const openCell = (index: number, total: number) => {
     sfx.cellReveal()
@@ -292,6 +317,7 @@ export default function ScratchTicket({
     setOpenSet(next)
     if (next.size >= total) {
       sfx.reveal()
+      if (tier !== 'none') setCelebrate(true)
       onReveal()
     }
   }
@@ -488,6 +514,7 @@ export default function ScratchTicket({
                     sound={() => sfx.scratch()}
                     onClear={() => {
                       sfx.reveal()
+                      if (tier !== 'none') setCelebrate(true)
                       onReveal()
                     }}
                   />
@@ -526,6 +553,37 @@ export default function ScratchTicket({
           </span>
         </div>
       </div>
+
+      {/* 中奖礼盒庆祝：Portal 挂到 body——票面外层有阴影/圆角/transform 的祖先，
+          内联 fixed 会受 :active 变形影响（回声洞窟教训）；点击任意处或 3.2 秒后自动关闭 */}
+      {celebrate &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[75] flex touch-none items-center justify-center overflow-hidden bg-gradient-to-br from-rose-500/90 via-pink-500/90 to-orange-400/90 p-6"
+            onPointerDown={() => setCelebrate(false)}
+          >
+            {bits.map((b, i) => (
+              <span
+                key={i}
+                className="animate-confetti pointer-events-none absolute -top-6"
+                style={{ left: b.left, animationDelay: b.delay, animationDuration: b.duration, fontSize: b.size }}
+              >
+                {b.emoji}
+              </span>
+            ))}
+            <div className="animate-pop-in relative text-center">
+              <div className="animate-bounce text-7xl drop-shadow-lg">🎁</div>
+              <div className="mt-3 text-lg font-black tracking-widest text-white drop-shadow">
+                {tier === 'big' ? '🏆 恭喜中大奖！' : '🎉 恭喜中奖！'}
+              </div>
+              <div className="mt-2 inline-block rounded-xl bg-white/20 px-4 py-2 text-sm font-bold text-white backdrop-blur-sm">
+                {meta.icon} {prize}
+              </div>
+              <div className="mt-3 text-[11px] text-white/70">点击任意处关闭</div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   )
 }

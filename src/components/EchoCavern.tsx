@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useJoystick } from './game/useJoystick'
 
 /**
  * 回声洞窟：全黑暗洞穴探路游戏，纯单机。
@@ -444,8 +445,15 @@ export default function EchoCavern() {
   const keysRef = useRef(new Set<string>())
   /** 虚拟摇杆模拟量：[-1,1]，支持斜向与半速 */
   const joyRef = useRef({ x: 0, y: 0, active: false })
-  const joyBaseRef = useRef<HTMLDivElement>(null)
-  const joyThumbRef = useRef<HTMLDivElement>(null)
+  const { setBaseEl: setJoyBaseEl, thumbRef: joyThumbRef } = useJoystick({
+    onPress: () => ensureAudio(),
+    onChange: (v) => {
+      // 死区：微小位移归零，避免手抖让角色漂移
+      joyRef.current.x = v.len >= 0.12 ? v.x : 0
+      joyRef.current.y = v.len >= 0.12 ? v.y : 0
+      joyRef.current.active = v.len >= 0.12
+    },
+  })
   /** 回音球蓄力起始时间（按住 E / 按钮期间非空，松手时按持有时长换算力度） */
   const chargeAtRef = useRef<number | null>(null)
   /** 蓄力进度镜像（0~1），供按钮指示条直接操作 DOM */
@@ -1464,62 +1472,6 @@ export default function EchoCavern() {
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
   }, [phase])
 
-  /* ------------------------------ 虚拟摇杆（触屏） ------------------------------ */
-
-  /** 摇杆采用「相对起点」模型：以按下的位置为原点，拖动向量即方向。
-   *  旧的「指针相对盘心绝对位置」模型在手指落在盘面边缘时方向有歧义（想左却往右），
-   *  相对起点模型下「往哪拖就往哪走」，怎么按都不会反。 */
-  const joyOriginRef = useRef({ x: 0, y: 0 })
-
-  /** 把拖动向量换算成摇杆模拟量，并直接挪动滑块（绕过 React 状态，避免 60fps 重渲染） */
-  const joyApply = (e: React.PointerEvent) => {
-    const base = joyBaseRef.current
-    if (!base) return
-    const rect = base.getBoundingClientRect()
-    const R = rect.width / 2
-    const range = R * 0.62 // 滑块最大偏移
-    let dx = e.clientX - joyOriginRef.current.x
-    let dy = e.clientY - joyOriginRef.current.y
-    const len = Math.hypot(dx, dy)
-    if (len > range) {
-      dx = (dx / len) * range
-      dy = (dy / len) * range
-    }
-    let vx = dx / range
-    let vy = dy / range
-    // 死区：起点附近的轻微抖动不产生移动
-    if (Math.hypot(vx, vy) < 0.12) {
-      vx = 0
-      vy = 0
-    }
-    joyRef.current.x = vx
-    joyRef.current.y = vy
-    if (joyThumbRef.current) joyThumbRef.current.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`
-  }
-
-  const joyReset = () => {
-    joyRef.current.x = 0
-    joyRef.current.y = 0
-    joyRef.current.active = false
-    if (joyThumbRef.current) joyThumbRef.current.style.transform = 'translate(0px, 0px)'
-  }
-
-  const joyHandlers = {
-    onPointerDown: (e: React.PointerEvent) => {
-      e.preventDefault()
-      ensureAudio()
-      joyRef.current.active = true
-      joyOriginRef.current = { x: e.clientX, y: e.clientY }
-      e.currentTarget.setPointerCapture(e.pointerId)
-      joyApply(e)
-    },
-    onPointerMove: (e: React.PointerEvent) => {
-      if (joyRef.current.active) joyApply(e)
-    },
-    onPointerUp: joyReset,
-    onPointerCancel: joyReset,
-  }
-
   /* ------------------------------ 投掷盘（触屏，右下角） ------------------------------ */
 
   /** 与 HUD 小按钮同一套蓄力逻辑，但触控目标 112px，且环形力度反馈直接由主循环驱动 */
@@ -1560,9 +1512,12 @@ export default function EchoCavern() {
   useEffect(() => {
     if (!fullscreen) {
       keysRef.current.clear()
-      joyReset()
+      joyRef.current.x = 0
+      joyRef.current.y = 0
+      joyRef.current.active = false
+      if (joyThumbRef.current) joyThumbRef.current.style.transform = 'translate(0px, 0px)'
     }
-  }, [fullscreen, joyReset])
+  }, [fullscreen])
 
   /* ------------------------------ 关卡选择页 ------------------------------ */
 
@@ -1704,9 +1659,8 @@ export default function EchoCavern() {
         {/* 摇杆：仅横屏全屏时显示（竖屏用画面下方的按钮，不遮挡画面） */}
         {isTouch && fullscreen && (
           <div
-            ref={joyBaseRef}
-            className="absolute bottom-4 left-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-white/20 bg-white/10 backdrop-blur-sm"
-            {...joyHandlers}
+            ref={setJoyBaseEl}
+            className="absolute bottom-4 left-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-white/20 bg-slate-900/50"
           >
             <span className="pointer-events-none absolute text-[10px] text-white/30">移动</span>
             <div
@@ -1719,7 +1673,7 @@ export default function EchoCavern() {
         {/* 投掷盘：仅横屏全屏时显示，右下角，按住蓄力（环形力度反馈） */}
         {isTouch && fullscreen && (
           <div
-            className={`absolute bottom-4 right-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-white/20 bg-white/10 backdrop-blur-sm transition ${hud.balls <= 0 ? 'opacity-40' : ''}`}
+            className={`absolute bottom-4 right-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-white/20 bg-slate-900/50 transition ${hud.balls <= 0 ? 'opacity-40' : ''}`}
             {...ballPadHandlers}
           >
             <div ref={ballRingRef} className="pointer-events-none absolute inset-0 rounded-full" style={{ background: 'rgba(255,255,255,0.12)' }} />

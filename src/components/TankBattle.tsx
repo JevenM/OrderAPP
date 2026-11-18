@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { dirFromVector, useJoystick } from './game/useJoystick'
 import { configured } from '../lib/supabase'
+import { sfx } from '../lib/sfx'
 import { POLL, useRealtime } from '../lib/realtime'
 import {
   createCoupleTankHistory,
@@ -391,6 +393,8 @@ export default function TankBattle({ myId, friendId, friendName, myName }: Props
       else if (tank.dir === 2) vy = 4
       else vx = -4
       simRef.current?.bullets.push({ x: bx, y: by, vx, vy, mine, alive: true })
+      // 只给玩家开火配音，敌人齐射时不会变成炸锅
+      if (mine) sfx.shoot()
       tank.cooldown = cd
     }
 
@@ -492,6 +496,7 @@ export default function TankBattle({ myId, friendId, friendName, myName }: Props
           if (tile === TILE_BRICK) {
             sim.map[ty][tx] = TILE_EMPTY
             b.alive = false
+            sfx.brick()
             continue
           }
           if (tile === TILE_STEEL) {
@@ -515,9 +520,11 @@ export default function TankBattle({ myId, friendId, friendName, myName }: Props
               sim.score += 100
               sim.left--
               hudDirty = true
+              sfx.boom()
               if (sim.left <= 0) {
                 sim.over = true
                 sim.win = true
+                sfx.win()
                 if (mode === 'online') settleOnline(sim)
               }
               break
@@ -527,6 +534,7 @@ export default function TankBattle({ myId, friendId, friendName, myName }: Props
           b.alive = false
           p.lives--
           hudDirty = true
+          sfx.hurt()
           if (p.lives <= 0) {
             sim.over = true
             sim.win = false
@@ -705,10 +713,6 @@ export default function TankBattle({ myId, friendId, friendName, myName }: Props
   const stageRef = useRef<HTMLDivElement>(null)
   const [fullscreen, setFullscreen] = useState(false)
   const [fsHint, setFsHint] = useState(false)
-  const joyActiveRef = useRef(false)
-  const joyOriginRef = useRef({ x: 0, y: 0 })
-  const joyBaseRef = useRef<HTMLDivElement>(null)
-  const joyThumbRef = useRef<HTMLDivElement>(null)
 
   /** 进入 / 退出全屏；手机上顺带锁定横屏（不支持的环境静默跳过） */
   const toggleFullscreen = useCallback(() => {
@@ -748,51 +752,23 @@ export default function TankBattle({ myId, friendId, friendName, myName }: Props
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
   }, [mode])
 
-  /* ------------------------------ 虚拟摇杆（仅横屏全屏） ------------------------------ */
+  /* ------------------------------ 虚拟摇杆（仅横屏全屏，共享 useJoystick） ------------------------------ */
 
-  /** 与回声洞窟同款「相对起点」模型：以按下位置为原点，往哪拖就往哪走，怎么按都不会反 */
-  const joyApply = (e: React.PointerEvent) => {
-    const base = joyBaseRef.current
-    if (!base) return
-    const rect = base.getBoundingClientRect()
-    const R = rect.width / 2
-    const range = R * 0.62
-    let dx = e.clientX - joyOriginRef.current.x
-    let dy = e.clientY - joyOriginRef.current.y
-    const len = Math.hypot(dx, dy)
-    if (len > range) {
-      dx = (dx / len) * range
-      dy = (dy / len) * range
-    }
-    // 死区 + 主轴判定：坦克只需 4 向，取拖动向量的主导轴
-    if (Math.hypot(dx, dy) / range >= 0.12) {
-      keysRef.current.set('joy', Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : dy > 0 ? 2 : 0)
-    } else {
-      keysRef.current.delete('joy')
-    }
-    if (joyThumbRef.current) joyThumbRef.current.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`
-  }
-
-  const joyReset = () => {
-    joyActiveRef.current = false
-    keysRef.current.delete('joy')
-    if (joyThumbRef.current) joyThumbRef.current.style.transform = 'translate(0px, 0px)'
-  }
-
-  const joyHandlers = {
-    onPointerDown: (e: React.PointerEvent) => {
-      e.preventDefault()
-      joyActiveRef.current = true
-      joyOriginRef.current = { x: e.clientX, y: e.clientY }
-      e.currentTarget.setPointerCapture(e.pointerId)
-      joyApply(e)
+  /** 记忆当前摇杆四向，供斜向滞回判断（对角线附近不抖动换向） */
+  const joyDirRef = useRef(-1)
+  const { setBaseEl: setJoyBaseEl, thumbRef: joyThumbRef } = useJoystick({
+    onChange: (v) => {
+      // 死区 + 斜向滞回：坦克只需 4 向，滞回让连续变向顺滑不抖
+      if (v.len >= 0.12) {
+        const d = dirFromVector(v.x, v.y, joyDirRef.current)
+        joyDirRef.current = d
+        keysRef.current.set('joy', d)
+      } else {
+        joyDirRef.current = -1
+        keysRef.current.delete('joy')
+      }
     },
-    onPointerMove: (e: React.PointerEvent) => {
-      if (joyActiveRef.current) joyApply(e)
-    },
-    onPointerUp: joyReset,
-    onPointerCancel: joyReset,
-  }
+  })
 
   /* ------------------------------ 触屏 ------------------------------ */
 
@@ -1041,15 +1017,14 @@ export default function TankBattle({ myId, friendId, friendName, myName }: Props
         {isTouch && fullscreen && (
           <>
             <div
-              ref={joyBaseRef}
-              className="absolute bottom-4 left-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-white/20 bg-white/10 backdrop-blur-sm"
-              {...joyHandlers}
+              ref={setJoyBaseEl}
+              className="absolute bottom-4 left-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-white/20 bg-slate-900/50"
             >
               <span className="pointer-events-none absolute text-[10px] text-white/30">移动</span>
               <div ref={joyThumbRef} className="pointer-events-none h-12 w-12 rounded-full border border-white/30 bg-white/25 shadow-inner" />
             </div>
             <div
-              className="absolute bottom-4 right-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-rose-400/40 bg-rose-500/20 backdrop-blur-sm transition active:bg-rose-500/40"
+              className="absolute bottom-4 right-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-rose-400/40 bg-rose-900/50 transition active:bg-rose-500/40"
               onPointerDown={(e) => {
                 e.preventDefault()
                 keysRef.current.set('fire', -1)

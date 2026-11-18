@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
 import { fetchCoupleSnakeBest, submitCoupleSnakeBest } from '../lib/db'
+import { sfx } from '../lib/sfx'
+import { useJoystick } from './game/useJoystick'
 
 /* ============================== 贪食蛇大作战（单机） ==============================
  * 参考 根目录 deepseek_html_20261117_70a3d8.html 移植：
@@ -122,11 +124,8 @@ export default function SnakeBattle({ myId, friendId, friendName }: { myId: stri
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const wRef = useRef<World | null>(null)
-  const joyActiveRef = useRef(false)
-  const joyOriginRef = useRef({ x: 0, y: 0 })
-  const joyVecRef = useRef({ x: 0, y: 0 })
-  const joyBaseRef = useRef<HTMLDivElement>(null)
-  const joyThumbRef = useRef<HTMLDivElement>(null)
+  // 高性能摇杆：move 只记坐标，换算与滑块写入收敛到 rAF 每帧一次（详见 useJoystick）
+  const { setBaseEl: setJoyBaseEl, thumbRef: joyThumbRef, vectorRef: joyVecRef } = useJoystick()
   const sprintTouchRef = useRef(false)
   const sprintMouseRef = useRef(false)
   const spaceRef = useRef(false)
@@ -213,7 +212,11 @@ export default function SnakeBattle({ myId, friendId, friendName }: { myId: stri
       const fs = Boolean(document.fullscreenElement)
       setFullscreen(fs)
       if (!fs) setFsHint(false)
-      else joyReset()
+      else {
+        // 进入全屏重置摇杆残留状态（摇杆元素随条件渲染重挂载，监听由 Hook 自动重接）
+        joyVecRef.current = { x: 0, y: 0, len: 0 }
+        if (joyThumbRef.current) joyThumbRef.current.style.transform = 'translate(0px, 0px)'
+      }
     }
     document.addEventListener('fullscreenchange', onFs)
     return () => document.removeEventListener('fullscreenchange', onFs)
@@ -316,6 +319,7 @@ export default function SnakeBattle({ myId, friendId, friendName }: { myId: stri
         })
         w.gameOver = true
         setDead({ len, kills: w.kills, score: Math.floor(w.score), reason: reason ?? '你死了' })
+        sfx.lose()
         // 成绩上云（超过历史最高才写入）：对方 15 秒内轮询到新纪录
         if (myId && friendId) {
           void submitCoupleSnakeBest(myId, friendId, myId, Math.floor(w.score))
@@ -332,9 +336,9 @@ export default function SnakeBattle({ myId, friendId, friendName }: { myId: stri
       w.camera.x += (w.player.body[0].x - w.camera.x) * Math.min(1, dt * 6)
       w.camera.y += (w.player.body[0].y - w.camera.y) * Math.min(1, dt * 6)
 
-      /* 转向：触屏摇杆优先，桌面鼠标（画布中心为基准） */
+      /* 转向：触屏摇杆优先（向量每帧由摇杆 rAF 刷新，连续变向即时生效），桌面鼠标（画布中心为基准） */
       const joy = joyVecRef.current
-      if (Math.hypot(joy.x, joy.y) >= 0.12) {
+      if (joy.len >= 0.12) {
         w.player.angle = Math.atan2(joy.y, joy.x)
       } else {
         const dx = w.mouse.x - W / 2
@@ -424,7 +428,10 @@ export default function SnakeBattle({ myId, friendId, friendName }: { myId: stri
           if (dist(s.body[0], f) < HEAD_R + f.r + 2) {
             f.eaten = true
             s.targetLen = Math.min(200, s.targetLen + 1)
-            if (s.isPlayer) w.score += 2
+            if (s.isPlayer) {
+              w.score += 2
+              sfx.eat()
+            }
             burst(f.x, f.y, f.color, 3, 80)
             break
           }
@@ -452,6 +459,7 @@ export default function SnakeBattle({ myId, friendId, friendName }: { myId: stri
                   w.kills++
                   w.score += Math.floor(other.targetLen * 8)
                   floatText(other.body[0].x, other.body[0].y, `+${Math.floor(other.targetLen * 8)}`, '#ffd166')
+                  sfx.kill()
                 }
                 other.kills++
                 killSnake(other, s.isPlayer ? `${s.name} 冲刺撞死了你` : null)
@@ -736,7 +744,8 @@ export default function SnakeBattle({ myId, friendId, friendName }: { myId: stri
       spaceRef.current = false
       sprintTouchRef.current = false
       sprintMouseRef.current = false
-      joyReset()
+      joyVecRef.current = { x: 0, y: 0, len: 0 }
+      if (joyThumbRef.current) joyThumbRef.current.style.transform = 'translate(0px, 0px)'
     }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
@@ -772,46 +781,6 @@ export default function SnakeBattle({ myId, friendId, friendName }: { myId: stri
     onPointerCancel: () => {
       sprintMouseRef.current = false
     },
-  }
-
-  /* ------------------------------ 虚拟摇杆（相对起点，同回声洞窟） ------------------------------ */
-
-  const joyApply = (e: RPointerEvent) => {
-    const base = joyBaseRef.current
-    if (!base) return
-    const rect = base.getBoundingClientRect()
-    const R = rect.width / 2
-    const range = R * 0.62
-    let dx = e.clientX - joyOriginRef.current.x
-    let dy = e.clientY - joyOriginRef.current.y
-    const len = Math.hypot(dx, dy)
-    if (len > range) {
-      dx = (dx / len) * range
-      dy = (dy / len) * range
-    }
-    joyVecRef.current = { x: dx / range, y: dy / range }
-    if (joyThumbRef.current) joyThumbRef.current.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`
-  }
-
-  function joyReset() {
-    joyActiveRef.current = false
-    joyVecRef.current = { x: 0, y: 0 }
-    if (joyThumbRef.current) joyThumbRef.current.style.transform = 'translate(0px, 0px)'
-  }
-
-  const joyHandlers = {
-    onPointerDown: (e: RPointerEvent) => {
-      e.preventDefault()
-      joyActiveRef.current = true
-      joyOriginRef.current = { x: e.clientX, y: e.clientY }
-      e.currentTarget.setPointerCapture(e.pointerId)
-      joyApply(e)
-    },
-    onPointerMove: (e: RPointerEvent) => {
-      if (joyActiveRef.current) joyApply(e)
-    },
-    onPointerUp: joyReset,
-    onPointerCancel: joyReset,
   }
 
   /* ------------------------------ 渲染 ------------------------------ */
@@ -937,9 +906,8 @@ export default function SnakeBattle({ myId, friendId, friendName }: { myId: stri
         {isTouch && fullscreen && (
           <>
             <div
-              ref={joyBaseRef}
-              className="absolute bottom-4 left-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-white/20 bg-white/10 backdrop-blur-sm"
-              {...joyHandlers}
+              ref={setJoyBaseEl}
+              className="absolute bottom-4 left-4 flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-white/20 bg-slate-900/50"
             >
               <span className="pointer-events-none absolute text-[10px] text-white/30">转向</span>
               <div ref={joyThumbRef} className="pointer-events-none h-12 w-12 rounded-full border border-white/30 bg-white/25 shadow-inner" />
@@ -1003,9 +971,8 @@ export default function SnakeBattle({ myId, friendId, friendName }: { myId: stri
       {isTouch && !fullscreen && (
         <div className="flex items-center justify-between gap-4 px-2">
           <div
-            ref={joyBaseRef}
+            ref={setJoyBaseEl}
             className="relative flex h-24 w-24 touch-none select-none items-center justify-center rounded-full border border-emerald-300/60 bg-emerald-50"
-            {...joyHandlers}
           >
             <span className="pointer-events-none absolute text-[10px] text-emerald-300">转向</span>
             <div ref={joyThumbRef} className="pointer-events-none h-10 w-10 rounded-full border border-emerald-300 bg-emerald-200/70 shadow-inner" />
