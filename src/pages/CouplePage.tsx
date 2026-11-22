@@ -136,7 +136,14 @@ import {
 import { setSfxEnabled, sfxEnabled, subscribeSfx } from '../lib/sfx'
 import { todayStr } from '../lib/date'
 import { DEEP_COUPLE_QUESTIONS, EXTRA_COUPLE_QUESTIONS, MILESTONE_QUESTIONS, TRUTH_PROMPTS } from '../lib/coupleQuestions'
-import { WEDDING_STEPS, WEDDING_TOTAL, weddingItemKey, type WeddingItemKind } from '../lib/weddingSteps'
+import {
+  WEDDING_STEPS,
+  cloneWeddingSteps,
+  weddingItemKey,
+  type WeddingItem,
+  type WeddingItemKind,
+  type WeddingStep,
+} from '../lib/weddingSteps'
 import LoveTree from '../components/LoveTree'
 import ScratchTicket from '../components/ScratchTicket'
 import Star2048 from '../components/Star2048'
@@ -182,6 +189,18 @@ const SCRATCH_LOG_LIMIT = 200
 /** 备婚流程还没落库时的空值：保持引用稳定，避免每次渲染都重算派生值 */
 const EMPTY_WEDDING_DONE: string[] = []
 const EMPTY_WEDDING_CHECKED: Record<string, boolean> = {}
+const EMPTY_WEDDING_NOTES: Record<string, string> = {}
+const EMPTY_WEDDING_LOCKS: Record<string, { who: string; at: string }> = {}
+/** 编辑锁超过这个时间就当作过期，避免对方半路关页面把这里永远锁住 */
+const WEDDING_LOCK_TTL = 60_000
+/** 生成稳定的随机 id：用于用户自己新增的步骤 / 待办 */
+const newWeddingId = (prefix: string) =>
+  `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+/** 首次编辑时把内置模板落到 state，之后都以这份自定义副本为准 */
+const ensureWeddingSteps = (draft: CoupleWeddingState): WeddingStep[] => {
+  if (!draft.steps?.length) draft.steps = cloneWeddingSteps()
+  return draft.steps
+}
 
 /**
  * 五子棋：判断远端这一行棋局是不是比本地这份新。
@@ -285,39 +304,215 @@ function LogList({
   )
 }
 
-/** 备婚流程：某一步里可勾选的待办清单（要做的事 / 要准备的东西） */
+type WeddingEditor = { key: string; mode: 'note' | 'item' | 'new'; text: string; itemId?: string }
+
+/**
+ * 备婚流程：某一步里可勾选的待办清单（要做的事 / 要准备的东西）。
+ * 每条待办都可以勾选、写备注、改文案、删除，也能新增一条；
+ * 同一个位置被对方锁住时，这边只读，避免两个人互相覆盖。
+ */
 function WeddingCheckList({
   title,
   items,
   stepId,
   kind,
   checked,
+  notes,
+  locks,
+  myId,
   onToggle,
+  onSaveNote,
+  onAddItem,
+  onEditItem,
+  onDeleteItem,
+  onLock,
+  onUnlock,
   disabled,
 }: {
   title: string
-  items: string[]
+  items: WeddingItem[]
   stepId: string
   kind: WeddingItemKind
   checked: Record<string, boolean>
+  notes: Record<string, string>
+  locks: Record<string, { who: string; at: string }>
+  myId: string | null
   onToggle: (key: string) => void
+  onSaveNote: (key: string, text: string) => void
+  onAddItem: (stepId: string, kind: WeddingItemKind, text: string) => void
+  onEditItem: (stepId: string, kind: WeddingItemKind, itemId: string, text: string) => void
+  onDeleteItem: (stepId: string, kind: WeddingItemKind, itemId: string) => void
+  onLock: (key: string) => void
+  onUnlock: (key: string) => void
   disabled?: boolean
 }) {
+  const [editor, setEditor] = useState<WeddingEditor | null>(null)
+
+  /** 对方是否正在编辑这一处（本地草稿不受影响） */
+  const lockedByOther = (key: string) => {
+    const lock = locks[key]
+    if (!lock || lock.who === myId) return false
+    return Date.now() - new Date(lock.at).getTime() < WEDDING_LOCK_TTL
+  }
+  const begin = (key: string, mode: WeddingEditor['mode'], text: string, itemId?: string) => {
+    if (mode !== 'new') onLock(key)
+    setEditor({ key, mode, text, itemId })
+  }
+  const cancel = () => {
+    if (editor) onUnlock(editor.key)
+    setEditor(null)
+  }
+  const commit = () => {
+    if (!editor) return
+    const text = editor.text.trim()
+    if (editor.mode === 'note') onSaveNote(editor.key, text)
+    else if (editor.mode === 'item' && editor.itemId && text) onEditItem(stepId, kind, editor.itemId, text)
+    else if (editor.mode === 'new' && text) onAddItem(stepId, kind, text)
+    // 保存函数已经把内容和解锁写在同一笔里，这里不再单独写一次，避免两次写入互相覆盖
+    setEditor(null)
+  }
+  const newKey = `new:${stepId}:${kind}`
+
   return (
     <div className="rounded-lg bg-slate-50 p-2">
       <div className="text-[11px] font-semibold text-slate-600">{title}</div>
       <div className="mt-1 space-y-1">
-        {items.map((item, index) => {
-          const key = weddingItemKey(stepId, kind, index)
+        {items.map((item) => {
+          const key = weddingItemKey(stepId, kind, item.id)
           const on = Boolean(checked[key])
+          const note = notes[key] ?? ''
+          const locked = lockedByOther(key)
+          const editing = editor?.key === key
           return (
-            <label key={key} className="flex cursor-pointer items-start gap-2 text-[11px] text-slate-600">
-              <input className="mt-0.5" type="checkbox" checked={on} disabled={disabled} onChange={() => onToggle(key)} />
-              <span className={`min-w-0 flex-1 break-words ${on ? 'text-slate-400 line-through' : ''}`}>{item}</span>
-            </label>
+            <div key={key}>
+              <div className="flex items-start gap-1 text-[11px] text-slate-600">
+                <input
+                  className="mt-0.5 shrink-0"
+                  type="checkbox"
+                  checked={on}
+                  disabled={disabled || locked}
+                  aria-label={item.text}
+                  onChange={() => onToggle(key)}
+                />
+                <span className={`min-w-0 flex-1 break-words ${on ? 'text-slate-400 line-through' : ''}`}>{item.text}</span>
+                {locked && <span className="shrink-0 text-[9px] text-amber-500">🔒TA</span>}
+                <button
+                  type="button"
+                  disabled={disabled || locked}
+                  title={note ? '编辑备注' : '添加备注'}
+                  className={`shrink-0 rounded px-1 text-[10px] transition ${
+                    note ? 'bg-rose-50 text-rose-500' : 'text-slate-400 hover:text-rose-500'
+                  } disabled:opacity-40`}
+                  onClick={() =>
+                    editing && editor?.mode === 'note' ? cancel() : begin(key, 'note', note, item.id)
+                  }
+                >
+                  {note ? '📝 备注' : '✎ 备注'}
+                </button>
+                <button
+                  type="button"
+                  disabled={disabled || locked}
+                  title="改这条文案"
+                  className="shrink-0 px-0.5 text-[10px] text-slate-400 hover:text-rose-500 disabled:opacity-40"
+                  onClick={() =>
+                    editing && editor?.mode === 'item' ? cancel() : begin(key, 'item', item.text, item.id)
+                  }
+                >
+                  ✎
+                </button>
+                <button
+                  type="button"
+                  disabled={disabled || locked}
+                  title="删掉这条"
+                  className="shrink-0 px-0.5 text-[10px] text-slate-400 hover:text-rose-500 disabled:opacity-40"
+                  onClick={() => onDeleteItem(stepId, kind, item.id)}
+                >
+                  🗑
+                </button>
+              </div>
+              {note && !(editing && editor?.mode === 'note') && (
+                <button
+                  type="button"
+                  title="点击编辑备注"
+                  className="ml-4 mt-0.5 block w-[calc(100%-1rem)] whitespace-pre-wrap break-words rounded bg-rose-50/70 px-1.5 py-1 text-left text-[10px] leading-relaxed text-rose-700"
+                  onClick={() => !locked && begin(key, 'note', note, item.id)}
+                >
+                  {note}
+                </button>
+              )}
+              {editing && editor?.mode === 'item' && (
+                <div className="ml-4 mt-1 flex gap-1">
+                  <input
+                    autoFocus
+                    maxLength={120}
+                    className="min-w-0 flex-1 rounded border border-rose-200 bg-white px-1.5 py-1 text-[11px] outline-none focus:border-rose-400"
+                    value={editor.text}
+                    disabled={disabled}
+                    onChange={(e) => setEditor({ ...editor, text: e.target.value })}
+                  />
+                  <button type="button" className="btn-primary px-2 py-0.5 text-[10px]" disabled={disabled} onClick={commit}>保存</button>
+                  <button type="button" className="btn-ghost px-2 py-0.5 text-[10px]" onClick={cancel}>取消</button>
+                </div>
+              )}
+              {editing && editor?.mode === 'note' && (
+                <div className="ml-4 mt-1 space-y-1">
+                  <textarea
+                    autoFocus
+                    rows={2}
+                    maxLength={300}
+                    placeholder="记下你们说好的时间或细节，比如：预计 2027 年 5 月办婚礼"
+                    className="w-full resize-y rounded border border-rose-200 bg-white px-1.5 py-1 text-[11px] text-slate-700 outline-none focus:border-rose-400"
+                    value={editor.text}
+                    disabled={disabled}
+                    onChange={(e) => setEditor({ ...editor, text: e.target.value })}
+                  />
+                  <div className="flex items-center gap-1">
+                    <button type="button" className="btn-primary px-2 py-0.5 text-[10px]" disabled={disabled} onClick={commit}>保存</button>
+                    <button type="button" className="btn-ghost px-2 py-0.5 text-[10px]" onClick={cancel}>取消</button>
+                    {note && (
+                      <button
+                        type="button"
+                        className="ml-auto px-1 text-[10px] text-slate-400 hover:text-rose-500"
+                        disabled={disabled}
+                        onClick={() => {
+                          onSaveNote(key, '')
+                          setEditor(null)
+                        }}
+                      >
+                        删除备注
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           )
         })}
       </div>
+      {editor?.mode === 'new' && editor.key === newKey ? (
+        <div className="mt-1 flex gap-1">
+          <input
+            autoFocus
+            maxLength={120}
+            placeholder="写一条新的待办"
+            className="min-w-0 flex-1 rounded border border-rose-200 bg-white px-1.5 py-1 text-[11px] outline-none focus:border-rose-400"
+            value={editor.text}
+            disabled={disabled}
+            onChange={(e) => setEditor({ ...editor, text: e.target.value })}
+          />
+          <button type="button" className="btn-primary px-2 py-0.5 text-[10px]" disabled={disabled} onClick={commit}>添加</button>
+          <button type="button" className="btn-ghost px-2 py-0.5 text-[10px]" onClick={cancel}>取消</button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          disabled={disabled}
+          className="mt-1 text-[10px] text-slate-400 hover:text-rose-500 disabled:opacity-40"
+          onClick={() => begin(newKey, 'new', '')}
+        >
+          + 添加一条
+        </button>
+      )}
     </div>
   )
 }
@@ -1486,39 +1681,69 @@ export default function CouplePage() {
   const [weddingView, setWeddingView] = useState<'stepper' | 'overview'>('stepper')
   /** 步骤条里被展开的步骤 id；null 表示只展开当前那一步 */
   const [weddingOpenStep, setWeddingOpenStep] = useState<string | null>(null)
+  /** 正在编辑的大步骤 id 与表单草稿 */
+  const [weddingEditingStep, setWeddingEditingStep] = useState<string | null>(null)
+  const [weddingStepDraft, setWeddingStepDraft] = useState({ emoji: '', title: '', timing: '' })
 
-  /* 备婚流程派生值：步骤是内置模板，云上只存「哪几步完成」和「哪几条待办勾好了」 */
+  /* 备婚流程派生值：步骤可自定义，没改过就用内置模板 */
   const weddingDone = weddingRow?.state.done ?? EMPTY_WEDDING_DONE
   const weddingChecked = weddingRow?.state.checked ?? EMPTY_WEDDING_CHECKED
-  const weddingDoneCount = weddingDone.length
-  const weddingAllDone = weddingDoneCount >= WEDDING_TOTAL
+  const weddingNotes = weddingRow?.state.notes ?? EMPTY_WEDDING_NOTES
+  const weddingLocks = weddingRow?.state.locks ?? EMPTY_WEDDING_LOCKS
+  const weddingSteps: WeddingStep[] = weddingRow?.state.steps?.length ? weddingRow.state.steps : WEDDING_STEPS
+  const weddingTotal = weddingSteps.length
+  const weddingDoneCount = weddingDone.filter((id) => weddingSteps.some((s) => s.id === id)).length
+  const weddingAllDone = weddingDoneCount >= weddingTotal
+  const weddingPercent = weddingTotal ? Math.round((weddingDoneCount / weddingTotal) * 100) : 0
   /** 当前步骤 = 第一个还没完成的；全部完成时停在最后一步 */
   const weddingCurrentIndex = useMemo(() => {
-    const index = WEDDING_STEPS.findIndex((step) => !weddingDone.includes(step.id))
-    return index < 0 ? WEDDING_STEPS.length - 1 : index
-  }, [weddingDone])
-  const weddingCurrentStep = WEDDING_STEPS[weddingCurrentIndex]
+    const index = weddingSteps.findIndex((step) => !weddingDone.includes(step.id))
+    return index < 0 ? weddingSteps.length - 1 : index
+  }, [weddingSteps, weddingDone])
+  const weddingCurrentStep = weddingSteps[weddingCurrentIndex]
   /** 每步待办勾了几条，总览里显示「待办 x/y」 */
   const weddingItemStats = useMemo(
     () =>
-      WEDDING_STEPS.map((step) => {
+      weddingSteps.map((step) => {
         const total = step.todo.length + step.prepare.length
         let ticked = 0
-        for (let i = 0; i < step.todo.length; i += 1) if (weddingChecked[weddingItemKey(step.id, 'todo', i)]) ticked += 1
-        for (let i = 0; i < step.prepare.length; i += 1) if (weddingChecked[weddingItemKey(step.id, 'prepare', i)]) ticked += 1
+        for (const item of step.todo) if (weddingChecked[weddingItemKey(step.id, 'todo', item.id)]) ticked += 1
+        for (const item of step.prepare) if (weddingChecked[weddingItemKey(step.id, 'prepare', item.id)]) ticked += 1
         return { total, ticked }
       }),
-    [weddingChecked]
+    [weddingSteps, weddingChecked]
   )
 
-  const saveWeddingState = useCallback(
-    async (next: CoupleWeddingState) => {
+  /**
+   * 所有写操作走这里：先读云端最新状态，在自己的副本上改，再写回。
+   * 两个人在不同位置同时编辑时，后写的也带着对方刚改的内容，不会整块覆盖；
+   * rev 每次递增，相当于乐观锁的版本号。
+   */
+  const mutateWedding = useCallback(
+    async (change: (draft: CoupleWeddingState) => void) => {
       if (!memberId || !friendId) return toast.show('暂未检测到专属好友对象', 'err')
       setWeddingSaving(true)
       try {
-        await upsertCoupleWedding(memberId, friendId, next)
+        const fresh = await fetchCoupleWedding(memberId, friendId)
+        const base = fresh?.state
+        const draft: CoupleWeddingState = {
+          done: [...(base?.done ?? [])],
+          checked: { ...(base?.checked ?? {}) },
+          notes: { ...(base?.notes ?? {}) },
+          steps: base?.steps?.length
+            ? base.steps.map((s) => ({ ...s, todo: [...s.todo], prepare: [...s.prepare] }))
+            : null,
+          locks: { ...(base?.locks ?? {}) },
+          rev: (base?.rev ?? 0) + 1,
+        }
+        // 顺手清掉过期锁，避免对方半路关页面留下的锁一直挂在数据里
+        for (const [key, lock] of Object.entries(draft.locks)) {
+          if (Date.now() - new Date(lock.at).getTime() >= WEDDING_LOCK_TTL) delete draft.locks[key]
+        }
+        change(draft)
+        await upsertCoupleWedding(memberId, friendId, draft)
         const [a, b] = orderedPair(memberId, friendId)
-        setWeddingRow({ member_a: a, member_b: b, state: next, updated_at: new Date().toISOString() })
+        setWeddingRow({ member_a: a, member_b: b, state: draft, updated_at: new Date().toISOString() })
       } catch (error) {
         toast.show((error as Error).message, 'err')
       } finally {
@@ -1528,31 +1753,205 @@ export default function CouplePage() {
     [memberId, friendId, toast]
   )
 
+  /** 上 / 解锁，通过 realtime 同步给对方；同一步 / 同一条待办同一时间只允许一个人改 */
+  const lockWedding = useCallback(
+    (key: string) => {
+      if (!memberId) return
+      void mutateWedding((draft) => {
+        draft.locks[key] = { who: memberId, at: new Date().toISOString() }
+      })
+    },
+    [memberId, mutateWedding]
+  )
+  const unlockWedding = useCallback(
+    (key: string) => {
+      void mutateWedding((draft) => {
+        delete draft.locks[key]
+      })
+    },
+    [mutateWedding]
+  )
+
   /** 完成 / 撤回某一步。完成后收起手动展开，让步骤条自动跟着走到下一步 */
   const toggleWeddingStep = useCallback(
     async (stepId: string) => {
       const wasDone = weddingDone.includes(stepId)
-      const done = wasDone ? weddingDone.filter((id) => id !== stepId) : [...weddingDone, stepId]
       if (!wasDone) setWeddingOpenStep(null)
-      await saveWeddingState({ done, checked: weddingChecked })
+      await mutateWedding((draft) => {
+        draft.done = wasDone ? draft.done.filter((id) => id !== stepId) : [...draft.done, stepId]
+      })
     },
-    [weddingDone, weddingChecked, saveWeddingState]
+    [weddingDone, mutateWedding]
   )
 
   const toggleWeddingItem = useCallback(
     async (key: string) => {
-      const checked = { ...weddingChecked }
-      if (checked[key]) delete checked[key]
-      else checked[key] = true
-      await saveWeddingState({ done: weddingDone, checked })
+      await mutateWedding((draft) => {
+        if (draft.checked[key]) delete draft.checked[key]
+        else draft.checked[key] = true
+      })
     },
-    [weddingDone, weddingChecked, saveWeddingState]
+    [mutateWedding]
+  )
+
+  /** 写 / 改 / 删备注，空内容视为删除；保存的同时释放锁，写内容与解锁在同一次写入里完成 */
+  const saveWeddingNote = useCallback(
+    async (key: string, text: string) => {
+      const value = text.trim()
+      await mutateWedding((draft) => {
+        if (value) draft.notes[key] = value
+        else delete draft.notes[key]
+        delete draft.locks[key]
+      })
+    },
+    [mutateWedding]
+  )
+
+  /* ---- 步骤 / 待办的增删改（首次编辑时把模板落到 state 里） ---- */
+  const addWeddingStep = useCallback(async () => {
+    await mutateWedding((draft) => {
+      const id = newWeddingId('step')
+      ensureWeddingSteps(draft).push({ id, emoji: '💐', title: '新的步骤', timing: '自定义', todo: [], prepare: [] })
+    })
+  }, [mutateWedding])
+
+  const saveWeddingStep = useCallback(
+    async (stepId: string, patch: Partial<Pick<WeddingStep, 'emoji' | 'title' | 'timing'>>) => {
+      await mutateWedding((draft) => {
+        const step = ensureWeddingSteps(draft).find((s) => s.id === stepId)
+        if (step) Object.assign(step, patch)
+        delete draft.locks[`step:${stepId}`]
+      })
+    },
+    [mutateWedding]
+  )
+
+  const deleteWeddingStep = useCallback(
+    async (stepId: string) => {
+      await mutateWedding((draft) => {
+        ensureWeddingSteps(draft)
+        draft.steps = draft.steps!.filter((s) => s.id !== stepId)
+        draft.done = draft.done.filter((id) => id !== stepId)
+        for (const key of Object.keys(draft.checked)) if (key.startsWith(`${stepId}|`)) delete draft.checked[key]
+        for (const key of Object.keys(draft.notes)) if (key.startsWith(`${stepId}|`)) delete draft.notes[key]
+        for (const key of Object.keys(draft.locks)) {
+          if (key.startsWith(`${stepId}|`) || key === `step:${stepId}`) delete draft.locks[key]
+        }
+      })
+    },
+    [mutateWedding]
+  )
+
+  const addWeddingItem = useCallback(
+    async (stepId: string, kind: WeddingItemKind, text: string) => {
+      await mutateWedding((draft) => {
+        const step = ensureWeddingSteps(draft).find((s) => s.id === stepId)
+        if (step) step[kind].push({ id: newWeddingId('item'), text })
+      })
+    },
+    [mutateWedding]
+  )
+
+  const editWeddingItem = useCallback(
+    async (stepId: string, kind: WeddingItemKind, itemId: string, text: string) => {
+      await mutateWedding((draft) => {
+        const item = ensureWeddingSteps(draft)
+          .find((s) => s.id === stepId)?.[kind]
+          .find((i) => i.id === itemId)
+        if (item) item.text = text
+        delete draft.locks[weddingItemKey(stepId, kind, itemId)]
+      })
+    },
+    [mutateWedding]
+  )
+
+  const removeWeddingItem = useCallback(
+    async (stepId: string, kind: WeddingItemKind, itemId: string) => {
+      await mutateWedding((draft) => {
+        const step = ensureWeddingSteps(draft).find((s) => s.id === stepId)
+        if (!step) return
+        step[kind] = step[kind].filter((i) => i.id !== itemId)
+        const key = weddingItemKey(stepId, kind, itemId)
+        delete draft.checked[key]
+        delete draft.notes[key]
+        delete draft.locks[key]
+      })
+    },
+    [mutateWedding]
   )
 
   /** 点步骤：展开 / 收起；收起时回到「跟着当前步骤」 */
   const toggleWeddingOpen = useCallback((stepId: string, isOpen: boolean, isCurrent: boolean) => {
     setWeddingOpenStep(isOpen && !isCurrent ? null : stepId)
   }, [])
+
+  /* 大步骤编辑：进入时上锁，保存 / 取消时解锁；对方正在改就不让进 */
+  const beginEditWeddingStep = (step: WeddingStep) => {
+    const key = `step:${step.id}`
+    const lock = weddingLocks[key]
+    if (lock && lock.who !== memberId && Date.now() - new Date(lock.at).getTime() < WEDDING_LOCK_TTL) {
+      return toast.show('TA 正在改这一步，稍等一下再试')
+    }
+    lockWedding(key)
+    setWeddingStepDraft({ emoji: step.emoji, title: step.title, timing: step.timing })
+    setWeddingEditingStep(step.id)
+  }
+  const cancelEditWeddingStep = () => {
+    if (weddingEditingStep) unlockWedding(`step:${weddingEditingStep}`)
+    setWeddingEditingStep(null)
+  }
+  const commitEditWeddingStep = () => {
+    if (!weddingEditingStep) return
+    const title = weddingStepDraft.title.trim()
+    if (!title) return toast.show('步骤名不能为空')
+    void saveWeddingStep(weddingEditingStep, {
+      emoji: weddingStepDraft.emoji.trim() || '💐',
+      title,
+      timing: weddingStepDraft.timing.trim() || '自定义',
+    })
+    setWeddingEditingStep(null)
+  }
+
+  /** 一键导出：排版成纯文本，带 BOM 让 Windows 记事本也能正确显示中文 */
+  const exportWeddingPlan = useCallback(() => {
+    const lines: string[] = []
+    lines.push('💍 我们的备婚流程')
+    lines.push('═'.repeat(32))
+    lines.push(`总进度：${weddingDoneCount} / ${weddingTotal} 步（${weddingPercent}%）`)
+    lines.push(`导出时间：${new Date().toLocaleString('zh-CN')}`)
+    lines.push('')
+    weddingSteps.forEach((step, index) => {
+      const done = weddingDone.includes(step.id)
+      lines.push(`${String(index + 1).padStart(2, '0')}. ${step.emoji} ${step.title}`)
+      lines.push(`    时间：${step.timing}`)
+      lines.push(`    状态：${done ? '已完成 ✓' : '未完成'}`)
+      const writeItems = (label: string, kind: WeddingItemKind, items: WeddingItem[]) => {
+        if (!items.length) return
+        lines.push(`    【${label}】`)
+        for (const item of items) {
+          const key = weddingItemKey(step.id, kind, item.id)
+          const checked = Boolean(weddingChecked[key])
+          const note = weddingNotes[key]
+          lines.push(`      ${checked ? '[x]' : '[ ]'} ${item.text}`)
+          if (note) lines.push(`          ↳ 备注：${note.replace(/\n/g, '\n                  ')}`)
+        }
+      }
+      writeItems('要做的事', 'todo', step.todo)
+      writeItems('要准备的东西', 'prepare', step.prepare)
+      lines.push('')
+    })
+    lines.push('— 由「备婚流程」导出 —')
+    const blob = new Blob(['\ufeff', lines.join('\n')], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `备婚流程_${new Date().toISOString().slice(0, 10)}.txt`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    toast.show('备婚流程已导出为文本文档')
+  }, [weddingSteps, weddingDone, weddingDoneCount, weddingTotal, weddingPercent, weddingChecked, weddingNotes, toast])
 
   /* ------------------------------ 联网扫雷 ------------------------------ */
   const [minesGame, setMinesGame] = useState<CoupleMinesRow | null>(null)
@@ -4574,7 +4973,7 @@ export default function CouplePage() {
                   id: 'wedding',
                   icon: '💍',
                   title: '备婚流程',
-                  detail: weddingDoneCount ? `已完成 ${weddingDoneCount}/${WEDDING_TOTAL} 步` : `从定心意到结完婚共 ${WEDDING_TOTAL} 步`,
+                  detail: weddingDoneCount ? `已完成 ${weddingDoneCount}/${weddingTotal} 步` : `从定心意到结完婚共 ${weddingTotal} 步`,
                 },
               ],
             },
@@ -6340,19 +6739,24 @@ export default function CouplePage() {
           {/* 💍 备婚流程 */}
           {activeModule === 'wedding' && (
             <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
-              <div>
-                <div className="flex min-w-0 items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <h3 className="font-semibold">💍备婚流程</h3>
-                  </div>
-                  <span className="chip shrink-0 border-rose-200 bg-rose-50 text-rose-600">
-                    已完成 {weddingDoneCount}/{WEDDING_TOTAL}
-                  </span>
+              {/* 总体进度置顶：走到哪一步、百分比、一键导出 */}
+              <div className="rounded-2xl border border-rose-100 bg-gradient-to-r from-rose-50 to-orange-50/50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-semibold">💍 备婚流程</h3>
+                  <button type="button" className="btn-ghost shrink-0 px-2 py-0.5 text-[10px]" onClick={exportWeddingPlan}>
+                    ⬇ 导出流程
+                  </button>
                 </div>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                <div className="mt-2 flex items-baseline justify-between gap-2">
+                  <span className="text-[11px] text-slate-500">
+                    总体进度 <span className="font-semibold text-rose-600">{weddingDoneCount}/{weddingTotal}</span> 步
+                  </span>
+                  <span className="text-base font-bold text-rose-600">{weddingPercent}%</span>
+                </div>
+                <div className="mt-1 h-2 overflow-hidden rounded-full bg-white/80">
                   <div
                     className="h-full rounded-full bg-gradient-to-r from-rose-400 to-orange-400 transition-all duration-500"
-                    style={{ width: `${(weddingDoneCount / WEDDING_TOTAL) * 100}%` }}
+                    style={{ width: `${weddingPercent}%` }}
                   />
                 </div>
               </div>
@@ -6361,10 +6765,10 @@ export default function CouplePage() {
               {weddingAllDone ? (
                 <div className="rounded-2xl bg-rose-50 p-3 text-center">
                   <div className="text-2xl">🎉</div>
-                  <p className="mt-1 text-sm font-semibold text-rose-700">{WEDDING_TOTAL} 步都走完啦，祝你们一直这么甜</p>
+                  <p className="mt-1 text-sm font-semibold text-rose-700">{weddingTotal} 步都走完啦，祝你们一直这么甜</p>
                   <p className="mt-1 text-[11px] text-rose-500">想改的话，在下面点开任意一步可以撤回</p>
                 </div>
-              ) : (
+              ) : weddingCurrentStep ? (
                 <div className="rounded-2xl border border-rose-100 bg-rose-50/60 p-3">
                   <div className="flex items-center gap-2">
                     <span className="chip border-rose-200 bg-white text-rose-600">下一步</span>
@@ -6376,7 +6780,7 @@ export default function CouplePage() {
                   </h4>
                   <ul className="mt-1 space-y-0.5 text-[11px] text-slate-500">
                     {weddingCurrentStep.todo.map((item) => (
-                      <li key={item} className="break-words">· {item}</li>
+                      <li key={item.id} className="break-words">· {item.text}</li>
                     ))}
                   </ul>
                   <button
@@ -6387,7 +6791,7 @@ export default function CouplePage() {
                     {weddingSaving ? '保存中…' : '完成这一步'}
                   </button>
                 </div>
-              )}
+              ) : null}
 
               {/* 步骤条 / 总览 两种看法 */}
               <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-50 p-1">
@@ -6410,11 +6814,15 @@ export default function CouplePage() {
               {weddingView === 'stepper' ? (
                 /* 步骤条：整条路都铺开，当前那一步自动展开要做什么 / 要准备什么 */
                 <ol>
-                  {WEDDING_STEPS.map((step, index) => {
+                  {weddingSteps.map((step, index) => {
                     const done = weddingDone.includes(step.id)
                     const isCurrent = index === weddingCurrentIndex && !weddingAllDone
                     const isOpen = weddingOpenStep ? weddingOpenStep === step.id : isCurrent
-                    const isLast = index === WEDDING_STEPS.length - 1
+                    const isLast = index === weddingSteps.length - 1
+                    const stepLock = weddingLocks[`step:${step.id}`]
+                    const stepLocked = Boolean(
+                      stepLock && stepLock.who !== memberId && Date.now() - new Date(stepLock.at).getTime() < WEDDING_LOCK_TTL
+                    )
                     return (
                       <li key={step.id} className="flex gap-3">
                         <div className="flex flex-col items-center">
@@ -6435,23 +6843,79 @@ export default function CouplePage() {
                           {!isLast && <span className={`w-px flex-1 ${done ? 'bg-rose-200' : 'bg-slate-200'}`} />}
                         </div>
                         <div className={`min-w-0 flex-1 ${isLast ? 'pb-0' : 'pb-4'}`}>
-                          <button
-                            type="button"
-                            className="flex w-full items-start justify-between gap-2 text-left"
-                            onClick={() => toggleWeddingOpen(step.id, isOpen, isCurrent)}
-                          >
-                            <span
-                              className={`min-w-0 flex-1 break-words text-sm ${
-                                done ? 'text-slate-400 line-through' : isCurrent ? 'font-semibold text-slate-700' : 'text-slate-600'
-                              }`}
+                          <div className="flex w-full items-start justify-between gap-2">
+                            <button
+                              type="button"
+                              className="flex min-w-0 flex-1 text-left"
+                              onClick={() => toggleWeddingOpen(step.id, isOpen, isCurrent)}
                             >
-                              {index + 1}. {step.title}
-                            </span>
-                            <span className="shrink-0 text-[10px] text-slate-400">
-                              {done ? '已完成' : isCurrent ? '进行中' : '未开始'}
-                            </span>
-                          </button>
+                              <span
+                                className={`min-w-0 break-words text-sm ${
+                                  done ? 'text-slate-400 line-through' : isCurrent ? 'font-semibold text-slate-700' : 'text-slate-600'
+                                }`}
+                              >
+                                {index + 1}. {step.title}
+                              </span>
+                            </button>
+                            <div className="flex shrink-0 items-center gap-1">
+                              {stepLocked && <span className="text-[9px] text-amber-500">🔒TA</span>}
+                              <span className="text-[10px] text-slate-400">
+                                {done ? '已完成' : isCurrent ? '进行中' : '未开始'}
+                              </span>
+                              <button
+                                type="button"
+                                title="编辑这一步"
+                                disabled={weddingSaving || stepLocked}
+                                className="px-0.5 text-[10px] text-slate-400 hover:text-rose-500 disabled:opacity-40"
+                                onClick={() => beginEditWeddingStep(step)}
+                              >
+                                ✎
+                              </button>
+                              <button
+                                type="button"
+                                title="删除这一步"
+                                disabled={weddingSaving || stepLocked}
+                                className="px-0.5 text-[10px] text-slate-400 hover:text-rose-500 disabled:opacity-40"
+                                onClick={() => void deleteWeddingStep(step.id)}
+                              >
+                                🗑
+                              </button>
+                            </div>
+                          </div>
                           <p className="mt-0.5 text-[11px] text-slate-400">{step.timing}</p>
+                          {weddingEditingStep === step.id && (
+                            <div className="mt-1 space-y-1 rounded border border-rose-100 bg-white p-1.5">
+                              <div className="flex gap-1">
+                                <input
+                                  aria-label="图标"
+                                  maxLength={4}
+                                  className="w-9 rounded border border-rose-200 px-1 text-center text-sm outline-none focus:border-rose-400"
+                                  value={weddingStepDraft.emoji}
+                                  onChange={(e) => setWeddingStepDraft({ ...weddingStepDraft, emoji: e.target.value })}
+                                />
+                                <input
+                                  aria-label="步骤名"
+                                  maxLength={40}
+                                  placeholder="步骤名"
+                                  className="min-w-0 flex-1 rounded border border-rose-200 px-1 text-[11px] outline-none focus:border-rose-400"
+                                  value={weddingStepDraft.title}
+                                  onChange={(e) => setWeddingStepDraft({ ...weddingStepDraft, title: e.target.value })}
+                                />
+                              </div>
+                              <input
+                                aria-label="时间"
+                                maxLength={40}
+                                placeholder="时间，比如：婚前 6 个月"
+                                className="w-full rounded border border-rose-200 px-1 text-[11px] outline-none focus:border-rose-400"
+                                value={weddingStepDraft.timing}
+                                onChange={(e) => setWeddingStepDraft({ ...weddingStepDraft, timing: e.target.value })}
+                              />
+                              <div className="flex gap-1">
+                                <button type="button" className="btn-primary px-2 py-0.5 text-[10px]" onClick={commitEditWeddingStep}>保存</button>
+                                <button type="button" className="btn-ghost px-2 py-0.5 text-[10px]" onClick={cancelEditWeddingStep}>取消</button>
+                              </div>
+                            </div>
+                          )}
                           {isOpen && (
                             <div className="mt-2 space-y-2">
                               <WeddingCheckList
@@ -6460,7 +6924,16 @@ export default function CouplePage() {
                                 stepId={step.id}
                                 kind="todo"
                                 checked={weddingChecked}
+                                notes={weddingNotes}
+                                locks={weddingLocks}
+                                myId={memberId}
                                 onToggle={(key) => void toggleWeddingItem(key)}
+                                onSaveNote={(key, text) => void saveWeddingNote(key, text)}
+                                onAddItem={(sid, kind, text) => void addWeddingItem(sid, kind, text)}
+                                onEditItem={(sid, kind, itemId, text) => void editWeddingItem(sid, kind, itemId, text)}
+                                onDeleteItem={(sid, kind, itemId) => void removeWeddingItem(sid, kind, itemId)}
+                                onLock={lockWedding}
+                                onUnlock={unlockWedding}
                                 disabled={weddingSaving}
                               />
                               <WeddingCheckList
@@ -6469,7 +6942,16 @@ export default function CouplePage() {
                                 stepId={step.id}
                                 kind="prepare"
                                 checked={weddingChecked}
+                                notes={weddingNotes}
+                                locks={weddingLocks}
+                                myId={memberId}
                                 onToggle={(key) => void toggleWeddingItem(key)}
+                                onSaveNote={(key, text) => void saveWeddingNote(key, text)}
+                                onAddItem={(sid, kind, text) => void addWeddingItem(sid, kind, text)}
+                                onEditItem={(sid, kind, itemId, text) => void editWeddingItem(sid, kind, itemId, text)}
+                                onDeleteItem={(sid, kind, itemId) => void removeWeddingItem(sid, kind, itemId)}
+                                onLock={lockWedding}
+                                onUnlock={unlockWedding}
                                 disabled={weddingSaving}
                               />
                               <button
@@ -6489,7 +6971,7 @@ export default function CouplePage() {
               ) : (
                 /* 总览：不展开细节，一眼看完全程的状态与待办进度 */
                 <div className="space-y-1">
-                  {WEDDING_STEPS.map((step, index) => {
+                  {weddingSteps.map((step, index) => {
                     const done = weddingDone.includes(step.id)
                     const isCurrent = index === weddingCurrentIndex && !weddingAllDone
                     const stat = weddingItemStats[index]
@@ -6513,7 +6995,7 @@ export default function CouplePage() {
                             {index + 1}. {step.title}
                           </span>
                           <span className="block text-[10px] text-slate-400">
-                            {step.timing} · 待办 {stat.ticked}/{stat.total}
+                            {step.timing} · 待办 {stat?.ticked ?? 0}/{stat?.total ?? 0}
                           </span>
                         </span>
                         <span
@@ -6528,6 +7010,15 @@ export default function CouplePage() {
                   })}
                 </div>
               )}
+
+              <button
+                type="button"
+                className="btn-ghost w-full text-xs"
+                disabled={weddingSaving}
+                onClick={() => void addWeddingStep()}
+              >
+                + 新增一个大步骤
+              </button>
             </section>
           )}
 

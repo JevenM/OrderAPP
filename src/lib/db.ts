@@ -24,6 +24,7 @@ import type {
   PostLike,
   PostWithMeta,
 } from './types'
+import type { WeddingStep } from './weddingSteps'
 
 function fail(e: { message?: string } | null, tag: string): never {
   throw new Error(`${tag}失败：${e?.message ?? '未知错误'}`)
@@ -3030,13 +3031,22 @@ export async function notifyWatermelonScore(recipient: string, senderName: strin
 
 /**
  * 备婚流程的进度状态（每对情侣共享一份）。
- * 步骤本身是内置模板（src/lib/weddingSteps.ts），这里只存「完成了哪几步」和「勾好了哪几条待办」。
+ * 默认步骤来自 src/lib/weddingSteps.ts，但两个人可以增删改，改完的完整流程存在 steps 里。
+ * 新增 / 缺失字段在读取时都要兜底，老数据才能无缝升级。
  */
 export interface CoupleWeddingState {
   /** 已完成的步骤 id */
   done: string[]
-  /** 勾好的待办项：key 见 weddingItemKey(stepId, kind, index) */
+  /** 勾好的待办项：key 见 weddingItemKey(stepId, kind, itemId) */
   checked: Record<string, boolean>
+  /** 每条待办的备注：key 同上 */
+  notes: Record<string, string>
+  /** 自定义后的完整步骤；null / 缺失表示还在用内置模板 */
+  steps: WeddingStep[] | null
+  /** 编辑锁：key 为待办 key 或 `step:<步骤id>`，同一处同一时间只允许一个人改 */
+  locks: Record<string, { who: string; at: string }>
+  /** 每次写入递增：用来识别本地快照是否已经过期，避免旧状态回灌 */
+  rev: number
 }
 
 export interface CoupleWeddingRow {
