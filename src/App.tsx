@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { HashRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ToastProvider, useToast } from './components/Toast'
 import { ConfirmHost, useConfirm } from './components/Modal'
@@ -14,7 +14,8 @@ import { SettingsProvider, useSettings } from './store/settings'
 import { ModuleFlagsProvider, useModuleFlags } from './store/moduleFlags'
 import { UnreadProvider, useUnread } from './store/unread'
 import { MembersProvider, useMembers } from './store/members'
-import { FriendsProvider } from './store/friends'
+import { FriendsProvider, useFriends } from './store/friends'
+import { pushDueMealReports } from './lib/mealReportNotify'
 import FeedNotifyPanel from './components/FeedNotifyPanel'
 import TogetherStatus from './components/TogetherStatus'
 import { ChangelogProvider, useChangelog } from './store/changelog'
@@ -91,6 +92,23 @@ export default function App() {
   )
 }
 
+/**
+ * 三餐周期报告自动推送：登录后全局检查一次「刚结束的周期」，生成报告并推给自己。
+ * 放在 FriendsProvider 内才能拿到当前绑定的对象；不渲染任何 UI，
+ * 因此不管用户落在干饭页还是互动页都能收到，不必先点开报告模块。
+ */
+function MealReportAutoPush() {
+  const { memberId, memberName } = useSession()
+  const { friends } = useFriends()
+  const friend = friends.find((f) => f.memberId !== '__admin__' && f.memberId !== memberId)
+  const friendId = friend?.memberId ?? null
+  useEffect(() => {
+    if (!memberId || !friendId) return
+    void pushDueMealReports({ memberId, friendId, myName: memberName || '我' })
+  }, [memberId, friendId, memberName])
+  return null
+}
+
 function Shell() {
   const { entered, role, isAdmin } = useSession()
   const { isEnabled } = useModuleFlags()
@@ -107,6 +125,7 @@ function Shell() {
     <UnreadProvider enabled={true}>
       <MembersProvider enabled={isAdmin}>
         <FriendsProvider>
+          <MealReportAutoPush />
           <Routes>
             <Route element={<Layout />}>
               <Route path="/" element={<Navigate to={HOME[role]} replace />} />

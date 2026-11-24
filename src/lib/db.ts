@@ -25,6 +25,12 @@ import type {
   PostWithMeta,
 } from './types'
 import type { WeddingStep } from './weddingSteps'
+import {
+  longestStreak,
+  type TimeCapsule,
+  type WeddingTopic,
+  type YearReview,
+} from './keepsake'
 
 function fail(e: { message?: string } | null, tag: string): never {
   // 统一入口：supabase 返回的英文错误（尤其网络类）在这里翻成可排查的中文，
@@ -1543,6 +1549,30 @@ export async function notifyLoveUnlocked(recipients: [string, string], senderNam
     post_id: `love-unlocked:${day}:${pair}`,
     title: '今日专属情话已解锁',
     body: `你们俩今日三餐打卡都齐啦，快去看看吧～`,
+  }, true)
+}
+
+/**
+ * 三餐周期报告生成后自动推送给自己（顶栏铃铛）。
+ * post_id 用「周期 + 情侣对」拼稳定业务键，配合 dedupeByPostId 在服务端去重：
+ * 双方客户端、多台设备同时检测到周期结束也不会重复写入。
+ */
+export async function notifyMealReport(
+  recipients: string[],
+  senderName: string,
+  periodKey: string,
+  title: string,
+  body: string
+): Promise<void> {
+  const unique = [...new Set(recipients.filter(Boolean))]
+  if (!unique.length) return
+  const pair = [...unique].sort().join(':')
+  await insertFeedNotices(unique, {
+    sender_name: senderName,
+    type: 'meal-report',
+    post_id: `meal-report:${periodKey}:${pair}`,
+    title,
+    body,
   }, true)
 }
 
@@ -3092,6 +3122,10 @@ export interface CoupleWeddingState {
   locks: Record<string, { who: string; at: string }>
   /** 每次写入递增：用来识别本地快照是否已经过期，避免旧状态回灌 */
   rev: number
+  /** C1 备婚沟通台账；老数据没有该字段，读取时按空数组处理 */
+  topics?: WeddingTopic[]
+  /** F3 时光胶囊（写给未来的信）；同上 */
+  capsules?: TimeCapsule[]
 }
 
 export interface CoupleWeddingRow {
@@ -3133,6 +3167,129 @@ export async function listAllCoupleWedding(limit = 200): Promise<CoupleWeddingRo
   const { data, error } = await supabase.from('couple_wedding').select('*').order('updated_at', { ascending: false }).limit(limit)
   if (error && !isMissingTable(error)) fail(error, '加载全部备婚流程')
   return (data ?? []) as CoupleWeddingRow[]
+}
+
+/* ------------------------------ 共同回忆：相册(C3) / 年度回顾(F4) ------------------------------ */
+
+export interface AlbumViewer {
+  isAdmin: boolean
+  memberId: string | null
+  /** 好友的成员 id 列表：不是好友发的照片一律不进两人相册 */
+  friendIds?: string[]
+}
+
+/**
+ * C3 共同相册：只取带照片的动态。
+ * 可见性规则与 listPosts 保持一致（管理员看全部；本人看自己 + 好友），
+ * 只是不做点赞 / 评论的联表，相册不需要这些。
+ */
+export async function listAlbumPosts(viewer: AlbumViewer, limit = 300): Promise<Post[]> {
+  const friendIds = (viewer.friendIds ?? []).filter((id) => id && id !== '__admin__')
+  let query = supabase
+    .from('posts')
+    .select('*')
+    .neq('photo_url', '')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (!viewer.isAdmin) {
+    // 共同相册只收「我们俩」的照片：member_id 必须落在当前绑定的情侣对内。
+    // 旧版用 author.eq.me 兜底会把管理员发的全站动态塞进每一对情侣的相册，
+    // 多对情侣共用时属于越界读取，这里改为严格按成员归属过滤。
+    const pair = [...new Set([viewer.memberId, ...friendIds].filter((id): id is string => !!id && id !== '__admin__'))]
+    if (!pair.length) return []
+    query = query.in('member_id', pair)
+  }
+  const { data, error } = await query
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载共同相册')
+  }
+  return ((data ?? []) as Post[]).filter((p) => Boolean(p.photo_url))
+}
+
+/** 只取「条数」的辅助：表还没建时按 0 处理，其它错误照常抛给上层 */
+async function reviewCount(
+  query: PromiseLike<{ count: number | null; error: unknown }>
+): Promise<number> {
+  const { count, error } = await query
+  if (error) {
+    if (isMissingTable(error)) return 0
+    fail(error as { message?: string }, '统计年度回顾')
+  }
+  return count ?? 0
+}
+
+/**
+ * F4 年度回顾：把这一年散在各张表里的痕迹聚成一份账单。
+ * 备婚进度 / 台账 / 胶囊存在 couple_wedding 的 jsonb 里，由调用方直接传入，
+ * 避免为了统计再读一次同一行。
+ */
+export async function loadYearReview(
+  userA: string,
+  userB: string,
+  year: number,
+  extra: { weddingDone: number; weddingTotal: number; capsules: number; topics: WeddingTopic[] }
+): Promise<YearReview> {
+  const result: YearReview = {
+    year,
+    meals: 0, mealDays: 0, longestStreak: 0,
+    messages: 0, quizzes: 0, truths: 0, wishes: 0, photos: 0,
+    weddingDone: extra.weddingDone,
+    weddingTotal: extra.weddingTotal,
+    capsules: extra.capsules,
+    topicsSettled: extra.topics.filter((t) => t.settled).length,
+    topicsTotal: extra.topics.length,
+  }
+  if (!userA || !userB || userA === userB) return result
+  const [memberA, memberB] = couplePair(userA, userB)
+  const start = `${year}-01-01`
+  const end = `${year + 1}-01-01`
+
+  const [messages, quizzes, truths, wishes, photos, mealRows] = await Promise.all([
+    reviewCount(
+      supabase.from('couple_messages').select('id', { count: 'exact', head: true })
+        .or(`and(sender_id.eq.${userA},receiver_id.eq.${userB}),and(sender_id.eq.${userB},receiver_id.eq.${userA})`)
+        .gte('created_at', start).lt('created_at', end)
+    ),
+    reviewCount(
+      supabase.from('couple_quiz_history').select('id', { count: 'exact', head: true })
+        .eq('member_a', memberA).eq('member_b', memberB).eq('status', 'revealed')
+        .gte('created_at', start).lt('created_at', end)
+    ),
+    reviewCount(
+      supabase.from('couple_truth_dare').select('id', { count: 'exact', head: true })
+        .eq('member_a', memberA).eq('member_b', memberB)
+        .gte('created_at', start).lt('created_at', end)
+    ),
+    reviewCount(
+      supabase.from('couple_wishes').select('id', { count: 'exact', head: true })
+        .eq('member_a', memberA).eq('member_b', memberB)
+        .gte('created_at', start).lt('created_at', end)
+    ),
+    // posts / meals 没有情侣对字段，唯一归属依据是 member_id：
+    // 必须限定在当前绑定的两个人，否则多对情侣会把别人的照片与打卡算进自己的回顾。
+    // member_id 为空的早期记录无法判定归属，一律不计入（见迁移 0048 的可选回填）。
+    reviewCount(
+      supabase.from('posts').select('id', { count: 'exact', head: true })
+        .neq('photo_url', '').in('member_id', [userA, userB])
+        .gte('created_at', start).lt('created_at', end)
+    ),
+    // 一年两人最多 4 餐 × 2 × 366 = 2928 行，留足余量避免截断
+    supabase.from('meals').select('day').in('member_id', [userA, userB])
+      .gte('day', start).lt('day', end).limit(5000),
+  ])
+
+  result.messages = messages
+  result.quizzes = quizzes
+  result.truths = truths
+  result.wishes = wishes
+  result.photos = photos
+  if (mealRows.error && !isMissingTable(mealRows.error)) fail(mealRows.error, '统计三餐打卡')
+  const days = ((mealRows.data ?? []) as { day: string }[]).map((r) => r.day.slice(0, 10))
+  result.meals = days.length
+  result.mealDays = new Set(days).size
+  result.longestStreak = longestStreak(days)
+  return result
 }
 
 /* ------------------------------ 订单 ------------------------------ */
@@ -3271,6 +3428,29 @@ export interface MealCompletionRow {
  * 只 select 三个小字段 —— 这里一查就是几十天，用 listMealsRange 会把每餐的图文内容
  * 全部带回来，流量白白翻好几倍，而树的计算根本用不到那些内容。
  */
+/**
+ * 三餐周期报告：取 [start, end) 区间内属于当前情侣对的全字段记录。
+ * 隔离口径：meals 没有情侣对字段，只能按 member_id 限定到绑定的两个人；
+ * member_id 为空的早期记录无法判定归属，一律不取（可选回填见迁移 0048）。
+ */
+export async function listMealsForPeriod(start: string, end: string, pair: readonly [string, string]): Promise<Meal[]> {
+  if (!pair[0] || !pair[1] || pair[0] === pair[1]) return []
+  const [a, b] = couplePair(pair[0], pair[1])
+  const { data, error } = await supabase
+    .from('meals')
+    .select('*')
+    .in('member_id', [a, b])
+    .gte('day', start)
+    .lt('day', end)
+    .order('day', { ascending: true })
+    .limit(6000) // 一年两人最多 4 餐 × 2 × 366 = 2928 行，留足余量
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载三餐报告数据')
+  }
+  return (data ?? []) as Meal[]
+}
+
 export async function listMealCompletion(days: string[], members: string[]): Promise<MealCompletionRow[]> {
   if (!days.length || !members.length) return []
   const { data, error } = await supabase.from('meals').select('day, slot, member_id').in('day', days).in('member_id', members)
@@ -3435,7 +3615,10 @@ export async function listPosts(viewer: {
 
   let query = supabase.from('posts').select('*')
   if (!viewer.isAdmin) {
-    const filters = ['author.eq.me']
+    // 管理员用自己账号发、且 member_id 为空的动态是「全站公告」，允许所有情侣看到。
+    // 但管理员切到某个成员视角发的动态带 member_id，属于那一对情侣的私密内容，
+    // 不能因为 author='me' 就广播给别的情侣 —— 这里把公告条件收窄为 author=me 且无归属。
+    const filters = ['and(author.eq.me,member_id.is.null)']
     if (viewer.memberId && viewer.includeSelf !== false) filters.push(`member_id.eq.${viewer.memberId}`)
     if (friendIds.length) {
       const memberFriendIds = friendIds.filter((id) => id !== '__admin__')
@@ -3690,6 +3873,7 @@ export type FeedNoticeType =
   | 'scratch'
   | 'countdown'
   | 'game-pass'
+  | 'meal-report'
 
 export interface FeedNotificationRow {
   id: string

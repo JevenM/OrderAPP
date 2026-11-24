@@ -2,6 +2,7 @@ import { useEffect, useRef, useSyncExternalStore } from 'react'
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js'
 import { supabase, realtimeUrl, anonKey } from './supabase'
 import { scheduleSync } from './net'
+import { belongsToPair, type PairRowPayload } from './pairGuard'
 
 export type ChangeEvent = '*' | 'INSERT' | 'UPDATE' | 'DELETE'
 export type ChangePayload = RealtimePostgresChangesPayload<{ [key: string]: any }>
@@ -22,7 +23,18 @@ interface Options {
   pollMs?: number
   /** 轮询时执行的操作，一般是重新拉列表 */
   onPoll?: () => void
+  /**
+   * 当前绑定的情侣对 [本人 id, 对方 id]。
+   * 多对情侣共用同一张 couple_* 表，而 postgres_changes 是按「表」广播的——
+   * 不校验行归属，别对情侣的 INSERT/UPDATE 会被 applyXxxRow 直接写进本地 state
+   * （例如 setWeddingRow 把对方的备婚进度盖到自己页面上）。传了此项后，
+   * 带 member_a/member_b 的行一律先比对再分发；没有这两个字段的全局表
+   * （题库、meals 等）照常放行，由各 reload 自己的查询过滤兜底。
+   */
+  pair?: readonly [string, string] | null
 }
+
+export { belongsToPair } from './pairGuard'
 
 /** 轮询频率档位：把「多久能看到对方的动作」这件事收敛成三个明确的选择 */
 export const POLL = {
@@ -193,8 +205,10 @@ export async function waitForSubscribe(channel: RealtimeChannel, timeoutMs = 500
  * 关键：探测未通过（pending / broken）时一律只轮询，绝不打开 supabase-js 的 socket。
  */
 export function useRealtime(channelName: string, watches: Watch[], options: Options = {}): void {
-  const { enabled = true, pollMs = POLL.warm, onPoll } = options
+  const { enabled = true, pollMs = POLL.warm, onPoll, pair } = options
   const state = useSyncExternalStore(onProbeState, getProbeState)
+  // 把情侣对拍平成字符串当依赖，避免调用方每次渲染新建数组导致频道反复重连
+  const pairKey = pair && pair[0] && pair[1] ? (pair[0] < pair[1] ? `${pair[0]}:${pair[1]}` : `${pair[1]}:${pair[0]}`) : ''
 
   const watchesRef = useRef(watches)
   watchesRef.current = watches
@@ -224,8 +238,18 @@ export function useRealtime(channelName: string, watches: Watch[], options: Opti
     // 探测未通过（pending 或 broken）一律先轮询：绝不主动打开 supabase-js 的 socket。
     // 探测通过后才进共享池：相同频道复用一条 channel，引用计数归零时由最后一个使用者关闭。
     if (state === 'ok') {
-      const key = `${channelName}::${watchSignature(watchesRef.current)}`
-      releaseChannel = acquireChannel(key, channelName, watchesRef.current)
+      const activePair = pairKey ? (pairKey.split(':') as [string, string]) : null
+      // 只在这里包一层归属校验，watchSignature 仍按 table/event 计算，共享池不受影响
+      const guarded = activePair
+        ? watchesRef.current.map((w) => ({
+            ...w,
+            on: (p: ChangePayload) => {
+              if (belongsToPair(p as PairRowPayload, activePair)) w.on(p)
+            },
+          }))
+        : watchesRef.current
+      const key = `${channelName}::${watchSignature(guarded)}`
+      releaseChannel = acquireChannel(key, channelName, guarded)
     } else {
       startPolling()
     }
@@ -234,5 +258,5 @@ export function useRealtime(channelName: string, watches: Watch[], options: Opti
       stopPolling()
       releaseChannel?.()
     }
-  }, [channelName, enabled, pollMs, state])
+  }, [channelName, enabled, pollMs, state, pairKey])
 }

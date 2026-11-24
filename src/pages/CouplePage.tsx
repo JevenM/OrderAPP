@@ -153,6 +153,12 @@ const LightsOut = lazy(() => import('../components/LightsOut'))
 const EchoCavern = lazy(() => import('../components/EchoCavern'))
 const TankBattle = lazy(() => import('../components/TankBattle'))
 const SnakeBattle = lazy(() => import('../components/SnakeBattle'))
+// 共同回忆：4 个页面级组件，点开才加载，不进互动页主包
+const WeddingTopics = lazy(() => import('../components/couple/WeddingTopics'))
+const TimeCapsuleBoard = lazy(() => import('../components/couple/TimeCapsule'))
+const AlbumTimeline = lazy(() => import('../components/couple/AlbumTimeline'))
+const YearReviewBoard = lazy(() => import('../components/couple/YearReviewBoard'))
+const MealReportBoard = lazy(() => import('../components/couple/MealReportBoard'))
 const LazyFallback = <div className="flex min-h-40 items-center justify-center text-xs text-slate-400">加载中…</div>
 import {
   LOVE_TREE_LOOKBACK,
@@ -168,6 +174,7 @@ import { useRealtime } from '../lib/realtime'
 import { SLOT_LABEL, type Meal, type MealSlot } from '../lib/types'
 import { COUPLE_MODULE_KEYS, markModuleSeen, type ModuleKey } from '../lib/modules'
 import { recentModules } from '../lib/recentModules'
+import { notifyOpenedCapsules } from '../lib/capsuleNotify'
 import {
   WUFU_PATTERNS,
   generateMines,
@@ -1562,6 +1569,11 @@ export default function CouplePage() {
   const weddingLocks = weddingRow?.state.locks ?? EMPTY_WEDDING_LOCKS
   const weddingSteps: WeddingStep[] = weddingRow?.state.steps?.length ? weddingRow.state.steps : WEDDING_STEPS
   const weddingTotal = weddingSteps.length
+  /** 时光胶囊到期提醒：进互动页就检查，不必先点开胶囊模块；每封信只提醒一次 */
+  const weddingCapsules = weddingRow?.state.capsules
+  useEffect(() => {
+    if (weddingCapsules) notifyOpenedCapsules(weddingCapsules)
+  }, [weddingCapsules])
   const weddingDoneCount = weddingDone.filter((id) => weddingSteps.some((s) => s.id === id)).length
   const weddingAllDone = weddingDoneCount >= weddingTotal
   const weddingPercent = weddingTotal ? Math.round((weddingDoneCount / weddingTotal) * 100) : 0
@@ -1605,6 +1617,10 @@ export default function CouplePage() {
             : null,
           locks: { ...(base?.locks ?? {}) },
           rev: (base?.rev ?? 0) + 1,
+          // C1 台账 / F3 胶囊和备婚流程共用这一行 jsonb。
+          // 必须原样带回，否则任何一次勾选、备注或上锁都会把对方刚写的内容抹掉。
+          topics: (base?.topics ?? []).map((t) => ({ ...t })),
+          capsules: (base?.capsules ?? []).map((c) => ({ ...c })),
         }
         // 顺手清掉过期锁，避免对方半路关页面留下的锁一直挂在数据里
         for (const [key, lock] of Object.entries(draft.locks)) {
@@ -2080,9 +2096,21 @@ export default function CouplePage() {
           },
         ],
       },
+      {
+        icon: '📖', title: '共同回忆',
+        modules: [
+          { id: 'topics', icon: '🗂️', title: '备婚沟通台账', detail: '把要谈的事与双方口径记下来' },
+          { id: 'capsule', icon: '💌', title: '时光胶囊', detail: '写给未来的信，到日子自动开封' },
+          { id: 'timeline', icon: '🖼️', title: '共同相册', detail: '把有照片的动态串成「我们的第 N 天」' },
+          { id: 'review', icon: '📊', title: '年度回顾', detail: '一整年的痕迹，生成年度账单' },
+          { id: 'mealReport', icon: '🍚', title: '三餐总结报告', detail: '月 / 半年 / 年的吃饭偏好与建议' },
+        ],
+      },
     ],
     [loveUnlocked, gridCounts, quizTotalQuestions.length, truthPromptPool.length, weddingDoneCount, weddingTotal]
   )
+  /** 相册只收这两个人的带图动态；引用稳定，避免子组件重复打网络 */
+  const albumFriendIds = useMemo(() => (friendId ? [friendId] : []), [friendId])
   // 回到入口页时重新读一次最近使用；停留期间引用稳定，避免击穿网格的 memo
   const recentForGrid = useMemo(() => (activeModule ? [] : recentModules()), [activeModule])
   const reloadGridCounts = useCallback(async (force = false) => {
@@ -2790,6 +2818,8 @@ export default function CouplePage() {
       { table: 'meals', on: () => void reloadMeals() },
     ],
     {
+      // 多对情侣共用同一张表：只接收本对的行，避免别对的事件把本地状态盖掉
+      pair: memberId && friendId ? ([memberId, friendId] as const) : null,
       // 五子棋暂停时不再关掉整条实时通道：否则对方点了「继续游戏」，本端要等 60 秒兜底轮询才看得到。
       // 暂停期间只是不再主动强刷（轮询档位降到 60 秒），被动事件照常接收。
       enabled: ready && !(activeModule === 'wufu' && !!wufuGame?.state.paused),
@@ -7201,6 +7231,55 @@ export default function CouplePage() {
               </div>
               <SnakeBattle myId={myId} friendId={friendId ?? ''} friendName={friendName} />
             </section>
+          )}
+
+          {/* 📖 共同回忆：台账与胶囊复用备婚流程的 jsonb + 乐观锁，相册 / 年度回顾走只读聚合 */}
+          {activeModule === 'topics' && (
+            <WeddingTopics
+              state={weddingRow?.state ?? null}
+              mutate={mutateWedding}
+              saving={weddingSaving}
+              memberId={memberId}
+              myName={memberName || '我'}
+              friendName={friendName}
+            />
+          )}
+          {activeModule === 'capsule' && (
+            <TimeCapsuleBoard
+              state={weddingRow?.state ?? null}
+              mutate={mutateWedding}
+              saving={weddingSaving}
+              memberId={memberId}
+              myName={memberName || '我'}
+              friendName={friendName}
+            />
+          )}
+          {activeModule === 'timeline' && (
+            <AlbumTimeline
+              isAdmin={isAdmin}
+              memberId={memberId}
+              friendIds={albumFriendIds}
+              myName={memberName || '我'}
+              friendName={friendName}
+            />
+          )}
+          {activeModule === 'review' && (
+            <YearReviewBoard
+              memberId={memberId}
+              friendId={friendId}
+              myName={memberName || '我'}
+              friendName={friendName}
+              weddingState={weddingRow?.state ?? null}
+              weddingTotal={weddingTotal}
+            />
+          )}
+          {activeModule === 'mealReport' && (
+            <MealReportBoard
+              memberId={memberId}
+              friendId={friendId}
+              myName={memberName || '我'}
+              friendName={friendName}
+            />
           )}
           </Suspense>
 
