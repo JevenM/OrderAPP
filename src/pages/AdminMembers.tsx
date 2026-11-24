@@ -1,7 +1,9 @@
+import { EmptyState, SkeletonList } from '../components/States'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createMember, listMembersWithCodes, randomCode, removeMember, updateMember } from '../lib/db'
 import { useToast } from '../components/Toast'
+import { useConfirm } from '../components/Modal'
 import Avatar from '../components/Avatar'
 import AvatarSheet, { saveMemberAvatar } from '../components/AvatarSheet'
 import { useMembers } from '../store/members'
@@ -10,6 +12,7 @@ import type { Member } from '../lib/types'
 
 export default function AdminMembers() {
   const toast = useToast()
+  const confirm = useConfirm()
   const navigate = useNavigate()
   // 这一页要显示并编辑邀请码，所以单独取「带 code 的成员清单」；
   // 全局 members store 不再携带邀请码，避免每个轮询周期都把它传到前端
@@ -110,7 +113,7 @@ export default function AdminMembers() {
   }
 
   const del = async (m: Member) => {
-    if (!window.confirm(`删除「${m.name}」？她的邀请码会立即失效（历史订单和记录仍会保留）。`)) return
+    if (!(await confirm(`删除「${m.name}」？她的邀请码会立即失效（历史订单和记录仍会保留）。`))) return
     try {
       await removeMember(m.id)
       toast.show('已删除')
@@ -195,9 +198,9 @@ export default function AdminMembers() {
         </p>
       </div>
 
-      {loading && <p className="py-6 text-center text-sm text-slate-400">加载中…</p>}
+      {loading && <SkeletonList rows={3} />}
       {!loading && members.length === 0 && (
-        <p className="py-6 text-center text-sm text-slate-400">还没有成员，先添加一个吧～</p>
+        <EmptyState icon="👥" title="还没有成员" hint="点右上角添加，把邀请码发给她" />
       )}
 
       {members.map((m) => (

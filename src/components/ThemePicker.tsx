@@ -1,13 +1,19 @@
 import { useState } from 'react'
-import { THEMES, applyTheme, readThemeId, themeGradient } from '../lib/themes'
+import { THEMES, applyDark, applyTheme, readDark, readThemeId, themeGradient } from '../lib/themes'
 
 /** 一键换肤弹窗：从右上角「更多」菜单进入，选中即生效并记住 */
 export default function ThemePicker({ onClose }: { onClose: () => void }) {
   const [current, setCurrent] = useState(readThemeId)
+  const [dark, setDark] = useState(readDark)
 
   const pick = (id: string) => {
     applyTheme(id)
     setCurrent(id)
+  }
+  const toggleDark = () => {
+    const next = !dark
+    applyDark(next)
+    setDark(next)
   }
 
   return (
@@ -40,6 +46,18 @@ export default function ThemePicker({ onClose }: { onClose: () => void }) {
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          onClick={toggleDark}
+          className={`mt-3 flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-sm transition active:scale-[0.98] ${
+            dark ? 'border-slate-600 bg-slate-700 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-700'
+          }`}
+        >
+          <span>{dark ? '🌙 深色模式' : '☀️ 浅色模式'}</span>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] ${dark ? 'bg-slate-600 text-slate-200' : 'bg-white text-slate-500'}`}>
+            {dark ? '点击切换' : '点击切换'}
+          </span>
+        </button>
         <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">全站配色立即生效，每台设备独立记忆</p>
       </div>
     </div>

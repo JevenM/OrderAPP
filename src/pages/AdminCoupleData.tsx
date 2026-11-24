@@ -41,6 +41,7 @@ import {
 } from '../lib/db'
 import { exportTableCsv, exportTableJson } from '../lib/export'
 import { useToast } from '../components/Toast'
+import { useConfirm } from '../components/Modal'
 import { useMembers } from '../store/members'
 
 /**
@@ -104,6 +105,7 @@ const progressSummary = (p: Record<string, unknown>): string => {
 
 export default function AdminCoupleData() {
   const toast = useToast()
+  const confirm = useConfirm()
   const { members, loading: membersLoading } = useMembers()
   const [tab, setTab] = useState<DataTab>('messages')
 
@@ -348,7 +350,7 @@ export default function AdminCoupleData() {
 
   const removeSelected = async () => {
     const ids = [...selected]
-    if (!ids.length || !window.confirm(`确定删除当前模块选中的 ${ids.length} 条数据吗？删除后无法恢复。`)) return
+    if (!ids.length || !(await confirm(`确定删除当前模块选中的 ${ids.length} 条数据吗？删除后无法恢复。`))) return
     setDeleting(true)
     try {
       if (tab === 'messages') await deleteCoupleMessages(ids)

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-labelledby="t">
+  <title id="t">点菜小屋 · 双人成双</title>
+  <rect width="192" height="192" rx="44" fill="#f43f70"/>
+  <path d="M78 96c-6-9-21-7-24 4-2 8 5 14 12 20 5 4 9 7 12 10 3-3 7-6 12-10 7-6 14-12 12-20-3-11-18-13-24-4z" fill="#fff"/>
+  <path d="M138 96c-6-9-21-7-24 4-2 8 5 14 12 20 5 4 9 7 12 10 3-3 7-6 12-10 7-6 14-12 12-20-3-11-18-13-24-4z" fill="#fff" opacity=".92"/>
+  <path d="M48 56h11v34a6 6 0 0 0 12 0V56h11v34a6 6 0 0 0 12 0V56h11v40a24 24 0 0 1-48 0V56z" fill="#fff" opacity=".55"/>
+</svg>

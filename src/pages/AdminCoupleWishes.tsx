@@ -1,3 +1,4 @@
+import { EmptyState, SkeletonList } from '../components/States'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { exportCoupleWishesCsv, exportCoupleWishesJson, type CoupleWishExportRow } from '../lib/export'
 import { listAllCoupleWishes, updateCoupleWish, type CoupleWish } from '../lib/db'
@@ -82,8 +83,8 @@ export default function AdminCoupleWishes() {
           <h3 className="font-semibold">心愿列表</h3>
           <span className="chip border-slate-200 bg-slate-50 text-slate-500">{filtered.length} 条</span>
         </div>
-        {loading && <p className="py-6 text-center text-sm text-slate-400">加载中…</p>}
-        {!loading && !filtered.length && <p className="py-6 text-center text-sm text-slate-400">暂无秘密心愿</p>}
+        {loading && <SkeletonList rows={3} compact />}
+        {!loading && !filtered.length && <EmptyState icon="💝" title="暂无秘密心愿" compact />}
         {!loading && filtered.map((wish) => {
           const a = memberById.get(wish.member_a)?.name ?? '未知成员'
           const b = memberById.get(wish.member_b)?.name ?? '未知成员'

@@ -1,3 +1,4 @@
+import { EmptyState, SkeletonList } from '../components/States'
 import { useCallback, useEffect, useState } from 'react'
 import { autoMealFromOrder, listOrdersPage, markOrderRead, setOrderStatus } from '../lib/db'
 import { timeCn } from '../lib/date'
@@ -133,8 +134,8 @@ export default function AdminOrders() {
         ))}
       </div>
 
-      {loading && <p className="py-10 text-center text-sm text-slate-400">加载中…</p>}
-      {!loading && orders.length === 0 && <p className="py-10 text-center text-sm text-slate-400">还没有订单</p>}
+      {loading && <SkeletonList rows={4} />}
+      {!loading && orders.length === 0 && <EmptyState icon="🍽️" title="还没有订单" hint="她下单后会显示在这里" />}
 
       {orders.map((o) => (
         <div key={o.id} className={`card space-y-2 ${!o.read_at ? 'ring-2 ring-brand-200' : ''}`}>

@@ -5,8 +5,8 @@
  *
  * 【换票面背景图】
  *   1. 准备一张竖版图（建议 1024 × 1536，中间留一块干净的空白区域放刮奖区）
- *   2. 丢进 public/scratch-themes/ 目录，例如 public/scratch-themes/xixiangfeng.jpg
- *   3. 把路径填到下面主题的 image 字段：image: '/scratch-themes/xixiangfeng.jpg'
+ *   2. 丢进 public/scratch-themes/ 目录，例如 public/scratch-themes/xixiangfeng.webp
+ *   3. 把路径填到下面主题的 image 字段：image: '/scratch-themes/xixiangfeng.webp'
  *   留空不要紧，会自动用 fallback 渐变 + 内置纹样兜底，画面一样完整。
  *
  * 【改中奖概率】
@@ -67,7 +67,7 @@ export const SCRATCH_THEMES: ScratchTheme[] = [
     slogan: '喜鹊登枝 · 好事成双',
     // 路径必须拼在 BASE_URL 后面：部署在 GitHub Pages 子路径（--base=/仓库/）时，
     // 写死的 /scratch-themes/... 会 404，这里跟着 base 走在本地和部署环境都成立
-    image: `${import.meta.env.BASE_URL}scratch-themes/xixiangfeng.jpg`,
+    image: `${import.meta.env.BASE_URL}scratch-themes/xixiangfeng.webp`,
     fallback: 'linear-gradient(158deg,#a91b2a 0%,#d93636 34%,#f0746a 58%,#c0222f 100%)',
     ink: '#fff6e8',
     inkSoft: 'rgba(255,246,232,0.72)',
@@ -84,7 +84,7 @@ export const SCRATCH_THEMES: ScratchTheme[] = [
     code: 'HYX',
     seal: '运',
     slogan: '金光满堂 · 好运翻倍',
-    image: `${import.meta.env.BASE_URL}scratch-themes/haoyunshibei.jpg`,
+    image: `${import.meta.env.BASE_URL}scratch-themes/haoyunshibei.webp`,
     fallback: 'linear-gradient(158deg,#f7c948 0%,#eda01f 42%,#f8d777 66%,#cf8410 100%)',
     ink: '#5a2c00',
     inkSoft: 'rgba(90,44,0,0.62)',
@@ -101,7 +101,7 @@ export const SCRATCH_THEMES: ScratchTheme[] = [
     code: 'DSJ',
     seal: '金',
     slogan: '黑金鎏光 · 点石成金',
-    image: `${import.meta.env.BASE_URL}scratch-themes/dianshichengjin.jpg`,
+    image: `${import.meta.env.BASE_URL}scratch-themes/dianshichengjin.webp`,
     fallback: 'linear-gradient(158deg,#0e0d10 0%,#221b11 40%,#4b3618 70%,#0b0a0c 100%)',
     ink: '#c39f11',
     inkSoft: 'rgba(174, 168, 156, 0.62)',
@@ -118,7 +118,7 @@ export const SCRATCH_THEMES: ScratchTheme[] = [
     code: 'SXL',
     seal: '肖',
     slogan: '祥云纳福 · 岁岁平安',
-    image: `${import.meta.env.BASE_URL}scratch-themes/shengxiao.jpg`,
+    image: `${import.meta.env.BASE_URL}scratch-themes/shengxiao.webp`,
     fallback: 'linear-gradient(158deg,#8f1616 0%,#cf302c 40%,#efa13c 76%,#951d1d 100%)',
     ink: '#fff5e8',
     inkSoft: 'rgba(255,245,232,0.7)',

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState, type ReactNode } from 'react'
 import { HashRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ToastProvider, useToast } from './components/Toast'
+import { ConfirmHost, useConfirm } from './components/Modal'
 import Avatar from './components/Avatar'
 import ProfileSheet from './components/ProfileSheet'
 import ThemePicker from './components/ThemePicker'
@@ -72,6 +73,7 @@ export default function App() {
     <HashRouter>
       <SessionProvider>
         <ToastProvider>
+          <ConfirmHost>
           <SettingsProvider>
             <ModuleFlagsProvider>
               <ChangelogProvider>
@@ -82,6 +84,7 @@ export default function App() {
               </ChangelogProvider>
             </ModuleFlagsProvider>
           </SettingsProvider>
+          </ConfirmHost>
         </ToastProvider>
       </SessionProvider>
     </HashRouter>
@@ -236,8 +239,9 @@ function Layout() {
     }
   }
 
-  const doLogout = () => {
-    if (!window.confirm('确定退出登录吗？')) return
+  const confirm = useConfirm()
+  const doLogout = async () => {
+    if (!(await confirm('确定退出登录吗？'))) return
     navigate('/', { replace: true }) // 清空当前地址，避免下次登录跳到上次的页面
     logout()
   }

@@ -114,6 +114,79 @@ if (typeof window !== 'undefined') {
   }, RETRY_MS)
 }
 
+interface SharedChannel {
+  channel: RealtimeChannel
+  refs: number
+}
+
+/**
+ * 频道共享池：同一「频道名 + 订阅表签名」的多个调用方复用一条 channel。
+ * React StrictMode 下 effect 会挂两次，且不排除将来两个组件订阅同一张表；
+ * 不做去重就会开出多条同名频道，服务端推送被重复处理。
+ */
+const channelPool = new Map<string, SharedChannel>()
+
+function watchSignature(watches: Watch[]): string {
+  return watches
+    .map((w) => `${w.event ?? '*'}:${w.table}`)
+    .sort()
+    .join('|')
+}
+
+/** 取得一条共享频道，返回释放函数；引用计数归零时才真正关闭 channel */
+function acquireChannel(key: string, channelName: string, watches: Watch[]): () => void {
+  let entry = channelPool.get(key)
+  if (!entry) {
+    const channel = supabase.channel(channelName)
+    for (const w of watches) {
+      channel.on('postgres_changes', { event: w.event ?? '*', schema: 'public', table: w.table }, (p) =>
+        w.on(p as ChangePayload)
+      )
+    }
+    channel.subscribe((status) => {
+      const s = String(status)
+      // 探测状态是全局的：所有 useRealtime 实例通过 useSyncExternalStore 同步感知，
+      // 因此这里只需更新一次，掉线时各实例会自行重跑 effect 切到轮询。
+      if (s === 'SUBSCRIBED') setProbeState('ok')
+      else if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT' || s === 'CLOSED') setProbeState('broken')
+    })
+    entry = { channel, refs: 0 }
+    channelPool.set(key, entry)
+  }
+  entry.refs += 1
+  const captured = entry
+  return () => {
+    captured.refs -= 1
+    if (captured.refs <= 0 && channelPool.get(key) === captured) {
+      channelPool.delete(key)
+      void supabase.removeChannel(captured.channel)
+    }
+  }
+}
+
+/**
+ * 等待频道订阅就绪，超时 / 失败即返回 false。
+ * 用于一次性广播频道：supabase 的 subscribe() 在网络不通时会一直挂起，
+ * 没有超时就会让「发送消息」永远卡住，且 finally 里的 removeChannel 也执行不到。
+ */
+export async function waitForSubscribe(channel: RealtimeChannel, timeoutMs = 5000): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    let settled = false
+    const finish = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timer)
+      resolve(ok)
+    }
+    const timer = window.setTimeout(() => finish(false), timeoutMs)
+    channel.subscribe((status) => {
+      const s = String(status)
+      if (s === 'SUBSCRIBED') finish(true)
+      else if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT' || s === 'CLOSED') finish(false)
+    })
+  })
+}
+
 /**
  * 订阅表变更；若 WebSocket 连不上（网络限制 / 项目没开 realtime），
  * 自动降级为轮询，避免一直重试刷屏。
@@ -131,7 +204,7 @@ export function useRealtime(channelName: string, watches: Watch[], options: Opti
   useEffect(() => {
     if (!enabled) return
 
-    let channel: RealtimeChannel | null = null
+    let releaseChannel: (() => void) | undefined
     let cancelSync: (() => void) | undefined
 
     const stopPolling = () => {
@@ -141,33 +214,6 @@ export function useRealtime(channelName: string, watches: Watch[], options: Opti
       }
     }
 
-    const subscribe = () => {
-      if (channel) return
-      const ch = supabase.channel(channelName)
-      for (const w of watchesRef.current) {
-        ch.on('postgres_changes', { event: w.event ?? '*', schema: 'public', table: w.table }, (p) =>
-          w.on(p as ChangePayload)
-        )
-      }
-      channel = ch
-      ch.subscribe((status) => {
-        const s = String(status)
-        if (s === 'SUBSCRIBED') {
-          setProbeState('ok')
-          stopPolling()
-          return
-        }
-        if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT' || s === 'CLOSED') {
-          // 中途掉线：标记不可用并降级为轮询，由模块级定时器定期复测
-          setProbeState('broken')
-          const c = channel
-          channel = null
-          if (c) void supabase.removeChannel(c)
-          startPolling()
-        }
-      })
-    }
-
     // 轮询交给全站统一的调度器：后台标签页不跑、回到前台自动错峰补拉，
     // 也避免了「每个订阅各开一个 setInterval」带来的请求堆积
     const startPolling = () => {
@@ -175,15 +221,18 @@ export function useRealtime(channelName: string, watches: Watch[], options: Opti
       cancelSync = scheduleSync(channelName, pollMs, () => pollRef.current?.())
     }
 
-    // 探测未通过（pending 或 broken）一律先轮询：绝不主动打开 supabase-js 的 socket
-    if (state === 'ok') subscribe()
-    else startPolling()
+    // 探测未通过（pending 或 broken）一律先轮询：绝不主动打开 supabase-js 的 socket。
+    // 探测通过后才进共享池：相同频道复用一条 channel，引用计数归零时由最后一个使用者关闭。
+    if (state === 'ok') {
+      const key = `${channelName}::${watchSignature(watchesRef.current)}`
+      releaseChannel = acquireChannel(key, channelName, watchesRef.current)
+    } else {
+      startPolling()
+    }
 
     return () => {
       stopPolling()
-      const c = channel
-      channel = null
-      if (c) void supabase.removeChannel(c)
+      releaseChannel?.()
     }
   }, [channelName, enabled, pollMs, state])
 }

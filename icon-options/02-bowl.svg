@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-labelledby="t">
+  <title id="t">点菜小屋 · 暖碗笑脸</title>
+  <rect width="192" height="192" rx="44" fill="#f43f70"/>
+  <circle cx="138" cy="66" r="13" fill="#fff"/>
+  <path d="M96 84c-27 0-48 19-48 43a48 48 0 0 0 96 0c0-24-21-43-48-43z" fill="#fff"/>
+  <path d="M112 100a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm-30 0a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" fill="#f43f70"/>
+  <path d="M80 118c6 9 14 13 20 13s14-4 20-13" fill="none" stroke="#f43f70" stroke-width="7" stroke-linecap="round"/>
+</svg>

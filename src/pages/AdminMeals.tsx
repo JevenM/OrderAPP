@@ -7,10 +7,12 @@ import { useUnread } from '../store/unread'
 import { useMembers } from '../store/members'
 import { useSession } from '../store/session'
 import { useToast } from '../components/Toast'
+import { useConfirm } from '../components/Modal'
 import { MEAL_STATUS, SLOTS, type Meal, type MealSlot, type MealStatus } from '../lib/types'
 
 export default function AdminMeals() {
   const toast = useToast()
+  const confirm = useConfirm()
   const { refresh } = useUnread()
   const { members } = useMembers()
   const { memberId: viewMemberId } = useSession() // 顶部下拉切换到某个她时，只显示她的
@@ -114,7 +116,7 @@ export default function AdminMeals() {
 
   const del = async (m: Meal) => {
     const who = members.find((x) => x.id === m.member_id)?.name ?? '她'
-    if (!window.confirm(`删除「${who}」的这条就餐记录？删除后不可恢复。`)) return
+    if (!(await confirm(`删除「${who}」的这条就餐记录？删除后不可恢复。`))) return
     try {
       await removeMeal(m.id)
       toast.show('已删除')

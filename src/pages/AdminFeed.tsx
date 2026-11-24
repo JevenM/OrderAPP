@@ -1,7 +1,9 @@
+import { EmptyState, SkeletonList } from '../components/States'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Avatar from '../components/Avatar'
 import Pager from '../components/Pager'
 import { useToast } from '../components/Toast'
+import { useConfirm } from '../components/Modal'
 import { deletePosts, listPostsAdmin, removeComment, updatePostContent } from '../lib/db'
 import { exportTableCsv, exportTableJson } from '../lib/export'
 import { SLOT_LABEL, type PostWithMeta } from '../lib/types'
@@ -14,6 +16,7 @@ const FEED_PAGE_SIZE = 10
 /** 管理员饭圈动态管理：按日期范围 / 成员 / 关键词筛选，支持查看、编辑、删除与批量删除、导出 */
 export default function AdminFeed() {
   const toast = useToast()
+  const confirm = useConfirm()
   const { members, loading: membersLoading } = useMembers()
   const [rows, setRows] = useState<PostWithMeta[]>([])
   const [loading, setLoading] = useState(true)
@@ -79,7 +82,7 @@ export default function AdminFeed() {
 
   const removeSelected = async () => {
     if (!selected.size) return
-    if (!window.confirm(`确定删除选中的 ${selected.size} 条动态？其点赞与评论会一并删除，不可恢复。`)) return
+    if (!(await confirm({ title: '批量删除动态', message: `确定删除选中的 ${selected.size} 条动态？其点赞与评论会一并删除，不可恢复。`, danger: true }))) return
     setDeleting(true)
     try {
       await deletePosts([...selected])
@@ -94,7 +97,7 @@ export default function AdminFeed() {
   }
 
   const dropOne = async (id: string) => {
-    if (!window.confirm('确定删除这条动态？其点赞与评论会一并删除。')) return
+    if (!(await confirm({ message: '确定删除这条动态？其点赞与评论会一并删除。', danger: true }))) return
     try {
       await deletePosts([id])
       setSelected((prev) => {
@@ -125,7 +128,7 @@ export default function AdminFeed() {
   }
 
   const dropComment = async (id: string) => {
-    if (!window.confirm('确定删除这条评论？')) return
+    if (!(await confirm({ message: '确定删除这条评论？', danger: true }))) return
     try {
       await removeComment(id)
       setRows((prev) => prev.map((row) => ({ ...row, comments: row.comments.filter((c) => c.id !== id) })))
@@ -255,8 +258,8 @@ export default function AdminFeed() {
           </div>
         </div>
 
-        {loading && <p className="py-6 text-center text-sm text-slate-400">加载中…</p>}
-        {!loading && !rows.length && <p className="py-6 text-center text-sm text-slate-400">暂无符合条件的动态</p>}
+        {loading && <SkeletonList rows={3} />}
+        {!loading && !rows.length && <EmptyState icon="📭" title="暂无符合条件的动态" compact />}
 
         {!loading &&
           pagedRows.map((post) => {

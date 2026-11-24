@@ -181,6 +181,73 @@ body {
   animation: lt-twinkle 2.4s ease-in-out infinite;
 }
 
+/* ------------------------------ 深色模式 ------------------------------
+   用 class 切换（themes.ts 写入 html.dark）。这里直接覆盖高频 Tailwind 中性色类，
+   避免给上百处 className 逐个加 dark: 前缀；brand-* 由换肤独立控制，两套互不干扰。
+   放在文件末尾，保证特异性相同时覆盖 Tailwind 生成的规则。 */
+html.dark {
+  color-scheme: dark;
+}
+html.dark body {
+  background: #0f172a;
+  color: #e2e8f0;
+}
+html.dark .card,
+html.dark .bg-white {
+  background-color: #1e293b;
+}
+html.dark .bg-slate-50 {
+  background-color: #172033;
+}
+html.dark .bg-slate-100 {
+  background-color: #243044;
+}
+html.dark .border-slate-100 {
+  border-color: #2b384d;
+}
+html.dark .border-slate-200 {
+  border-color: #34425a;
+}
+html.dark .border-slate-300 {
+  border-color: #475569;
+}
+html.dark .border-brand-100 {
+  border-color: #3b2a3a;
+}
+html.dark .border-brand-200 {
+  border-color: #54384a;
+}
+html.dark .text-slate-900 { color: #f1f5f9; }
+html.dark .text-slate-800 { color: #e2e8f0; }
+html.dark .text-slate-700 { color: #cbd5e1; }
+html.dark .text-slate-600 { color: #b6c2d1; }
+html.dark .text-slate-500 { color: #94a3b8; }
+html.dark .text-slate-400 { color: #7c8ba1; }
+html.dark .text-slate-300 { color: #64748b; }
+html.dark .btn-ghost {
+  background-color: #1e293b;
+  border-color: #54384a;
+  color: rgb(var(--brand-300));
+}
+html.dark .btn-ghost:hover { background-color: #243044; }
+html.dark .btn-soft { color: rgb(var(--brand-300)); }
+html.dark .input {
+  background-color: #172033;
+  border-color: #34425a;
+  color: #e2e8f0;
+}
+html.dark .bg-brand-50 { background-color: #2a1b24; }
+html.dark .bg-brand-50\/40 { background-color: #19131a; }
+html.dark .text-brand-600,
+html.dark .text-brand-700 { color: rgb(var(--brand-300)); }
+html.dark .shadow-card { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); }
+/* 原生控件与滚动条 */
+html.dark input,
+html.dark textarea,
+html.dark select {
+  color-scheme: dark;
+}
+
 /* 系统开启「减弱动态效果」时关掉动画，照顾晕动/省电场景 */
 @media (prefers-reduced-motion: reduce) {
   *,

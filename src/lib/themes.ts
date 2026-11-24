@@ -9,6 +9,8 @@ export interface ThemeDef {
 }
 
 export const THEME_KEY = 'app-theme'
+/** 明暗模式独立于配色主题存储，两者可叠加（换肤管 brand-*，明暗管中性表面色） */
+export const DARK_KEY = 'app-dark'
 
 /** 五套风格：樱粉是原版默认，其余为等价明度梯度，保证对比度一致 */
 export const THEMES: ThemeDef[] = [
@@ -120,5 +122,26 @@ export function applyTheme(id: string): void {
 export const themeGradient = (t: ThemeDef): string =>
   `linear-gradient(135deg, rgb(${t.vars[2].join(',')}), rgb(${t.vars[4].join(',')}), rgb(${t.vars[5].join(',')}))`
 
-// 模块加载即应用（早于首帧渲染，避免闪旧配色）
+/* ------------------------------ 明暗模式 ------------------------------ */
+
+export function readDark(): boolean {
+  try {
+    return localStorage.getItem(DARK_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+/** 切换明暗：给 html 加/去 dark 类（CSS 里 .dark 下覆盖中性色；brand-* 不受影响，换肤照常生效） */
+export function applyDark(on: boolean): void {
+  document.documentElement.classList.toggle('dark', on)
+  try {
+    localStorage.setItem(DARK_KEY, on ? '1' : '0')
+  } catch {
+    // 无痕模式存不了就用本次会话
+  }
+}
+
+// 模块加载即应用（早于首帧渲染，避免闪旧配色 / 闪白）
 applyTheme(readThemeId())
+applyDark(readDark())

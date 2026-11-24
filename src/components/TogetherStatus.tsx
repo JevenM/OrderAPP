@@ -24,17 +24,22 @@ export default function TogetherStatus() {
   const friendId = friends.find((friend) => friend.memberId !== '__admin__')?.memberId ?? null
   const [sharing, setSharing] = useState(false)
   const [locations, setLocations] = useState<TogetherLocationRow[]>([])
-  const [now, setNow] = useState(Date.now())
+  /** 位置是否仍在有效期：只在真正跨越过期边界时更新，避免每 5 秒整组件重渲染 */
+  const [valid, setValid] = useState(false)
+  const locationsRef = useRef<TogetherLocationRow[]>([])
   const watchIdRef = useRef<number | null>(null)
   const sharingRef = useRef(false)
 
   const load = useCallback(async () => {
     if (!memberId || !friendId) {
+      locationsRef.current = []
       setLocations([])
       return
     }
     try {
-      setLocations(await listTogetherLocations([memberId, friendId]))
+      const rows = await listTogetherLocations([memberId, friendId])
+      locationsRef.current = rows
+      setLocations(rows)
     } catch {
       // Location migration may not be applied yet.
     }
@@ -42,9 +47,27 @@ export default function TogetherStatus() {
 
   useEffect(() => {
     void load()
-    const timer = window.setInterval(() => setNow(Date.now()), 5_000)
-    return () => window.clearInterval(timer)
   }, [load])
+
+  // 位置有效期检查：只在共享开启时跑，且仅在「有效/失效」状态真的翻转时才 setState。
+  // 之前每 5 秒 setNow 会让整组件（含 realtime 订阅闭包）跟着重渲染，非共享时更是纯空跑。
+  useEffect(() => {
+    if (!sharing) {
+      setValid(false)
+      return
+    }
+    const check = () => {
+      const rows = locationsRef.current
+      const mine = rows.find((r) => r.member_id === memberId)
+      const peer = rows.find((r) => r.member_id === friendId)
+      const t = Date.now()
+      const next = Boolean(mine && peer && Date.parse(mine.expires_at) > t && Date.parse(peer.expires_at) > t)
+      setValid((prev) => (prev === next ? prev : next))
+    }
+    check()
+    const timer = window.setInterval(check, 5_000)
+    return () => window.clearInterval(timer)
+  }, [sharing, memberId, friendId])
 
   useRealtime('together-locations', [{ table: 'together_locations', on: () => void load() }], {
     enabled: Boolean(memberId && friendId),
@@ -59,10 +82,7 @@ export default function TogetherStatus() {
 
   const myLocation = locations.find((location) => location.member_id === memberId)
   const peerLocation = locations.find((location) => location.member_id === friendId)
-  const locationsValid = Boolean(
-    sharing && myLocation && peerLocation &&
-    Date.parse(myLocation.expires_at) > now && Date.parse(peerLocation.expires_at) > now
-  )
+  const locationsValid = Boolean(sharing && valid && myLocation && peerLocation)
   const distance = locationsValid && myLocation && peerLocation ? distanceMeters(myLocation, peerLocation) : null
   const together = distance !== null && distance < 1_000
   const distanceLabel = distance === null ? null : `${(distance / 1_000).toFixed(2)} km`

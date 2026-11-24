@@ -1,7 +1,9 @@
+import { EmptyState, SkeletonList } from '../components/States'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { deleteCoupleTruthDare, listAllCoupleTruthDare, listAllFriendships, type CoupleTruthDareRow } from '../lib/db'
 import Pager from '../components/Pager'
 import { useToast } from '../components/Toast'
+import { useConfirm } from '../components/Modal'
 import { useMembers } from '../store/members'
 
 /** 每页记录条数：抽题记录会一直累积，一页 10 条避免手机上几百条一起渲染 */
@@ -10,6 +12,7 @@ const TRUTH_PAGE_SIZE = 10
 /** 管理员查看 / 管理每对情侣玩过的真心话大冒险题目与答案：多选、批量删除、导出 */
 export default function AdminCoupleTruthDare() {
   const toast = useToast()
+  const confirm = useConfirm()
   const { members, loading: membersLoading } = useMembers()
   const [rows, setRows] = useState<CoupleTruthDareRow[]>([])
   const [friendshipPairs, setFriendshipPairs] = useState<{ key: string; label: string }[]>([])
@@ -95,7 +98,7 @@ export default function AdminCoupleTruthDare() {
 
   const removeSelected = async () => {
     const ids = [...selected]
-    if (!ids.length || !window.confirm(`确定删除选中的 ${ids.length} 条记录吗？删除后无法恢复。`)) return
+    if (!ids.length || !(await confirm(`确定删除选中的 ${ids.length} 条记录吗？删除后无法恢复。`))) return
     setDeleting(true)
     try {
       await deleteCoupleTruthDare(ids)
@@ -203,8 +206,8 @@ export default function AdminCoupleTruthDare() {
           <h3 className="font-semibold">游玩记录</h3>
           <span className="chip border-slate-200 bg-slate-50 text-slate-500">{filtered.length} 条</span>
         </div>
-        {loading && <p className="py-6 text-center text-sm text-slate-400">加载中…</p>}
-        {!loading && !filtered.length && <p className="py-6 text-center text-sm text-slate-400">暂无符合条件的记录</p>}
+        {loading && <SkeletonList rows={3} compact />}
+        {!loading && !filtered.length && <EmptyState icon="🎲" title="暂无符合条件的记录" compact />}
         {!loading &&
           pagedRows.map((row) => {
             const a = memberById.get(row.member_a)?.name ?? '未知成员'

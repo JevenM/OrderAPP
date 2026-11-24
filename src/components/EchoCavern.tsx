@@ -307,7 +307,7 @@ function blocked(solid: Uint8Array, x: number, y: number, r: number): boolean {
 /** 关卡构建：画掩膜 → 采样网格 → 提取边界单元（8 邻域含空的岩石单元） */
 function buildWorld(level: LevelDef): World {
   const s = getShared()
-  let solid = new Uint8Array(GW * GH)
+  const solid = new Uint8Array(GW * GH)
   let edges = { xs: new Float32Array(0), ys: new Float32Array(0), idx: new Int32Array(0), n: 0 }
   if (s) {
     const { maskCtx } = s

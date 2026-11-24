@@ -1,3 +1,5 @@
+import { touchModule } from './recentModules'
+
 /** 可被管理员开关控制的功能模块 */
 export type ModuleKey =
   | 'love'
@@ -109,6 +111,8 @@ export function isModuleNew(key: string): boolean {
 
 /** 打开模块时登记：之后这个设备上不再显示它的 NEW 角标 */
 export function markModuleSeen(key: string): void {
+  // 最近使用与 NEW 已读是两套独立记录，这里同步登记，覆盖所有进入路径（含通知深链）
+  if (COUPLE_MODULE_KEYS.includes(key as ModuleKey)) touchModule(key)
   try {
     const seen = JSON.parse(localStorage.getItem(SEEN_KEY) ?? '[]') as string[]
     if (seen.includes(key)) return

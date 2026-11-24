@@ -23,6 +23,10 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Test
+        run: npm run test
       - name: Build
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}

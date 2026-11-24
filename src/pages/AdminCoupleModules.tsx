@@ -15,6 +15,7 @@ import {
 } from '../lib/db'
 import Pager from '../components/Pager'
 import { useToast } from '../components/Toast'
+import { useConfirm } from '../components/Modal'
 import { useMembers } from '../store/members'
 
 const fmt = (time: string) => new Date(time).toLocaleString('zh-CN')
@@ -23,6 +24,7 @@ const ADMIN_PAGE_SIZE = 20
 
 export default function AdminCoupleModules() {
   const toast = useToast()
+  const confirm = useConfirm()
   const { members } = useMembers()
   const [watermelon, setWatermelon] = useState<CoupleWatermelonLogRow[]>([])
   const [countdowns, setCountdowns] = useState<CoupleCountdownRow[]>([])
@@ -63,7 +65,7 @@ export default function AdminCoupleModules() {
   useEffect(() => { void reload() }, [reload])
 
   const removePrompts = async () => {
-    if (!prompts.length || !window.confirm(`确定删除全部 ${prompts.length} 条自定义真心话题目吗？`)) return
+    if (!prompts.length || !(await confirm(`确定删除全部 ${prompts.length} 条自定义真心话题目吗？`))) return
     try {
       await deleteCoupleTruthPrompts(prompts.map((row) => row.id))
       setPrompts([])
@@ -75,7 +77,7 @@ export default function AdminCoupleModules() {
   }
 
   const removeDarePrompts = async () => {
-    if (!darePrompts.length || !window.confirm(`确定删除全部 ${darePrompts.length} 条自定义大冒险题目吗？`)) return
+    if (!darePrompts.length || !(await confirm(`确定删除全部 ${darePrompts.length} 条自定义大冒险题目吗？`))) return
     try {
       await deleteCoupleDarePrompts(darePrompts.map((row) => row.id))
       setDarePrompts([])

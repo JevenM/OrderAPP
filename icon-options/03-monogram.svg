@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-labelledby="t">
+  <title id="t">点菜小屋 · 字母徽标</title>
+  <rect width="192" height="192" rx="44" fill="#f43f70"/>
+  <path d="M52 56h13v52a6 6 0 0 0 12 0V56h13v52a6 6 0 0 0 12 0V56h13v58a30 30 0 0 1-60 0V56z" fill="#fff"/>
+  <circle cx="142" cy="64" r="12" fill="#fff"/>
+  <path d="M118 106h56a28 28 0 0 1-56 0z" fill="#fff"/>
+  <path d="M136 140h20a4 4 0 0 1 0 8h-20a4 4 0 0 1 0-8z" fill="#fff"/>
+</svg>

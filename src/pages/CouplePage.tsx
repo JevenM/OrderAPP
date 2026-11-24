@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useToast } from '../components/Toast'
@@ -66,7 +66,6 @@ import {
   listCoupleQuizHistory,
   listCoupleQuizUsedIds,
   listCoupleTruthDare,
-  listCoupleTruthPrompts,
   listCoupleTruthPromptBank,
   addCoupleTruthPrompt,
   // deleteCoupleTruthPrompt,
@@ -74,9 +73,8 @@ import {
   addCoupleDarePrompt,
   // deleteCoupleDarePrompt,
   listCoupleWishes,
-  countCoupleWishes,
-  countCoupleMessages,
-  countCoupleQuizHistory,
+  loadGridCounts,
+  invalidateGridCounts,
   listMealsRange,
   listMealCompletion,
   MINES_CELL,
@@ -144,15 +142,18 @@ import {
   type WeddingItemKind,
   type WeddingStep,
 } from '../lib/weddingSteps'
-import LoveTree from '../components/LoveTree'
-import ScratchTicket from '../components/ScratchTicket'
-import Star2048 from '../components/Star2048'
-import AnimalMatch from '../components/AnimalMatch'
-import WatermelonGame from '../components/WatermelonGame'
-import LightsOut from '../components/LightsOut'
-import EchoCavern from '../components/EchoCavern'
-import TankBattle from '../components/TankBattle'
-import SnakeBattle from '../components/SnakeBattle'
+/* 游戏/重组件按模块懒加载：进互动页不再一次性下载全部游戏代码，
+   点进哪个游戏才拉哪个 chunk（App 层的 Suspense 管不到这里的分支，本页自带边界） */
+const LoveTree = lazy(() => import('../components/LoveTree'))
+const ScratchTicket = lazy(() => import('../components/ScratchTicket'))
+const Star2048 = lazy(() => import('../components/Star2048'))
+const AnimalMatch = lazy(() => import('../components/AnimalMatch'))
+const WatermelonGame = lazy(() => import('../components/WatermelonGame'))
+const LightsOut = lazy(() => import('../components/LightsOut'))
+const EchoCavern = lazy(() => import('../components/EchoCavern'))
+const TankBattle = lazy(() => import('../components/TankBattle'))
+const SnakeBattle = lazy(() => import('../components/SnakeBattle'))
+const LazyFallback = <div className="flex min-h-40 items-center justify-center text-xs text-slate-400">加载中…</div>
 import {
   LOVE_TREE_LOOKBACK,
   isDormantTree,
@@ -166,6 +167,19 @@ import {
 import { useRealtime } from '../lib/realtime'
 import { SLOT_LABEL, type Meal, type MealSlot } from '../lib/types'
 import { COUPLE_MODULE_KEYS, markModuleSeen, type ModuleKey } from '../lib/modules'
+import { recentModules } from '../lib/recentModules'
+import {
+  WUFU_PATTERNS,
+  generateMines,
+  minesAroundOf,
+  parseCustomCells,
+  rollForFirst,
+  shuffleList,
+  wufuFormedPatterns,
+  wufuHasAnyMove,
+  wufuMoveTargets,
+  wufuProtectedCells,
+} from '../lib/coupleGameRules'
 import { useFriends } from '../store/friends'
 import { useModuleFlags } from '../store/moduleFlags'
 import { useSession } from '../store/session'
@@ -948,15 +962,6 @@ const orderedPair = (a: string, b: string): [string, string] => (a < b ? [a, b] 
 
 const dayNumber = () => Math.floor(Date.now() / 86_400_000)
 
-function shuffleList<T>(list: T[]): T[] {
-  const arr = [...list]
-  for (let i = arr.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[arr[i], arr[j]] = [arr[j], arr[i]]
-  }
-  return arr
-}
-
 /**
  * 生成共享棋盘：首尾固定起点/终点，中间格子按类型分组后轮流抽取——
  * 每种类型都保证出现、分布均衡，且同一棋盘内内容尽量不重复（某类取尽才允许由其他类补位）。
@@ -994,105 +999,6 @@ function buildBoardCells(size: number, extraTexts: string[] = []): CoupleBoardCe
   return [{ kind: 'start', text: '起点' }, ...shuffleList(picked), { kind: 'end', text: '终点' }]
 }
 
-/** 解析自定义内容池：按行拆分、去空去重，最多 100 条 */
-function parseCustomCells(text: string): string[] {
-  const seen = new Set<string>()
-  const lines: string[] = []
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim()
-    if (!line || seen.has(line) || lines.length >= 100) continue
-    seen.add(line)
-    lines.push(line)
-  }
-  return lines
-}
-
-/** 开局先手判定：双方各掷一次骰子，点数大的先走（平局重掷） */
-function rollForFirst(names: [string, string], verb = '先走'): { turn: 0 | 1; logs: string[] } {
-  const logs: string[] = []
-  let a = 0
-  let b = 0
-  while (a === b) {
-    a = 1 + Math.floor(Math.random() * 6)
-    b = 1 + Math.floor(Math.random() * 6)
-    logs.push(`🎲先手判定：${names[0]} 掷出 ${a} 点，${names[1]} 掷出 ${b} 点${a === b ? '，平局重掷' : ''}`)
-  }
-  const turn: 0 | 1 = a > b ? 0 : 1
-  logs.push(`✌️${names[turn]}点数更大，由 TA ${verb}`)
-  return { turn, logs }
-}
-
-/* ------------------------------ 摆方五福棋（模块级工具） ------------------------------ */
-
-/**
- * 五福棋全部成项棋形（吃子规则）：
- * 通天 = 5 子斜贯两条对角；大棍（五福）= 5 子整行 / 整列；
- * 四斜 = 4 子斜连两条相邻边；三斜 = 3 子斜连两条相邻边；小方（井口）= 紧邻 2×2 方格。
- * cells 为 25 个落子点（行优先）中组成该棋形的点。
- */
-const WUFU_PATTERNS: Array<{ name: string; cells: number[] }> = [
-  // 大棍：5 行 + 5 列
-  ...Array.from({ length: 5 }, (_, r) => ({ name: '大棍', cells: [0, 1, 2, 3, 4].map((c) => r * 5 + c) })),
-  ...Array.from({ length: 5 }, (_, c) => ({ name: '大棍', cells: [0, 1, 2, 3, 4].map((r) => r * 5 + c) })),
-  // 通天：两条主对角线
-  { name: '通天', cells: [0, 6, 12, 18, 24] },
-  { name: '通天', cells: [4, 8, 12, 16, 20] },
-  // 四斜：长 4 的对角线，两端落在两条相邻边
-  { name: '四斜', cells: [1, 7, 13, 19] },
-  { name: '四斜', cells: [5, 11, 17, 23] },
-  { name: '四斜', cells: [3, 7, 11, 15] },
-  { name: '四斜', cells: [9, 13, 17, 21] },
-  // 三斜：长 3 的对角线，两端落在两条相邻边
-  { name: '三斜', cells: [2, 6, 10] },
-  { name: '三斜', cells: [14, 18, 22] },
-  { name: '三斜', cells: [2, 8, 14] },
-  { name: '三斜', cells: [10, 16, 22] },
-  // 小方（井口）：紧邻 2×2 小正方形
-  ...Array.from({ length: 16 }, (_, i) => {
-    const r = Math.floor(i / 4)
-    const c = i % 4
-    return { name: '小方', cells: [r * 5 + c, r * 5 + c + 1, (r + 1) * 5 + c, (r + 1) * 5 + c + 1] }
-  }),
-]
-
-/** 玩家（1 = member_a ❤️ / 2 = member_b 💙）当前已成项的棋形下标集合 */
-function wufuFormedPatterns(board: number[], player: number): Set<number> {
-  const formed = new Set<number>()
-  WUFU_PATTERNS.forEach((pattern, index) => {
-    if (pattern.cells.every((cell) => board[cell] === player)) formed.add(index)
-  })
-  return formed
-}
-
-/** 玩家处于成项棋形中的棋子集合（受保护，不能被对方提走） */
-function wufuProtectedCells(board: number[], player: number): Set<number> {
-  const cells = new Set<number>()
-  WUFU_PATTERNS.forEach((pattern) => {
-    if (pattern.cells.every((cell) => board[cell] === player)) pattern.cells.forEach((cell) => cells.add(cell))
-  })
-  return cells
-}
-
-/** 走子阶段：某棋子沿线可走到的相邻空点（上下左右一格） */
-function wufuMoveTargets(board: number[], from: number): number[] {
-  const r = Math.floor(from / 5)
-  const c = from % 5
-  const targets: number[] = []
-  if (r > 0 && board[from - 5] === 0) targets.push(from - 5)
-  if (r < 4 && board[from + 5] === 0) targets.push(from + 5)
-  if (c > 0 && board[from - 1] === 0) targets.push(from - 1)
-  if (c < 4 && board[from + 1] === 0) targets.push(from + 1)
-  return targets
-}
-
-/** 走子阶段：玩家是否还有任何一步可走（无路可走即判负） */
-function wufuHasAnyMove(board: number[], player: number): boolean {
-  for (let cell = 0; cell < 25; cell += 1) {
-    if (board[cell] === player && wufuMoveTargets(board, cell).length) return true
-  }
-  return false
-}
-
 /* ------------------------------ 情侣扫雷（模块级工具） ------------------------------ */
 
 /** 扫雷尺寸档位：多种大小可选，雷数随之递增；另支持「自定义」行/列/雷数 */
@@ -1119,42 +1025,6 @@ const MINES_REWARDS = [
 
 /** 数字格的颜色（经典扫雷配色） */
 const MINES_NUMBER_COLORS = ['', 'text-blue-600', 'text-emerald-600', 'text-rose-600', 'text-indigo-700', 'text-amber-700', 'text-teal-600', 'text-slate-700', 'text-slate-500']
-
-/** 首次点开时才生成雷区：避开首格及其周围一圈，保证第一步一定安全 */
-function generateMines(rows: number, cols: number, count: number, safeIndex: number): number[] {
-  const forbidden = new Set<number>()
-  const sr = Math.floor(safeIndex / cols)
-  const sc = safeIndex % cols
-  for (let dr = -1; dr <= 1; dr += 1) {
-    for (let dc = -1; dc <= 1; dc += 1) {
-      const r = sr + dr
-      const c = sc + dc
-      if (r >= 0 && r < rows && c >= 0 && c < cols) forbidden.add(r * cols + c)
-    }
-  }
-  const pool: number[] = []
-  for (let i = 0; i < rows * cols; i += 1) {
-    if (!forbidden.has(i)) pool.push(i)
-  }
-  return shuffleList(pool).slice(0, Math.min(count, pool.length))
-}
-
-/** 某格周围一圈的地雷数 */
-function minesAroundOf(state: CoupleMinesState, index: number): number {
-  const { rows, cols, mines } = state
-  const r = Math.floor(index / cols)
-  const c = index % cols
-  let count = 0
-  for (let dr = -1; dr <= 1; dr += 1) {
-    for (let dc = -1; dc <= 1; dc += 1) {
-      if (dr === 0 && dc === 0) continue
-      const nr = r + dr
-      const nc = c + dc
-      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && mines.includes(nr * cols + nc)) count += 1
-    }
-  }
-  return count
-}
 
 /** 扫雷专属惩罚任务池：踩雷时随机抽取（抽取时对本局已触发过的去重） */
 const MINES_TASK_POOL: string[] = [
@@ -2156,16 +2026,71 @@ export default function CouplePage() {
    * 之前停在入口页也要把四张表的内容拉回来只为拼卡片上的数字，是最大的一块无用流量。
    */
   const [gridCounts, setGridCounts] = useState({ wishes: 0, messages: 0, quizDone: 0, truthDone: 0 })
-  const reloadGridCounts = useCallback(async () => {
+
+  /* 互动入口分组：唯一真相来自 MODULE_DEFS，这里只补各卡片的动态说明；
+     useMemo 稳定引用，memo 后的 CoupleModuleGrid 才不会随父级 state 每次重渲染 */
+  const moduleSections = useMemo(
+    () => [
+      {
+        icon: '💕', title: '情感交流',
+        modules: [
+          { id: 'love', icon: '💌', title: '今日情话', detail: loveUnlocked ? '今日已解锁' : '完成三餐打卡解锁' },
+          { id: 'chat', icon: '💬', title: '甜蜜留言', detail: `${gridCounts.messages} 条留言` },
+          { id: 'wish', icon: '🎁', title: '秘密心愿', detail: `${gridCounts.wishes} 个心愿` },
+        ],
+      },
+      {
+        icon: '❓', title: '文字问答',
+        modules: [
+          { id: 'quiz', icon: '💞', title: '同步抉择', detail: `已做 ${gridCounts.quizDone}/${quizTotalQuestions.length} 题` },
+          { id: 'truth', icon: '🎲', title: '真心话大冒险', detail: `已答 ${gridCounts.truthDone}/${truthPromptPool.length} 题` },
+        ],
+      },
+      {
+        icon: '🎮', title: '双人游戏',
+        modules: [
+          { id: 'board', icon: '🎯', title: '情侣飞行棋', detail: '联网轮流掷骰对战' },
+          { id: 'mines', icon: '💣', title: '情侣扫雷', detail: '轮流拆雷，踩雷做任务' },
+          { id: 'wufu', icon: '♟️', title: '摆方五福棋', detail: '摆子提子走子，吃到剩2子' },
+          { id: 'gomoku', icon: '⚫', title: '情侣五子棋', detail: '联网轮流落子，五连获胜' },
+          { id: 'tankbattle', icon: '💥', title: '坦克大战', detail: '同种子地图竞速对战' },
+          { id: 'snake', icon: '🐍', title: '贪食蛇大作战', detail: '冲刺反杀吞身，冲击榜首' },
+          { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分' },
+          { id: 'dice', icon: '🎲', title: '骰子比大小', detail: '骰子押大小，围骰庄家通吃' },
+        ],
+      },
+      {
+        icon: '🕹️', title: '单机小游戏',
+        modules: [
+          { id: 'scratch', icon: '🎫', title: '情侣刮刮乐', detail: '刮开卡片赢甜蜜奖励' },
+          { id: 'star2048', icon: '✨', title: '星尘 2048', detail: '滑动合并方块' },
+          { id: 'animalmatch', icon: '🐾', title: '动物世界消消乐', detail: '7 卡槽三消，多层堆叠' },
+          { id: 'bigwatermelon', icon: '🍈', title: '合成大西瓜', detail: '点击放水果，合出大西瓜' },
+          { id: 'lightsout', icon: '💡', title: '关灯挑战', detail: '5×5 翻转解谜，全灭即胜利' },
+          { id: 'echocavern', icon: '🕳️', title: '回声洞窟', detail: '全黑声波探路，捡光点躲影' },
+        ],
+      },
+      {
+        icon: '📅', title: '流程日程',
+        modules: [
+          { id: 'countdown', icon: '⏳', title: '重要日倒计时', detail: '倒数还有多少天' },
+          {
+            id: 'wedding', icon: '💍', title: '备婚流程',
+            detail: weddingDoneCount ? `已完成 ${weddingDoneCount}/${weddingTotal} 步` : `从定心意到结完婚共 ${weddingTotal} 步`,
+          },
+        ],
+      },
+    ],
+    [loveUnlocked, gridCounts, quizTotalQuestions.length, truthPromptPool.length, weddingDoneCount, weddingTotal]
+  )
+  // 回到入口页时重新读一次最近使用；停留期间引用稳定，避免击穿网格的 memo
+  const recentForGrid = useMemo(() => (activeModule ? [] : recentModules()), [activeModule])
+  const reloadGridCounts = useCallback(async (force = false) => {
     if (!memberId || !friendId) return
     try {
-      const [wishes, messages, quizDone, truthPrompts] = await Promise.all([
-        countCoupleWishes(memberId, friendId),
-        countCoupleMessages(memberId, friendId),
-        countCoupleQuizHistory(memberId, friendId),
-        listCoupleTruthPrompts(memberId, friendId),
-      ])
-      setGridCounts({ wishes, messages, quizDone, truthDone: truthPrompts.length })
+      if (force) invalidateGridCounts(memberId, friendId)
+      const counts = await loadGridCounts(memberId, friendId)
+      setGridCounts(counts)
     } catch (error) {
       console.warn('加载入口计数失败', error)
     }
@@ -2741,7 +2666,7 @@ export default function CouplePage() {
   useEffect(() => {
     if (!ready) return
     const m = activeModule
-    if (!m) void reloadGridCounts() // 从模块退回入口页：刷新卡片上的计数
+    if (!m) void reloadGridCounts(true) // 从模块退回入口页：强制刷新卡片上的计数（跳过短时缓存）
     else if (m === 'wish') void reloadWishes()
     // 每次进入甜蜜留言都回到第 0 页：倒序下第 0 页就是最新的那几条
     else if (m === 'chat') {
@@ -4920,66 +4845,10 @@ export default function CouplePage() {
       {!activeModule ? (
         /* 互动模块按分类分组：模块多了以后平铺要下拉很久，切成五段好找也好认 */
         <CoupleModuleGrid
-          sections={[
-            {
-              icon: '💕',
-              title: '情感交流',
-              modules: [
-                { id: 'love', icon: '💌', title: '今日情话', detail: loveUnlocked ? '今日已解锁' : '完成三餐打卡解锁' },
-                { id: 'chat', icon: '💬', title: '甜蜜留言', detail: `${gridCounts.messages} 条留言` },
-                { id: 'wish', icon: '🎁', title: '秘密心愿', detail: `${gridCounts.wishes} 个心愿` },
-              ],
-            },
-            {
-              icon: '❓',
-              title: '文字问答',
-              modules: [
-                { id: 'quiz', icon: '💞', title: '同步抉择', detail: `已做 ${gridCounts.quizDone}/${quizTotalQuestions.length} 题` },
-                { id: 'truth', icon: '🎲', title: '真心话大冒险', detail: `已答 ${gridCounts.truthDone}/${truthPromptPool.length} 题` },
-              ],
-            },
-            {
-              icon: '🎮',
-              title: '双人游戏',
-              modules: [
-                { id: 'board', icon: '🎯', title: '情侣飞行棋', detail: '联网轮流掷骰对战' },
-                { id: 'mines', icon: '💣', title: '情侣扫雷', detail: '轮流拆雷，踩雷做任务' },
-                { id: 'wufu', icon: '♟️', title: '摆方五福棋', detail: '摆子提子走子，吃到剩2子' },
-                { id: 'gomoku', icon: '⚫', title: '情侣五子棋', detail: '联网轮流落子，五连获胜' },
-                { id: 'tankbattle', icon: '💥', title: '坦克大战', detail: '同种子地图竞速对战' },
-                { id: 'snake', icon: '🐍', title: '贪食蛇大作战', detail: '冲刺反杀吞身，冲击榜首' },
-                { id: 'watermelon', icon: '🍉', title: '情侣西瓜分', detail: '给 TA 加减分' },
-                { id: 'dice', icon: '🎲', title: '骰子比大小', detail: '骰子押大小，围骰庄家通吃' },
-              ],
-            },
-            {
-              icon: '🕹️',
-              title: '单机小游戏',
-              modules: [
-                { id: 'scratch', icon: '🎫', title: '情侣刮刮乐', detail: '刮开卡片赢甜蜜奖励' },
-                { id: 'star2048', icon: '✨', title: '星尘 2048', detail: '滑动合并方块' },
-                { id: 'animalmatch', icon: '🐾', title: '动物世界消消乐', detail: '7 卡槽三消，多层堆叠' },
-                { id: 'bigwatermelon', icon: '🍈', title: '合成大西瓜', detail: '点击放水果，合出大西瓜' },
-                { id: 'lightsout', icon: '💡', title: '关灯挑战', detail: '5×5 翻转解谜，全灭即胜利' },
-                { id: 'echocavern', icon: '🕳️', title: '回声洞窟', detail: '全黑声波探路，捡光点躲影' },
-              ],
-            },
-            {
-              icon: '📅',
-              title: '流程日程',
-              modules: [
-                { id: 'countdown', icon: '⏳', title: '重要日倒计时', detail: '倒数还有多少天' },
-                {
-                  id: 'wedding',
-                  icon: '💍',
-                  title: '备婚流程',
-                  detail: weddingDoneCount ? `已完成 ${weddingDoneCount}/${weddingTotal} 步` : `从定心意到结完婚共 ${weddingTotal} 步`,
-                },
-              ],
-            },
-          ]}
+          sections={moduleSections}
           isEnabled={isEnabled}
           onSelect={setActiveModule}
+          recent={recentForGrid}
         />
       ) : (
         <>
@@ -7022,6 +6891,8 @@ export default function CouplePage() {
             </section>
           )}
 
+          {/* 重组件区：刮刮乐 + 全部游戏均已 lazy，统一 Suspense 边界 */}
+          <Suspense fallback={LazyFallback}>
           {/* 🎫 情侣刮刮乐 */}
           {activeModule === 'scratch' && (
             <section id="couple-active-module" className={`card space-y-4${moduleFocus ? ' module-focus' : ''}`}>
@@ -7331,6 +7202,7 @@ export default function CouplePage() {
               <SnakeBattle myId={myId} friendId={friendId ?? ''} friendName={friendName} />
             </section>
           )}
+          </Suspense>
 
       {activeModule === 'love' ? <>
       {/* 今日专属情话：双方三餐打卡完毕才解锁，两边看到同一句 */}
@@ -7391,7 +7263,9 @@ export default function CouplePage() {
           <span className="chip shrink-0 border-rose-200 bg-rose-50 text-rose-600">连续 {treeStreak} 天</span>
         </div>
 
-        <LoveTree streak={treeStreak} water={treeWater} wateredMine={treeWateredMine} wateredPeer={treeWateredPeer} />
+        <Suspense fallback={<div className="flex h-40 items-center justify-center text-xs text-slate-400">加载中…</div>}>
+          <LoveTree streak={treeStreak} water={treeWater} wateredMine={treeWateredMine} wateredPeer={treeWateredPeer} />
+        </Suspense>
 
         <div className="space-y-2 rounded-xl bg-slate-50 p-3">
           <div className="flex items-center justify-between gap-2">

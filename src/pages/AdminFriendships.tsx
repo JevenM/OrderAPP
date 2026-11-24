@@ -1,11 +1,14 @@
+import { SkeletonList } from '../components/States'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { adminRemoveFriendship, adminSetFriendship, listAllFriendships } from '../lib/db'
 import { useToast } from '../components/Toast'
+import { useConfirm } from '../components/Modal'
 import { useMembers } from '../store/members'
 import type { Friendship } from '../lib/types'
 
 export default function AdminFriendships() {
   const toast = useToast()
+  const confirm = useConfirm()
   const { members, loading: membersLoading } = useMembers()
   const [relations, setRelations] = useState<Friendship[]>([])
   const [aId, setAId] = useState('')
@@ -47,7 +50,7 @@ export default function AdminFriendships() {
   const remove = async (relation: Friendship) => {
     const a = memberById.get(relation.requester_id)?.name ?? '成员'
     const b = memberById.get(relation.addressee_id)?.name ?? '成员'
-    if (!window.confirm(`解除「${a}」和「${b}」的好友关系？`)) return
+    if (!(await confirm(`解除「${a}」和「${b}」的好友关系？`))) return
     setBusy(true)
     try {
       await adminRemoveFriendship(relation.requester_id, relation.addressee_id)
@@ -86,7 +89,7 @@ export default function AdminFriendships() {
           <h3 className="font-semibold">当前关系</h3>
           <span className="chip border-slate-200 bg-slate-50 text-slate-500">{relations.length} 条</span>
         </div>
-        {loading && <p className="py-5 text-center text-sm text-slate-400">加载中…</p>}
+        {loading && <SkeletonList rows={3} compact />}
         {!loading && relations.length === 0 && <p className="py-5 text-center text-sm text-slate-400">还没有成员好友关系</p>}
         {!loading && relations.map((relation) => {
           const a = memberById.get(relation.requester_id)?.name ?? '未知成员'

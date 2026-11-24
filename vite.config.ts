@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 // GitHub Pages 部署时通过 `npm run build -- --base=/<仓库名>/` 覆盖 base
@@ -9,7 +9,8 @@ export default defineConfig({
     outDir: 'dist',
     // 第三方库单独成 chunk：它们几乎不变，发版后用户只需重新下载业务代码，
     // react / supabase 命中长效缓存，等于每次更新少下载 ~140 KB
-    chunkSizeWarningLimit: 500,
+    // 阈值压到 300：业务 chunk 变大时能早点发现，避免体积悄悄膨胀
+    chunkSizeWarningLimit: 300,
     rollupOptions: {
       output: {
         manualChunks: {
@@ -18,5 +19,11 @@ export default defineConfig({
         },
       },
     },
+  },
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+    pool: 'forks',
+    poolOptions: { forks: { singleFork: true } },
   },
 })

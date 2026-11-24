@@ -1,6 +1,8 @@
+import { SkeletonList } from '../components/States'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Pager from '../components/Pager'
 import { useToast } from '../components/Toast'
+import { useConfirm } from '../components/Modal'
 import { deleteCoupleQuizBankQuestion, listAllFriendships, listCoupleQuizBank, listCoupleQuizPairQuestions, saveCoupleQuizBankQuestion, saveCoupleQuizPairQuestions, setCoupleQuizBankQuestionEnabled, type CoupleQuizBankRow } from '../lib/db'
 import { ALL_QUESTIONS, type Question, type QuestionKind } from './CouplePage'
 import { useMembers } from '../store/members'
@@ -11,6 +13,7 @@ const PICK_PAGE_SIZE = 20
 
 export default function AdminCoupleQuestions() {
   const toast = useToast()
+  const confirm = useConfirm()
   const { members, loading: membersLoading } = useMembers()
   const [questions, setQuestions] = useState<CoupleQuizBankRow[]>([])
   const [pairs, setPairs] = useState<{ a: string; b: string; label: string }[]>([])
@@ -107,7 +110,7 @@ export default function AdminCoupleQuestions() {
   }
 
   const removeQuestion = async (question: CoupleQuizBankRow) => {
-    if (!window.confirm(`确定删除「${question.title}」？已保存的答题历史仍会保留。`)) return
+    if (!(await confirm(`确定删除「${question.title}」？已保存的答题历史仍会保留。`))) return
     setSaving(true)
     try {
       await deleteCoupleQuizBankQuestion(question.id)
@@ -148,7 +151,7 @@ export default function AdminCoupleQuestions() {
     }
   }
 
-  const useGlobalPool = async () => {
+  const restoreGlobalPool = async () => {
     if (!pair) return
     setSaving(true)
     try {
@@ -194,7 +197,7 @@ export default function AdminCoupleQuestions() {
             </span>
             {/* 只有在自定义题池时才需要「恢复」；原来这里写着「应用勾选项」却调恢复全局，按钮行为和文案对不上 */}
             {!usesDefaultPool && (
-              <button className="shrink-0 underline" disabled={saving} onClick={() => void useGlobalPool()}>
+              <button className="shrink-0 underline" disabled={saving} onClick={() => void restoreGlobalPool()}>
                 恢复全部启用题目
               </button>
             )}
@@ -218,7 +221,7 @@ export default function AdminCoupleQuestions() {
       <section className="card space-y-3">
         <div className="flex items-center justify-between gap-2"><h3 className="font-semibold">题库</h3><span className="chip border-slate-200 bg-slate-50 text-slate-500">{questions.length} 道</span></div>
         <input className="input" placeholder="搜索题目或选项" value={filter} onChange={(event) => setFilter(event.target.value)} />
-        {loading && <p className="py-5 text-center text-sm text-slate-400">加载中…</p>}
+        {loading && <SkeletonList rows={3} compact />}
         {!loading && !visibleQuestions.length && <p className="py-5 text-center text-sm text-slate-400">没有匹配的题目</p>}
         <div className="space-y-2">
           {visibleQuestions.map((question) => (

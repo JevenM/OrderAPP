@@ -1,5 +1,5 @@
 import { ADMIN_NAME, configured, supabase } from './supabase'
-import { getProbeState } from './realtime'
+import { getProbeState, waitForSubscribe } from './realtime'
 import { deduped, invalidateDedupe } from './net'
 import { compressImage } from './image'
 import { toDayStr } from './date'
@@ -27,8 +27,11 @@ import type {
 import type { WeddingStep } from './weddingSteps'
 
 function fail(e: { message?: string } | null, tag: string): never {
-  throw new Error(`${tag}失败：${e?.message ?? '未知错误'}`)
+  // 统一入口：supabase 返回的英文错误（尤其网络类）在这里翻成可排查的中文，
+  // 全库 100+ 处 if (error) fail(error, tag) 无需逐个改就能受益。
+  throw netHint(tag, e)
 }
+
 
 /** 给请求加超时，避免网络不通时一直卡在「保存中…」看不到反馈 */
 function withTimeout<T>(p: PromiseLike<T>, ms: number, tag: string): Promise<T> {
@@ -79,7 +82,8 @@ function netHint(tag: string, e: unknown): Error {
         `② VITE_SUPABASE_URL 填错或少了 https://；③ 部署站点没配环境变量或改完之后没有重新构建；④ VPN / 代理 / 浏览器插件拦截了请求。`
     )
   }
-  return e instanceof Error ? e : new Error(`${tag}失败：${raw}`)
+  // 普通错误保留原始 message（多为业务/校验提示），但补上中文 tag，方便定位是哪一步失败
+  return new Error(`${tag}失败：${raw || '未知错误'}`)
 }
 
 /* ------------------------------ 菜单 ------------------------------ */
@@ -746,13 +750,17 @@ export async function broadcastCoupleEvent(
   if (getProbeState() === 'broken') return
   const channelName = coupleChannelName(userA, userB)
   const channel = supabase.channel(channelName)
-  await channel.subscribe()
-  await channel.send({
-    type: 'broadcast',
-    event: 'couple_event',
-    payload: event,
-  })
-  void supabase.removeChannel(channel)
+  try {
+    if (!(await waitForSubscribe(channel))) return
+    await channel.send({
+      type: 'broadcast',
+      event: 'couple_event',
+      payload: event,
+    })
+  } finally {
+    // 无论订阅超时、发送失败还是成功，都必须关闭临时频道，避免悬空 channel 累积
+    void supabase.removeChannel(channel)
+  }
 }
 
 export function subscribeCoupleMessages(
@@ -814,9 +822,15 @@ export async function broadcastCoupleMessage(
   if (getProbeState() !== 'broken') {
     const channelName = coupleChannelName(senderId, receiverId)
     const channel = supabase.channel(channelName)
-    await channel.subscribe()
-    await channel.send({ type: 'broadcast', event: 'new_message', payload: fallback })
-    void supabase.removeChannel(channel)
+    try {
+      if (await waitForSubscribe(channel)) {
+        await channel.send({ type: 'broadcast', event: 'new_message', payload: fallback })
+      }
+    } catch {
+      // 广播失败不影响已入库的消息：对方靠轮询仍能拉到
+    } finally {
+      void supabase.removeChannel(channel)
+    }
   }
   return fallback
 }
@@ -1191,6 +1205,8 @@ export async function listCoupleQuizUsedIds(userA: string, userB: string): Promi
     .select('question_id')
     .eq('member_a', memberA)
     .eq('member_b', memberB)
+    // 全量取是刻意的：用于「跨所有已做题去重 + 进度分母」，改服务端分页会让跨页去重失效。
+    // 已优化为只取单列且两人量级有限，5000 是安全上限而非分页入口。
     .limit(5000)
   if (error) fail(error, '加载已做题目')
   return [...new Set((data ?? []) as { question_id: string }[])]
@@ -1223,6 +1239,32 @@ export async function listCoupleTruthPrompts(userA: string, userB: string): Prom
     .limit(500)
   if (error) fail(error, '加载真心话进度')
   return [...new Set(((data ?? []) as { prompt: string }[]).map((row) => row.prompt).filter(Boolean))]
+}
+
+/** 互动入口卡片上的四项计数（心愿/留言/抉择/真心话）。短时缓存，避免停留入口页反复轮询时重复打网络。 */
+export interface GridCounts {
+  wishes: number
+  messages: number
+  quizDone: number
+  truthDone: number
+}
+
+export function loadGridCounts(userA: string, userB: string): Promise<GridCounts> {
+  if (!userA || !userB || userA === userB) return Promise.resolve({ wishes: 0, messages: 0, quizDone: 0, truthDone: 0 })
+  return deduped(`gridCounts:${userA}:${userB}`, 5_000, async () => {
+    const [wishes, messages, quizDone, truthPrompts] = await Promise.all([
+      countCoupleWishes(userA, userB),
+      countCoupleMessages(userA, userB),
+      countCoupleQuizHistory(userA, userB),
+      listCoupleTruthPrompts(userA, userB),
+    ])
+    return { wishes, messages, quizDone, truthDone: truthPrompts.length }
+  })
+}
+
+/** 心愿/留言/答题写操作后调用，让入口计数缓存立即失效 */
+export function invalidateGridCounts(userA: string, userB: string): void {
+  invalidateDedupe(`gridCounts:${userA}:${userB}`)
 }
 
 export interface CoupleTruthPromptRow {
@@ -2642,34 +2684,37 @@ export async function listCoupleGame2048Board(
       .eq('member_a', memberA)
       .eq('member_b', memberB)
       .eq('game', 'star2048')
-  // 自定义网格覆盖 3~8，全部难度逐个查最高（每查询只取 1 条，代价很小）
+  // 自定义网格覆盖 3~8。原来按尺寸逐个查最高（7 次往返），现在一次拉取按分数降序的
+  // 历史记录，在内存里按尺寸前缀取每组第一条（即最高分），往返从 7 次降到 2 次。
   const SIZES = ['3×3', '4×4', '5×5', '6×6', '7×7', '8×8']
+  const sizeSet = new Set(SIZES)
+  const detailSizeOf = (detail: string) => detail.split(' ')[0]
   const now = new Date()
   const dayStartIso = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
 
-  const [recordResults, todayRes] = await Promise.all([
-    Promise.all(
-      SIZES.map(async (size) => {
-        const { data, error } = await base().like('detail', `${size} %`).order('score', { ascending: false }).limit(1)
-        if (error) {
-          if (isMissingTable(error)) return null
-          fail(error, '加载 2048 纪录')
-        }
-        return (data?.[0] as CoupleGameScoreRow | undefined) ?? null
-      })
-    ),
+  const [{ data: historyData, error: historyError }, todayRes] = await Promise.all([
+    base().order('score', { ascending: false }).limit(500),
     base().gte('created_at', dayStartIso).order('score', { ascending: false }).limit(200),
   ])
+  if (historyError && !isMissingTable(historyError)) fail(historyError, '加载 2048 纪录')
+
+  // 已按分数降序：每组第一次出现的就是该尺寸最高分
+  const seen = new Set<string>()
+  const records: CoupleGameScoreRow[] = []
+  for (const row of (historyData ?? []) as CoupleGameScoreRow[]) {
+    const size = detailSizeOf(row.detail ?? '')
+    if (!sizeSet.has(size) || seen.has(size)) continue
+    seen.add(size)
+    records.push(row)
+    if (seen.size === SIZES.length) break
+  }
 
   const { data: todayData, error: todayError } = todayRes as {
     data: CoupleGameScoreRow[] | null
     error: { code?: string; message?: string } | null
   }
   if (todayError && !isMissingTable(todayError)) fail(todayError, '加载 2048 今日成绩')
-  return {
-    records: recordResults.filter((r): r is CoupleGameScoreRow => !!r),
-    today: todayData ?? [],
-  }
+  return { records, today: todayData ?? [] }
 }
 
 /* --------------------------- 小游戏每日进度 --------------------------- */
@@ -3675,20 +3720,26 @@ async function resolveActorName(memberId: string | null): Promise<string> {
   return data?.name || '好友'
 }
 
-/** 判断某成员是否在线：最近 5 分钟内有 last_active_at 更新视为在线 */
-async function isRecipientOnline(recipientId: string): Promise<boolean> {
+/**
+ * 批量判断成员是否在线：最近 5 分钟内有 last_active_at 更新视为在线。
+ * 一次 in 查询取代逐人查询（原来是每个收件人一次往返）。
+ */
+async function onlineRecipientIds(recipientIds: string[]): Promise<Set<string>> {
+  const online = new Set<string>()
+  if (!recipientIds.length) return online
   try {
     const { data } = await supabase
       .from('members')
-      .select('last_active_at')
-      .eq('id', recipientId)
-      .maybeSingle()
-    if (!data?.last_active_at) return false
-    const ts = new Date(data.last_active_at).getTime()
-    return Date.now() - ts < 5 * 60_000
+      .select('id, last_active_at')
+      .in('id', recipientIds)
+    const cutoff = Date.now() - 5 * 60_000
+    for (const row of (data ?? []) as { id: string; last_active_at: string | null }[]) {
+      if (row.last_active_at && new Date(row.last_active_at).getTime() >= cutoff) online.add(row.id)
+    }
   } catch {
-    return false
+    // 查询失败时全部视为离线：宁可多写一条铃铛通知，也不能漏掉提醒
   }
+  return online
 }
 
 /** 批量落通知：任一条失败都不影响主流程；游戏类通知会自动跳过在线用户（在线时由前端弹窗提示） */
@@ -3703,15 +3754,11 @@ async function insertFeedNotices(
   // 注意不要把 watermelon 放进来 —— 西瓜分是「对方给我加减分」的结果变更，没有对应的前端弹窗
   // （CouplePage 只静默刷新分数和明细），一旦按在线分流，在线的一方就既没弹窗也没铃铛记录。
   const gameTypes: ReadonlySet<string> = new Set(['board', 'mines', 'wufu', 'gomoku', 'dice'])
-  const filtered = gameTypes.has(notice.type)
-    ? await Promise.all(
-        unique.map(async (id) => {
-          const online = await isRecipientOnline(id)
-          return online ? null : id
-        })
-      )
-    : unique
-  const finalRecipients = filtered.filter((id): id is string => id !== null)
+  let finalRecipients = unique
+  if (gameTypes.has(notice.type)) {
+    const online = await onlineRecipientIds(unique)
+    finalRecipients = unique.filter((id) => !online.has(id))
+  }
   if (!finalRecipients.length) return
   try {
     if (dedupeByPostId && notice.post_id) {

@@ -8,6 +8,7 @@ import {
 } from '../lib/db'
 import Avatar from '../components/Avatar'
 import { useToast } from '../components/Toast'
+import { useConfirm } from '../components/Modal'
 import { useFriends } from '../store/friends'
 import { useSession } from '../store/session'
 import { useSettings } from '../store/settings'
@@ -16,6 +17,7 @@ import type { FriendSearchResult } from '../lib/types'
 
 export default function FriendsPage() {
   const toast = useToast()
+  const confirm = useConfirm()
   const { isAdmin, role, memberId } = useSession()
   const { adminName, viewerAdminName } = useSettings()
   const { friends, incoming, outgoing, loading, reload } = useFriends()
@@ -77,7 +79,7 @@ export default function FriendsPage() {
 
   /** 拒绝申请 / 撤回申请 / 删除好友，都是删掉那一行关系 */
   const drop = async (friendshipId: string, what: string, confirmText: string) => {
-    if (!window.confirm(confirmText)) return
+    if (!(await confirm({ message: confirmText, danger: true }))) return
     setBusy(true)
     try {
       await dropFriendship(friendshipId)
