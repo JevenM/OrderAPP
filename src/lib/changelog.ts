@@ -25,6 +25,17 @@ export type ChangelogEntry = {
 /** 最新的排在最前面 */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '2.0.4',
+    date: '2026-11-24',
+    title: '干饭默认三餐 · 历史订单可看详情与删除',
+    items: [
+      { kind: 'improve', text: '「干饭」默认进入三餐页面，每天打卡不用多点一次；从旧链接 / 通知深链带 tab 参数进来的仍按原样打开' },
+      { kind: 'new', text: '「点菜」页底部「最近下的单」每条都能点开看详情：菜品明细、餐次、状态、期望时间与备注一目了然' },
+      { kind: 'new', text: '订单详情里可删除该订单，云端的订单和对应明细会一起清掉，列表实时刷新' },
+      { kind: 'improve', text: '右上角「⋯」菜单收窄，四字条目排列更紧凑美观' },
+    ],
+  },
+  {
     version: '2.0.3',
     date: '2026-11-22',
     title: '备婚流程：可自定义 · 一键导出 · 并发保护',

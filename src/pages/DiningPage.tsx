@@ -35,7 +35,8 @@ function TabFallback() {
 export default function DiningPage() {
   const [params, setParams] = useSearchParams()
   const tabRaw = params.get('tab')
-  const tab: TabId = isTab(tabRaw) ? tabRaw : 'order'
+  // 三餐打卡使用频率最高，作为默认落地页；旧链接 / 深链带了 ?tab= 的仍按原样打开
+  const tab: TabId = isTab(tabRaw) ? tabRaw : 'meals'
 
   const switchTab = (id: TabId) => {
     const next = new URLSearchParams(params)

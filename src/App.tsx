@@ -142,8 +142,12 @@ function Shell() {
 
 const HEAD_BTN =
   'inline-flex h-8 max-w-[8rem] items-center gap-1 rounded-lg border border-brand-200 bg-white px-2 text-xs text-brand-600 active:bg-brand-50'
+/** 成员切换菜单：要放得下成员名字，宽一点 */
 const PANEL =
   'absolute right-0 top-full z-40 mt-1.5 max-h-[60vh] w-40 overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-lg'
+/** 「更多」菜单：条目都是「个人资料 / 退出登录」这类四字短语，窄一点更清爽；超出时 truncate 兜底 */
+const PANEL_NARROW =
+  'absolute right-0 top-full z-40 mt-1.5 max-h-[60vh] w-28 min-w-fit overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-lg'
 
 function MenuItem({
   children,
@@ -323,7 +327,7 @@ function Layout() {
                 ⋯
               </button>
               {menu === 'more' && (
-                <div className={PANEL}>
+                <div className={PANEL_NARROW}>
                   {role === 'me' && (
                     <MenuItem onClick={() => run(enableBell)}>开启推送通知</MenuItem>
                   )}

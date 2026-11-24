@@ -3192,6 +3192,18 @@ export async function markOrderRead(id: string): Promise<void> {
   await supabase.from('orders').update({ read_at: new Date().toISOString() }).eq('id', id).is('read_at', null)
 }
 
+/**
+ * 删除一张订单及其全部明细。
+ * 点菜页的历史订单可点开详情后删除；order_items 有 on delete cascade，
+ * 不过这里仍显式删一遍明细，避免旧库没建级联时留下孤儿数据。
+ */
+export async function deleteOrder(id: string): Promise<void> {
+  const { error: e1 } = await supabase.from('order_items').delete().eq('order_id', id)
+  if (e1 && !isMissingTable(e1)) fail(e1, '删除订单明细')
+  const { error: e2 } = await supabase.from('orders').delete().eq('id', id)
+  if (e2) fail(e2, '删除订单')
+}
+
 /* ------------------------------ 三餐记录 ------------------------------ */
 
 export async function listMealsRange(days: string[], memberId?: string | null): Promise<Meal[]> {

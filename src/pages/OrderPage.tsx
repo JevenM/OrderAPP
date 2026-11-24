@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createDishRequest, createOrder, listDishes, listOrders } from '../lib/db'
+import { createPortal } from 'react-dom'
+import { createDishRequest, createOrder, deleteOrder, listDishes, listOrders } from '../lib/db'
 import { pushEmail } from '../lib/notify'
 import { timeCn } from '../lib/date'
 import { useRealtime } from '../lib/realtime'
 import Pager from '../components/Pager'
 import { useToast } from '../components/Toast'
 import { useSession } from '../store/session'
-import { ORDER_STATUS, SLOTS, type Dish, type MealSlot, type OrderWithItems } from '../lib/types'
+import { ORDER_STATUS, SLOTS, SLOT_LABEL, type Dish, type MealSlot, type OrderWithItems } from '../lib/types'
 
 type CartItem = { dish_id: string | null; dish_name: string; emoji: string; qty: number }
 
@@ -30,6 +31,9 @@ export default function OrderPage() {
   const [customName, setCustomName] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [recent, setRecent] = useState<OrderWithItems[]>([])
+  /** 历史订单详情：点列表某一条打开，展示完整信息并可删除 */
+  const [detailOrder, setDetailOrder] = useState<OrderWithItems | null>(null)
+  const [deletingOrder, setDeletingOrder] = useState(false)
   const [wheelOpen, setWheelOpen] = useState(false)
   /** 转盘当前展示的菜品：每次开盘 / 每次随机都从全部在售菜品里重新抽样（必含中奖菜） */
   const [wheelPool, setWheelPool] = useState<Dish[]>([])
@@ -55,6 +59,22 @@ export default function OrderPage() {
       // ignore
     }
   }, [memberId])
+
+  /** 删除历史订单：确认后删云端主表 + 明细，再刷新列表 */
+  const removeRecentOrder = useCallback(async () => {
+    if (!detailOrder || deletingOrder) return
+    setDeletingOrder(true)
+    try {
+      await deleteOrder(detailOrder.id)
+      toast.show('订单已删除')
+      setDetailOrder(null)
+      await loadRecent()
+    } catch (e) {
+      toast.show((e as Error).message, 'err')
+    } finally {
+      setDeletingOrder(false)
+    }
+  }, [detailOrder, deletingOrder, loadRecent, toast])
 
   useEffect(() => {
     void load()
@@ -427,19 +447,84 @@ export default function OrderPage() {
 
       {recent.length > 0 && (
         <div className="card space-y-2">
-          <h2 className="text-xs font-medium text-slate-400">最近下的单</h2>
+          <h2 className="text-xs font-medium text-slate-400">最近下的单 · 点开看详情</h2>
           {recent.map((o) => (
-            <div key={o.id} className="flex items-start justify-between gap-2 border-t border-slate-100 pt-2 text-xs">
-              <div className="min-w-0">
-                <div className="truncate text-slate-700">
+            <button
+              key={o.id}
+              type="button"
+              className="flex w-full items-start justify-between gap-2 border-t border-slate-100 pt-2 text-left text-xs active:bg-slate-50"
+              onClick={() => setDetailOrder(o)}
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-slate-700">
                   {o.items.map((i) => `${i.emoji}${i.dish_name}×${i.qty}`).join('，') || o.note}
-                </div>
-                <div className="mt-0.5 text-slate-400">{timeCn(o.created_at)}</div>
-              </div>
-              <span className={`chip ${ORDER_STATUS[o.status].cls}`}>{ORDER_STATUS[o.status].label}</span>
-            </div>
+                </span>
+                <span className="mt-0.5 block text-slate-400">{timeCn(o.created_at)}</span>
+              </span>
+              <span className={`chip shrink-0 ${ORDER_STATUS[o.status]?.cls ?? ''}`}>{ORDER_STATUS[o.status]?.label ?? o.status}</span>
+            </button>
           ))}
         </div>
+      )}
+
+      {/* 订单详情：整条订单信息 + 删除。用 Portal 挂到 body，避免 .card 的 :active transform 让 fixed 定位退化 */}
+      {detailOrder && createPortal(
+        <div
+          className="fixed inset-0 z-50 flex touch-none items-end justify-center overscroll-contain bg-slate-900/50 backdrop-blur-sm sm:items-center sm:p-4"
+          onClick={() => !deletingOrder && setDetailOrder(null)}
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-sm space-y-3 overflow-y-auto rounded-t-3xl bg-white p-5 pb-safe shadow-2xl sm:rounded-3xl"
+            onClick={(event) => event.stopPropagation()}
+            onTouchStart={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-sm font-semibold text-slate-700">订单详情</h4>
+              <button type="button" className="btn-ghost px-2 py-1 text-xs" disabled={deletingOrder} onClick={() => setDetailOrder(null)}>关闭</button>
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2 text-slate-400">
+                <span>{timeCn(detailOrder.created_at)}</span>
+                <span className="rounded bg-brand-50 px-1.5 py-0.5 text-brand-600">{SLOT_LABEL[detailOrder.meal_slot] ?? detailOrder.meal_slot}</span>
+                <span className={`chip ${ORDER_STATUS[detailOrder.status]?.cls ?? ''}`}>{ORDER_STATUS[detailOrder.status]?.label ?? detailOrder.status}</span>
+              </div>
+
+              <div className="space-y-1 rounded-lg bg-slate-50 p-2">
+                <div className="text-[11px] font-medium text-slate-400">点的菜</div>
+                {detailOrder.items.length > 0 ? (
+                  <ul className="space-y-1">
+                    {detailOrder.items.map((i) => (
+                      <li key={i.id} className="flex items-center justify-between text-sm text-slate-700">
+                        <span className="min-w-0 break-words">{i.emoji} {i.dish_name}</span>
+                        <span className="shrink-0 text-slate-400">×{i.qty}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-slate-400">（没有选菜，只有留言）</p>
+                )}
+              </div>
+
+              {detailOrder.hope_time && (
+                <p className="text-slate-500">🕒 期望时间：{detailOrder.hope_time}</p>
+              )}
+              {detailOrder.note && (
+                <p className="whitespace-pre-wrap break-words rounded-lg bg-brand-50 px-2 py-1.5 text-brand-700">💬 {detailOrder.note}</p>
+              )}
+            </div>
+
+            <button
+              type="button"
+              className="btn-ghost w-full py-2 text-xs text-rose-500"
+              disabled={deletingOrder}
+              onClick={() => void removeRecentOrder()}
+            >
+              {deletingOrder ? '删除中…' : '删除这条订单'}
+            </button>
+          </div>
+        </div>,
+        document.body
       )}
 
       {totalQty > 0 && (
