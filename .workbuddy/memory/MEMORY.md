@@ -14,6 +14,11 @@
 - 新模块优先复用 `Modal`（Portal）/ `EmptyState`+`SkeletonList` / `useConfirm` / `useToast`，不另造弹窗与空态。
 - 纯计算逻辑抽到 `lib/*.ts` 并配 Vitest 单测；测试用本地时间构造 ISO（`new Date(y, m-1, d, h).toISOString()`），避免 UTC+8 跨天漂移。
 - `package-lock.json` 保持 v1 格式（npm 10 默认升 v3，要显式 `--lockfile-version=1`）。
+- **弹窗必须走 `components/Modal`（Portal 到 body）**，且 `index.css` 的 `.overlay` 必须是 `position: fixed`——这条规则丢失时弹窗会退化成文档流块堆在 `<body>` 末尾（v2.1.1 修过一次，改样式时别删）。
+- **`html/body/#root` 的横向裁剪只能用 `overflow-x: clip`**：`hidden` 会让 `#root` 变成滚动容器，里面的 `position: sticky`（顶栏/分段条/分类条）全部失效。
+- 订单状态链：`pending → accepted → cooking → done`（`cancelled` 为旁路），流转规则集中在 `lib/orderFlow.ts`，新增状态必须同步 `ORDER_STATUS` 与 AdminOrders 筛选。
+- 菜系分组（`lib/dishGroups.ts`）：菜单 category 是自由文本，新菜系优先登记到 EXPLICIT 映射，别只依赖关键词兜底。
+- 日期输入统一用 `components/DateField`（`floating` 用于窄触发器或表单单行；弹窗内必须用内联模式，fixed 浮层会被 z-index 压在遮罩下）。
 
 ## 待决事项
 - `icon-options/` 六个 Logo 方案已落盘并渲染自检，等用户选编号后一次性替换 `public/icon.svg` 及 favicon / PWA manifest / Service Worker / 通知图标四处引用。

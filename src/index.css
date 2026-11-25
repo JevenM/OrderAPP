@@ -37,7 +37,18 @@ body,
 #root {
   min-height: 100%;
   max-width: 100%;
-  overflow-x: hidden;
+  /* 关键：用 clip 而不是 hidden。overflow-x: hidden 会让 #root 变成滚动容器，
+     它自身和内容一样高（不滚动），里面的 position: sticky 就永远粘不住——
+     顶栏、干饭分段条、点菜分类条都会跟着页面滚走。clip 只裁剪不建滚动容器。 */
+  overflow-x: clip;
+}
+
+@supports not (overflow: clip) {
+  html,
+  body,
+  #root {
+    overflow-x: hidden;
+  }
 }
 
 body {
@@ -132,6 +143,314 @@ body {
 
 .pb-safe {
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+}
+
+/* ------------------------------ 弹窗基座 ------------------------------
+   这条规则是弹窗能不能「浮在最上层」的命门：Modal 用 Portal 挂到 <body>，
+   全靠 .overlay 的 position: fixed 撑开覆盖层。此前重构时整条规则被误删，
+   于是弹窗退回成普通文档流块，追加在 <body> 末尾——必须滚到页面最底端才看得见。
+   一并把层级、遮罩、进出场动画收敛在这里，任何弹窗都自动继承。 */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(15 23 42 / 0.42);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: overlay-in 0.2s ease-out both;
+  overscroll-behavior: contain;
+}
+.overlay--leave {
+  animation: overlay-out 0.18s ease-in both;
+}
+
+/* 弹窗面板：默认居中、进场轻微回弹（先放大到 1.012 再落回 1） */
+.dialog-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: min(85vh, 46rem);
+  overflow: hidden;
+  border-radius: 1.25rem;
+  background: #fff;
+  box-shadow: 0 28px 64px -24px rgb(15 23 42 / 0.45), 0 2px 8px rgb(15 23 42 / 0.06);
+  transform-origin: center;
+  animation: dialog-bounce 0.36s cubic-bezier(0.34, 1.36, 0.64, 1) both;
+}
+.dialog-panel--leave {
+  animation: dialog-out 0.16s ease-in both;
+}
+/* 从卡片原位放大时由 JS（Web Animations）接管 transform，CSS 回弹要让位 */
+.dialog-panel--morph {
+  animation: none;
+}
+/* 内容区独立滚动：短弹窗不出现滚动条，长弹窗也不会把面板顶出屏幕 */
+.dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+html.dark .overlay {
+  background: rgb(2 6 23 / 0.64);
+}
+html.dark .dialog-panel {
+  background: #1e293b;
+  box-shadow: 0 28px 64px -24px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(255 255 255 / 0.04);
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes dialog-bounce {
+  0% {
+    opacity: 0;
+    transform: translateY(16px) scale(0.92);
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(-3px) scale(1.012);
+  }
+  78% {
+    transform: translateY(1px) scale(0.998);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes dialog-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+}
+
+/* 确认框的「完成态」：圆形底 + 手动绘制对勾，确认后原地替换按钮区 */
+.confirm-check {
+  display: flex;
+  height: 3rem;
+  width: 3rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: rgb(var(--ok-50));
+  color: rgb(var(--ok-600));
+  animation: check-pop 0.42s cubic-bezier(0.34, 1.36, 0.64, 1) both;
+}
+.confirm-check svg {
+  height: 1.6rem;
+  width: 1.6rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 32;
+  stroke-dashoffset: 32;
+  animation: check-draw 0.4s 0.1s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+html.dark .confirm-check {
+  background: rgb(16 185 129 / 0.16);
+}
+@keyframes check-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* ------------------------------ 高度折叠容器 ------------------------------
+   grid-template-rows 0fr → 1fr 可以让「内容高度未知」的区块顺滑展开/收起，
+   分类面板、日历都复用它；子元素必须 min-height:0 + overflow:hidden 才生效。 */
+.collapse-grid {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease;
+}
+.collapse-grid > * {
+  min-height: 0;
+  overflow: hidden;
+}
+.collapse-grid.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+/* ------------------------------ 个人信息抽屉 ------------------------------
+   抽屉从左侧滑入，主页面（.app-shell）右移缩小，形成两层空间关系。 */
+.app-shell {
+  transform-origin: left center;
+  transition: transform 0.38s cubic-bezier(0.22, 1, 0.36, 1), border-radius 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.38s ease;
+}
+.app-shell--pushed {
+  transform: translate3d(58%, 0, 0) scale(0.9);
+  border-radius: 1.5rem;
+  box-shadow: -18px 0 48px rgb(15 23 42 / 0.3);
+  overflow: hidden;
+}
+.drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 60;
+  display: flex;
+  width: min(78vw, 20rem);
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: #fff;
+  box-shadow: 24px 0 60px -30px rgb(15 23 42 / 0.5);
+  transform: translate3d(-102%, 0, 0);
+  transition: transform 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+.drawer.is-open {
+  transform: translate3d(0, 0, 0);
+}
+.drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgb(15 23 42 / 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+.drawer-scrim.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+html.dark .drawer {
+  background: #1e293b;
+}
+html.dark .drawer-scrim {
+  background: rgb(2 6 23 / 0.5);
+}
+
+/* ------------------------------ 提交按钮形变 ------------------------------
+   常态 → 圆形加载 → 对勾 → 恢复常态，全靠宽高/圆角/底色的过渡串起来。 */
+.morph-btn {
+  height: 2.5rem;
+  padding: 0 1rem;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: width 0.34s cubic-bezier(0.22, 1, 0.36, 1), padding 0.3s ease,
+    border-radius 0.34s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.3s ease;
+}
+.morph-btn--compact {
+  display: flex;
+  padding: 0;
+  margin-left: auto;
+  margin-right: auto;
+  border-radius: 9999px;
+}
+.morph-btn--done {
+  background-color: rgb(var(--ok-500));
+}
+.morph-spinner {
+  height: 1.15rem;
+  width: 1.15rem;
+  border-radius: 9999px;
+  border: 2px solid rgb(255 255 255 / 0.35);
+  border-top-color: #fff;
+  animation: morph-spin 0.7s linear infinite;
+}
+.morph-check {
+  height: 1.35rem;
+  width: 1.35rem;
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 28;
+  stroke-dashoffset: 28;
+  animation: check-draw 0.36s 0.04s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+@keyframes morph-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ------------------------------ 日历 ------------------------------ */
+.cal-day {
+  display: flex;
+  height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  font-size: 0.8125rem;
+  color: #334155;
+  transition: background-color 0.16s ease, color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+}
+.cal-day:active {
+  transform: scale(0.9);
+}
+.cal-day--muted {
+  color: #cbd5e1;
+}
+.cal-day--today {
+  box-shadow: inset 0 0 0 1px rgb(var(--brand-400));
+}
+.cal-day--selected {
+  background: rgb(var(--brand-500));
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 8px 18px -8px rgb(var(--brand-500) / 0.8);
+}
+.cal-day--disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+html.dark .cal-day {
+  color: #cbd5e1;
+}
+html.dark .cal-day--muted {
+  color: #64748b;
+}
+html.dark .cal-day--selected {
+  color: #fff;
 }
 
 @layer utilities {
@@ -336,6 +655,10 @@ html.dark .bg-brand-100 { background-color: #3b2a3a; }
 html.dark .skeleton { background-color: #243044; }
 html.dark .skeleton::after {
   background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 0.07) 50%, transparent 70%);
+}
+/* 玻璃顶栏 / 底栏浅色配方：两栏共用同一份半透明白，毛玻璃透明度完全一致 */
+.glass {
+  background-color: rgb(255 255 255 / 0.72);
 }
 /* 玻璃顶栏 / 底栏深色配方：App.tsx 的 header 与 nav 共用 .glass 类 */
 html.dark .glass {

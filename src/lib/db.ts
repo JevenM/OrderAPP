@@ -3390,6 +3390,36 @@ export async function setOrderStatus(id: string, status: OrderStatus): Promise<v
   if (error) fail(error, '更新订单状态')
 }
 
+/**
+ * 编辑整张订单：餐次 / 期望时间 / 备注 / 菜品明细。
+ * 明细采用「先清后写」替换（order_items 有 order_id 外键，旧库未必有级联），
+ * 状态与下单人不改——推进状态仍走 setOrderStatus。
+ */
+export async function updateOrder(
+  id: string,
+  input: {
+    items: { dish_id: string | null; dish_name: string; emoji: string; qty: number }[]
+    meal_slot: MealSlot
+    hope_time: string
+    note: string
+  }
+): Promise<void> {
+  const { error } = await supabase
+    .from('orders')
+    .update({ meal_slot: input.meal_slot, hope_time: input.hope_time, note: input.note, updated_at: new Date().toISOString() })
+    .eq('id', id)
+  if (error) fail(error, '更新订单')
+
+  const { error: e1 } = await supabase.from('order_items').delete().eq('order_id', id)
+  if (e1 && !isMissingTable(e1)) fail(e1, '清空订单明细')
+  if (input.items.length > 0) {
+    const { error: e2 } = await supabase
+      .from('order_items')
+      .insert(input.items.map((it) => ({ ...it, order_id: id })))
+    if (e2) fail(e2, '写入订单明细')
+  }
+}
+
 export async function markOrderRead(id: string): Promise<void> {
   await supabase.from('orders').update({ read_at: new Date().toISOString() }).eq('id', id).is('read_at', null)
 }

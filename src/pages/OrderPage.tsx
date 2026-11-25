@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createDishRequest, createOrder, deleteOrder, listDishes, listOrders } from '../lib/db'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createDishRequest, createOrder, listDishes } from '../lib/db'
 import { pushEmail } from '../lib/notify'
-import { timeCn } from '../lib/date'
 import { useRealtime } from '../lib/realtime'
 import Pager from '../components/Pager'
 import { Modal } from '../components/Modal'
 import { EmptyState } from '../components/States'
 import { useToast } from '../components/Toast'
 import { useSession } from '../store/session'
-import { ORDER_STATUS, SLOTS, SLOT_LABEL, type Dish, type MealSlot, type OrderWithItems } from '../lib/types'
+import { bucketByGroup, dishGroupOf, type DishGroupKey } from '../lib/dishGroups'
+import { SLOTS, type Dish, type MealSlot } from '../lib/types'
 
 type CartItem = { dish_id: string | null; dish_name: string; emoji: string; qty: number }
 
@@ -31,21 +31,18 @@ export default function OrderPage() {
   const [keyword, setKeyword] = useState('')
   const [customName, setCustomName] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [recent, setRecent] = useState<OrderWithItems[]>([])
-  /** 历史订单详情：点列表某一条打开，展示完整信息并可删除 */
-  const [detailOrder, setDetailOrder] = useState<OrderWithItems | null>(null)
-  const [deletingOrder, setDeletingOrder] = useState(false)
   const [wheelOpen, setWheelOpen] = useState(false)
   /** 转盘当前展示的菜品：每次开盘 / 每次随机都从全部在售菜品里重新抽样（必含中奖菜） */
   const [wheelPool, setWheelPool] = useState<Dish[]>([])
   const [spinning, setSpinning] = useState(false)
   const [selectedDish, setSelectedDish] = useState<Dish | null>(null)
   const [wheelRotation, setWheelRotation] = useState(0)
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
   /* 购物车分页 */
   const [cartPage, setCartPage] = useState(0)
-  /** 吸顶分类条当前高亮的分类：滚动到哪个分类，指示就跟到哪 */
+  /* 分类选择：默认只露三个大类，点开才是细分菜系网格 */
+  const [openGroup, setOpenGroup] = useState<DishGroupKey | null>(null)
   const [activeCategory, setActiveCategory] = useState<string | null>(null)
+  const groupRowRef = useRef<HTMLDivElement>(null)
 
   const load = useCallback(async () => {
     try {
@@ -55,48 +52,14 @@ export default function OrderPage() {
     }
   }, [toast])
 
-  const loadRecent = useCallback(async () => {
-    try {
-      setRecent((await listOrders(5, memberId)).filter((o) => o.items.length > 0 || o.note))
-    } catch {
-      // ignore
-    }
-  }, [memberId])
-
-  /** 删除历史订单：确认后删云端主表 + 明细，再刷新列表 */
-  const removeRecentOrder = useCallback(async () => {
-    if (!detailOrder || deletingOrder) return
-    setDeletingOrder(true)
-    try {
-      await deleteOrder(detailOrder.id)
-      toast.show('订单已删除')
-      setDetailOrder(null)
-      await loadRecent()
-    } catch (e) {
-      toast.show((e as Error).message, 'err')
-    } finally {
-      setDeletingOrder(false)
-    }
-  }, [detailOrder, deletingOrder, loadRecent, toast])
-
   useEffect(() => {
     void load()
-    void loadRecent()
-  }, [load, loadRecent])
+  }, [load])
 
-  useRealtime(
-    'her-orders',
-    [
-      { table: 'orders', on: () => void loadRecent() },
-      { table: 'dishes', on: () => void load() },
-    ],
-    {
-      onPoll: () => {
-        void load()
-        void loadRecent()
-      },
-    }
-  )
+  // 菜单变更实时刷新（订单相关的实时/轮询搬去了「订单」面板 OrdersPage）
+  useRealtime('her-dishes', [{ table: 'dishes', on: () => void load() }], {
+    onPoll: () => void load(),
+  })
 
   const grouped = useMemo(() => {
     const kw = keyword.trim()
@@ -112,35 +75,25 @@ export default function OrderPage() {
     return [...map.entries()]
   }, [dishes, keyword])
 
-  /** 吸顶分类指示跟随滚动：rAF 合帧 + passive 监听，只在分类变化时 setState */
+  const buckets = useMemo(() => bucketByGroup(grouped), [grouped])
+  const activeBucket = openGroup ? buckets.find((b) => b.key === openGroup) ?? null : null
+  const selectedCount = useMemo(
+    () => grouped.find(([c]) => c === activeCategory)?.[1].length ?? 0,
+    [grouped, activeCategory]
+  )
+  /** 搜索后选中的菜系可能已经不在结果里：自动回到「全部」 */
   useEffect(() => {
-    if (!grouped.length) return
-    let raf = 0
-    let last: string | null = null
-    const onScroll = () => {
-      if (raf) return
-      raf = requestAnimationFrame(() => {
-        raf = 0
-        // 180px ≈ 55 顶栏 + 81 分段条 + 44 吸顶分类条：分类标题越过这条线就算「当前」
-        const probe = 180
-        let current: string | null = null
-        for (const [category] of grouped) {
-          const el = document.getElementById(`cat-${category}`)
-          if (!el) continue
-          if (el.getBoundingClientRect().top - probe <= 0) current = category
-        }
-        if (current !== last) {
-          last = current
-          setActiveCategory(current)
-        }
-      })
+    if (activeCategory && !grouped.some(([c]) => c === activeCategory)) setActiveCategory(null)
+  }, [grouped, activeCategory])
+
+  const visibleEntries = useMemo(() => {
+    if (activeCategory) return grouped.filter(([c]) => c === activeCategory)
+    if (openGroup) {
+      const bucket = buckets.find((b) => b.key === openGroup)
+      return bucket ? bucket.categories : []
     }
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => {
-      window.removeEventListener('scroll', onScroll)
-      if (raf) cancelAnimationFrame(raf)
-    }
-  }, [grouped])
+    return grouped
+  }, [activeCategory, openGroup, grouped, buckets])
 
   const totalQty = Object.values(cart).reduce((a, b) => a + b, 0)
   const picked = Object.entries(cart).filter(([, q]) => q > 0)
@@ -251,12 +204,17 @@ export default function OrderPage() {
       setNote('')
       setHopeTime('')
       toast.show(reviewed > 0 ? '下单成功，新菜已发给他审核啦 ❤️' : '下单成功，已经通知他啦 ❤️')
-      void loadRecent()
     } catch (e) {
       toast.show((e as Error).message, 'err')
     } finally {
       setSubmitting(false)
     }
+  }
+
+  /** 选中细分菜系：面板收起，筛选标签居中显示当前分类 */
+  const pickCategory = (category: string | null) => {
+    setActiveCategory(category)
+    setOpenGroup(null)
   }
 
   return (
@@ -325,18 +283,10 @@ export default function OrderPage() {
                   {CUSTOM_EMOJI} {key.slice(CUSTOM_PREFIX.length)}
                 </span>
                 <span className="font-semibold text-brand-600">×{qty}</span>
-                <button
-                  className="btn-soft px-1.5 py-0.5 text-xs leading-none"
-                  onClick={() => changeKey(key, -1)}
-                  title="减少"
-                >
+                <button className="btn-soft px-1.5 py-0.5 text-xs leading-none" onClick={() => changeKey(key, -1)} title="减少">
                   −
                 </button>
-                <button
-                  className="btn-primary px-1.5 py-0.5 text-xs leading-none"
-                  onClick={() => changeKey(key, 1)}
-                  title="增加"
-                >
+                <button className="btn-primary px-1.5 py-0.5 text-xs leading-none" onClick={() => changeKey(key, 1)} title="增加">
                   +
                 </button>
               </div>
@@ -346,56 +296,133 @@ export default function OrderPage() {
       </div>
 
       <div className="flex gap-2">
-        <input className="input min-w-0 flex-1" placeholder="🔍 搜索菜名" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
-        <button className="btn-soft shrink-0 px-3 text-sm" onClick={() => { setSelectedDish(null); setWheelPool(sampleWheelPool()); setWheelOpen(true) }}>不知道吃什么</button>
+        <input
+          className="input min-w-0 flex-1"
+          placeholder="🔍 搜索菜名"
+          value={keyword}
+          onChange={(e) => {
+            setKeyword(e.target.value)
+            setOpenGroup(null)
+          }}
+        />
+        <button
+          className="btn-soft shrink-0 px-3 text-sm"
+          onClick={() => {
+            setSelectedDish(null)
+            setWheelPool(sampleWheelPool())
+            setWheelOpen(true)
+          }}
+        >
+          不知道吃什么
+        </button>
       </div>
 
       {grouped.length === 0 && (
         <EmptyState icon="🍽️" title="还没有可点的菜" hint="让他去「菜单」里加几道，或直接在上面写下想吃的菜" />
       )}
 
-      {/* 吸顶分类条：滚到哪个分类指示跟到哪；点击平滑滚到对应分类。
-          top 值 = 55px 顶栏 + DiningPage 吸顶分段条高度，双层吸顶避让 */}
+      {/* 菜系选择：默认三个大类，点开是细分菜系的多行网格；选中后收起并把筛选标签居中 */}
       {grouped.length > 0 && (
         <div className="sticky top-[136px] z-[5] -mx-4 border-y border-brand-100 bg-white/95 px-4 py-2 backdrop-blur">
-          <div className="touch-scroll flex max-w-md gap-1.5 overflow-x-auto">
-            {grouped.map(([category]) => (
-              <button
-                key={category}
-                type="button"
-                className={`chip shrink-0 transition-colors duration-200 ${
-                  activeCategory === category
-                    ? 'border-brand-400 bg-brand-50 font-semibold text-brand-600'
-                    : 'border-brand-200 bg-white text-slate-600 active:bg-brand-50'
-                }`}
-                onClick={() => document.getElementById(`cat-${category}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-              >
-                {category}
-              </button>
-            ))}
+          <div ref={groupRowRef}>
+            {activeCategory && !openGroup ? (
+              <div className="flex animate-pop-in items-center justify-center gap-2">
+                <button
+                  type="button"
+                  className="chip border-brand-400 bg-brand-50 font-semibold text-brand-600"
+                  onClick={() => setOpenGroup(dishGroupOf(activeCategory))}
+                >
+                  {activeCategory} · {selectedCount} 道
+                  <span className="text-2xs text-brand-400">⌄</span>
+                </button>
+                <button
+                  type="button"
+                  className="chip border-slate-200 bg-white text-slate-500 active:bg-brand-50"
+                  onClick={() => pickCategory(null)}
+                >
+                  全部菜品
+                </button>
+              </div>
+            ) : (
+              <div className="flex gap-1.5">
+                {buckets.map((b) => (
+                  <button
+                    key={b.key}
+                    type="button"
+                    className={`chip flex-1 justify-center transition-colors duration-200 ${
+                      openGroup === b.key
+                        ? 'border-brand-400 bg-brand-50 font-semibold text-brand-600'
+                        : 'border-brand-200 bg-white text-slate-600 active:bg-brand-50'
+                    } ${b.count === 0 ? 'opacity-40' : ''}`}
+                    onClick={() => setOpenGroup((g) => (g === b.key ? null : b.key))}
+                    aria-expanded={openGroup === b.key}
+                  >
+                    {b.emoji} {b.label}
+                    <span className="text-2xs opacity-70">{b.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* 细分菜系网格：高度折叠动画（0fr → 1fr），内容多行多列 */}
+            <div className={`collapse-grid ${openGroup ? 'is-open' : ''}`}>
+              <div>
+                <div className="mt-2 rounded-xl border border-brand-100 bg-brand-50/60 p-2">
+                  <div className="mb-1.5 flex items-center justify-between px-0.5">
+                    <span className="text-2xs text-slate-500">
+                      {activeBucket ? `${activeBucket.label} · 选一个细分菜系` : '选一个细分菜系'}
+                    </span>
+                    <button
+                      type="button"
+                      className="text-2xs text-slate-400"
+                      onClick={() => pickCategory(null)}
+                    >
+                      显示全部
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {(activeBucket?.categories ?? []).map(([cat, list]) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        className={`rounded-lg px-2 py-1.5 text-xs transition duration-200 active:scale-95 ${
+                          activeCategory === cat
+                            ? 'bg-brand-500 font-semibold text-white shadow-sm'
+                            : 'bg-white text-slate-600 shadow-sm'
+                        }`}
+                        onClick={() => pickCategory(cat)}
+                      >
+                        <span className="block truncate">{cat}</span>
+                        <span className={`text-2xs ${activeCategory === cat ? 'text-white/80' : 'text-slate-400'}`}>
+                          {list.length} 道
+                        </span>
+                      </button>
+                    ))}
+                    {(activeBucket?.categories.length ?? 0) === 0 && (
+                      <p className="col-span-3 py-2 text-center text-2xs text-slate-400">这一类还没有菜</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
-      {grouped.map(([category, list]) => {
-        const expanded = expandedCategories.has(category)
-        return (
+      {visibleEntries.map(([category, list]) => (
         <div key={category} id={`cat-${category}`} className="scroll-mt-[180px]">
-          <button
-            type="button"
-            className="mb-2 flex w-full items-center justify-between rounded-xl border border-brand-100 bg-white/80 px-3 py-2 text-left text-xs font-medium text-slate-600"
-            onClick={() => setExpandedCategories((current) => {
-              const next = new Set(current)
-              if (next.has(category)) next.delete(category)
-              else next.add(category)
-              return next
-            })}
-            aria-expanded={expanded}
-          >
-            <span>{category}（{list.length}道）</span>
-            <span className="text-brand-500">{expanded ? '收起 ▲' : '展开 ▼'}</span>
-          </button>
-          {expanded && <div className="grid grid-cols-2 gap-2">
+          <div className="mb-2 flex items-center justify-between px-0.5">
+            <span className="text-xs font-medium text-slate-500">
+              {category}
+              <span className="ml-1 text-2xs text-slate-400">{list.length} 道</span>
+            </span>
+            {activeCategory !== category && openGroup && (
+              <button className="text-2xs text-brand-500" onClick={() => pickCategory(category)}>
+                只看这一类
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
             {list.map((d) => {
               const qty = cart[d.id] ?? 0
               return (
@@ -438,10 +465,9 @@ export default function OrderPage() {
                 </div>
               )
             })}
-          </div>}
+          </div>
         </div>
-        )
-      })}
+      ))}
 
       <Modal open={wheelOpen} onClose={() => !spinning && setWheelOpen(false)} title="今天吃点什么？" className="max-w-sm">
         <div className="px-5 pb-5">
@@ -478,87 +504,32 @@ export default function OrderPage() {
                 )
               })}
             </div>
-            <button className="absolute left-1/2 top-1/2 z-10 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-4 border-white bg-slate-800 text-sm font-bold text-white shadow-lg disabled:opacity-60" disabled={spinning} onClick={spinWheel}>
+            <button
+              className="absolute left-1/2 top-1/2 z-10 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-4 border-white bg-slate-800 text-sm font-bold text-white shadow-lg disabled:opacity-60"
+              disabled={spinning}
+              onClick={spinWheel}
+            >
               {spinning ? '转动中' : '随机'}
             </button>
           </div>
           {selectedDish && (
             <div className="animate-pop-in text-center">
               <p className="text-xs text-slate-400">今天就吃</p>
-              <p className="mt-1 text-lg font-semibold text-brand-600">{selectedDish.emoji} {selectedDish.name}</p>
-              <button className="btn-primary mt-3 w-full" onClick={() => { change(selectedDish, 1); setWheelOpen(false) }}>加入购物车</button>
+              <p className="mt-1 text-lg font-semibold text-brand-600">
+                {selectedDish.emoji} {selectedDish.name}
+              </p>
+              <button
+                className="btn-primary mt-3 w-full"
+                onClick={() => {
+                  change(selectedDish, 1)
+                  setWheelOpen(false)
+                }}
+              >
+                加入购物车
+              </button>
             </div>
           )}
         </div>
-      </Modal>
-
-      {recent.length > 0 && (
-        <div className="card space-y-2">
-          <h2 className="text-xs font-medium text-slate-400">最近下的单 · 点开看详情</h2>
-          {recent.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              className="flex w-full items-start justify-between gap-2 border-t border-slate-100 pt-2 text-left text-xs active:bg-slate-50"
-              onClick={() => setDetailOrder(o)}
-            >
-              <span className="min-w-0">
-                <span className="block truncate text-slate-700">
-                  {o.items.map((i) => `${i.emoji}${i.dish_name}×${i.qty}`).join('，') || o.note}
-                </span>
-                <span className="mt-0.5 block text-slate-400">{timeCn(o.created_at)}</span>
-              </span>
-              <span className={`chip shrink-0 ${ORDER_STATUS[o.status]?.cls ?? ''}`}>{ORDER_STATUS[o.status]?.label ?? o.status}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* 订单详情：整条订单信息 + 删除，统一走 Modal（Portal + Esc + 滚动锁 + 遮罩点击关闭） */}
-      <Modal open={!!detailOrder} onClose={() => !deletingOrder && setDetailOrder(null)} title="订单详情" className="max-w-sm">
-        {detailOrder && (
-          <div className="space-y-3 px-5 pb-5">
-            <div className="space-y-2 text-xs">
-              <div className="flex flex-wrap items-center gap-2 text-slate-400">
-                <span>{timeCn(detailOrder.created_at)}</span>
-                <span className="rounded bg-brand-50 px-1.5 py-0.5 text-brand-600">{SLOT_LABEL[detailOrder.meal_slot] ?? detailOrder.meal_slot}</span>
-                <span className={`chip ${ORDER_STATUS[detailOrder.status]?.cls ?? ''}`}>{ORDER_STATUS[detailOrder.status]?.label ?? detailOrder.status}</span>
-              </div>
-
-              <div className="space-y-1 rounded-lg bg-slate-50 p-2">
-                <div className="text-2xs font-medium text-slate-400">点的菜</div>
-                {detailOrder.items.length > 0 ? (
-                  <ul className="space-y-1">
-                    {detailOrder.items.map((i) => (
-                      <li key={i.id} className="flex items-center justify-between text-sm text-slate-700">
-                        <span className="min-w-0 break-words">{i.emoji} {i.dish_name}</span>
-                        <span className="shrink-0 text-slate-400">×{i.qty}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-slate-400">（没有选菜，只有留言）</p>
-                )}
-              </div>
-
-              {detailOrder.hope_time && (
-                <p className="text-slate-500">🕒 期望时间：{detailOrder.hope_time}</p>
-              )}
-              {detailOrder.note && (
-                <p className="whitespace-pre-wrap break-words rounded-lg bg-brand-50 px-2 py-1.5 text-brand-700">💬 {detailOrder.note}</p>
-              )}
-            </div>
-
-            <button
-              type="button"
-              className="btn-danger-soft w-full py-2 text-xs"
-              disabled={deletingOrder}
-              onClick={() => void removeRecentOrder()}
-            >
-              {deletingOrder ? '删除中…' : '删除这条订单'}
-            </button>
-          </div>
-        )}
       </Modal>
 
       {totalQty > 0 && (
@@ -577,8 +548,13 @@ export default function OrderPage() {
               const label = key.startsWith(CUSTOM_PREFIX) ? key.slice(CUSTOM_PREFIX.length) : dish?.name ?? '已下架的菜'
               const emoji = key.startsWith(CUSTOM_PREFIX) ? CUSTOM_EMOJI : dish?.emoji ?? '🍽️'
               return (
-                <li key={key} className="flex items-center justify-between gap-2 rounded-lg bg-brand-50/70 px-2 py-1.5 text-xs text-slate-700">
-                  <span className="min-w-0 break-words">{emoji} {label}</span>
+                <li
+                  key={key}
+                  className="flex items-center justify-between gap-2 rounded-lg bg-brand-50/70 px-2 py-1.5 text-xs text-slate-700"
+                >
+                  <span className="min-w-0 break-words">
+                    {emoji} {label}
+                  </span>
                   <div className="flex shrink-0 items-center gap-1">
                     <button
                       type="button"

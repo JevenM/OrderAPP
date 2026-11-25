@@ -8,6 +8,7 @@ import {
   type WeddingTopic,
 } from '../../lib/keepsake'
 import { EmptyState } from '../States'
+import DateField from '../DateField'
 import { useConfirm } from '../Modal'
 import { useToast } from '../Toast'
 
@@ -220,10 +221,16 @@ export default function WeddingTopics({ state, mutate, saving, memberId, myName,
                 <option value="ta">{friendName} 跟进</option>
               </select>
             </label>
-            <label className="block text-[11px] text-slate-500">
+            <div className="block text-[11px] text-slate-500">
               下次再聊
-              <input className="input mt-1" type="date" value={draft.nextTalk} onChange={(e) => setDraft({ ...draft, nextTalk: e.target.value })} />
-            </label>
+              <DateField
+                className="mt-1"
+                value={draft.nextTalk}
+                onChange={(v) => setDraft({ ...draft, nextTalk: v })}
+                placeholder="选个日子"
+                floating
+              />
+            </div>
           </div>
           <label className="block text-[11px] text-slate-500">
             补充细节

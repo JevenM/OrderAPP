@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { HashRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ToastProvider, useToast } from './components/Toast'
 import { ConfirmHost, useConfirm } from './components/Modal'
@@ -8,7 +8,8 @@ import ThemePicker from './components/ThemePicker'
 import { saveMemberAvatar } from './components/AvatarSheet'
 import { updateMember } from './lib/db'
 import { configured } from './lib/supabase'
-import { requestNotifyPermission } from './lib/notify'
+import { browserNotify, ding, requestNotifyPermission } from './lib/notify'
+import { useRealtime } from './lib/realtime'
 import { SessionProvider, useSession } from './store/session'
 import { SettingsProvider, useSettings } from './store/settings'
 import { ModuleFlagsProvider, useModuleFlags } from './store/moduleFlags'
@@ -109,6 +110,67 @@ function MealReportAutoPush() {
   return null
 }
 
+/**
+ * 收到对方订单时立刻提醒：情侣一方下单，另一方不管停在哪张页都能收到消息。
+ * 只认「当前绑定对象的 member_id」，别对情侣的订单不会触发提醒。
+ */
+function IncomingOrderNotify() {
+  const { memberId } = useSession()
+  const { friends } = useFriends()
+  const toast = useToast()
+  const partnerIds = useMemo(
+    () => friends.map((f) => f.memberId).filter((id) => id !== '__admin__' && id !== memberId),
+    [friends, memberId]
+  )
+  const idsRef = useMemo(() => new Set(partnerIds), [partnerIds])
+  const pair = partitionPair(memberId, partnerIds)
+
+  useRealtime(
+    'order-arrive',
+    [
+      {
+        table: 'orders',
+        event: 'INSERT',
+        on: (payload) => {
+          const o = payload.new as { member_id?: string | null; note?: string } | null
+          if (!o?.member_id || !idsRef.has(o.member_id)) return
+          toast.show('💌 收到新订单：TA 点菜啦，去「点菜」看看吧')
+          browserNotify('💌 收到新订单', o.note || 'TA 点了菜，等你接单')
+          ding()
+        },
+      },
+      {
+        table: 'orders',
+        event: 'UPDATE',
+        on: (payload) => {
+          const o = payload.new as { member_id?: string | null; status?: string } | null
+          // 只处理「我自己下的单」的状态变化：他接单/开火/做好了，都推给下单的人
+          if (!o?.member_id || o.member_id !== memberId) return
+          const text =
+            o.status === 'accepted'
+              ? '👨‍🍳 他接单啦，正在准备'
+              : o.status === 'cooking'
+                ? '🔥 开始制作啦，马上就好'
+                : o.status === 'done'
+                  ? '✅ 做好啦，快去吃饭'
+                  : ''
+          if (!text) return
+          toast.show(text)
+          browserNotify('订单进度更新', text)
+        },
+      },
+    ],
+    { enabled: !!memberId && partnerIds.length > 0, pair }
+  )
+  return null
+}
+
+/** 只有一对绑定关系时才给 realtime 传 pair（多对时由 member_id 逐个比对） */
+function partitionPair(me: string | null, partnerIds: string[]): [string, string] | null {
+  if (!me || partnerIds.length !== 1) return null
+  return [me, partnerIds[0]]
+}
+
 function Shell() {
   const { entered, role, isAdmin } = useSession()
   const { isEnabled } = useModuleFlags()
@@ -126,6 +188,7 @@ function Shell() {
       <MembersProvider enabled={isAdmin}>
         <FriendsProvider>
           <MealReportAutoPush />
+          <IncomingOrderNotify />
           <Routes>
             <Route element={<Layout />}>
               <Route path="/" element={<Navigate to={HOME[role]} replace />} />
@@ -306,17 +369,19 @@ function Layout() {
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-md flex-col bg-brand-50/40 pb-20 pt-[56px]">
+    <>
+      <div
+        className={`app-shell mx-auto flex min-h-screen max-w-md flex-col bg-brand-50/40 pb-20 pt-[56px] ${
+          profileOpen ? 'app-shell--pushed' : ''
+        }`}
+      >
       {/* 液态玻璃顶栏：固定在设备顶部始终可见（高度 54px 内容 + 1px 分隔线 = 55px，容器留 56px 顶部内边距）。
-          未滚动时通透贴近内容，滚动后底色加深并显出一道顶部品牌高光——高光随滚动位移渐显，深浅色自动适配 */}
+          底色走 .glass 共用配方（与底栏完全一致的毛玻璃透明度）；滚动后显出一道顶部品牌高光 + 投影，深浅色自动适配 */}
       <header
-        className={`glass fixed inset-x-0 top-0 z-30 mx-auto max-w-md border-b border-brand-100 backdrop-blur-md transition-[background-color,box-shadow] duration-300 ${
+        className={`glass fixed inset-x-0 top-0 z-30 mx-auto max-w-md border-b border-brand-100 backdrop-blur-md transition-[box-shadow] duration-300 ${
           glassProgress > 0.15 ? 'shadow-[0_8px_24px_-16px_rgb(0_0_0/0.18)]' : ''
         }`}
-        style={{
-          backgroundColor: `rgb(255 255 255 / ${0.95 - glassProgress * 0.15})`,
-          '--glass-edge': glassProgress,
-        } as React.CSSProperties}
+        style={{ '--glass-edge': glassProgress } as React.CSSProperties}
       >
         {/* 边缘高光：随滚动渐显的一道 1px 品牌光线 */}
         <span
@@ -452,41 +517,8 @@ function Layout() {
         </Suspense>
       </main>
 
-      {profileOpen && (
-        <ProfileSheet
-          open
-          title={isMyView ? '我的资料' : `${viewingMember?.name || memberName || '她'}的资料`}
-          name={isMyView ? adminName : memberName || viewingMember?.name || ''}
-          avatarUrl={avatarUrl}
-          fallbackEmoji={avatarEmoji}
-          hint={isMyView ? '改完头像和昵称，好友那边立刻就能看到' : '昵称和头像改完，你的好友立刻能看到'}
-          onSaveAvatar={async (url) => {
-            if (isMyView || !memberId) await saveAdminAvatar(url)
-            else {
-              await saveMemberAvatar(memberId, url)
-              setMyAvatar(url)
-              reloadMembers()
-            }
-          }}
-          onSaveName={async (n) => {
-            if (isMyView || !memberId) await saveAdminName(n)
-            else {
-              if (members.some((x) => x.id !== memberId && x.name.toLowerCase() === n.trim().toLowerCase())) {
-                throw new Error('这个昵称已被其他成员使用，请换一个')
-              }
-              await updateMember(memberId, { name: n.trim() })
-              setMyName(n.trim())
-              reloadMembers()
-            }
-          }}
-          onClose={() => setProfileOpen(false)}
-        />
-      )}
-
-      {themeOpen && <ThemePicker onClose={() => setThemeOpen(false)} />}
-
       {/* 液滴底部导航：选中的胶囊像一滴水滑过去——滑块平移到当前 tab，切换瞬间回弹一下先「到」再「稳住」 */}
-      <nav className="glass pb-safe fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-md border-t border-brand-100 backdrop-blur">
+      <nav className="glass pb-safe fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-md border-t border-brand-100 backdrop-blur-md">
         {/* 液滴滑块：宽 = 1/N，位移 = index × 自身宽 */}
         <span
           aria-hidden
@@ -521,6 +553,39 @@ function Layout() {
           )
         })}
       </nav>
-    </div>
+      </div>
+
+      {/* 抽屉必须挂在 .app-shell 之外：否则会跟着主页面的 transform 一起被推走 */}
+      <ProfileSheet
+        open={profileOpen}
+        title={isMyView ? '我的资料' : `${viewingMember?.name || memberName || '她'}的资料`}
+        name={isMyView ? adminName : memberName || viewingMember?.name || ''}
+        avatarUrl={avatarUrl}
+        fallbackEmoji={avatarEmoji}
+        hint={isMyView ? '改完头像和昵称，好友那边立刻就能看到' : '昵称和头像改完，你的好友立刻能看到'}
+        onSaveAvatar={async (url) => {
+          if (isMyView || !memberId) await saveAdminAvatar(url)
+          else {
+            await saveMemberAvatar(memberId, url)
+            setMyAvatar(url)
+            reloadMembers()
+          }
+        }}
+        onSaveName={async (n) => {
+          if (isMyView || !memberId) await saveAdminName(n)
+          else {
+            if (members.some((x) => x.id !== memberId && x.name.toLowerCase() === n.trim().toLowerCase())) {
+              throw new Error('这个昵称已被其他成员使用，请换一个')
+            }
+            await updateMember(memberId, { name: n.trim() })
+            setMyName(n.trim())
+            reloadMembers()
+          }
+        }}
+        onClose={() => setProfileOpen(false)}
+      />
+
+      {themeOpen && <ThemePicker onClose={() => setThemeOpen(false)} />}
+    </>
   )
 }

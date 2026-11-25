@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useToast } from '../components/Toast'
 import Pager from '../components/Pager'
+import DateField from '../components/DateField'
 import CoupleModuleGrid from '../components/couple/CoupleModuleGrid'
 import {
   appendCoupleEvent,
@@ -6494,7 +6495,7 @@ export default function CouplePage() {
                   {COUNTDOWN_EMOJIS.map((emoji) => <option key={emoji} value={emoji}>{emoji}</option>)}
                 </select>
                 <input className="input" placeholder="名称" value={countdownTitle} onChange={(event) => setCountdownTitle(event.target.value)} maxLength={30} />
-                <input className="input" type="date" value={countdownDate} onChange={(event) => setCountdownDate(event.target.value)} />
+                <DateField value={countdownDate} onChange={setCountdownDate} placeholder="选个日子" floating />
                 <button type="button" className="btn-primary" disabled={countdownSaving || !memberId || !friendId} onClick={() => void addCountdown()}>添加</button>
               </div>
               {(() => {
@@ -6604,11 +6605,10 @@ export default function CouplePage() {
                         value={countdownEditForm.title}
                         onChange={(event) => setCountdownEditForm((form) => ({ ...form, title: event.target.value }))}
                       />
-                      <input
-                        className="input w-full"
-                        type="date"
+                      <DateField
                         value={countdownEditForm.date}
-                        onChange={(event) => setCountdownEditForm((form) => ({ ...form, date: event.target.value }))}
+                        onChange={(v) => setCountdownEditForm((form) => ({ ...form, date: v }))}
+                        placeholder="选个日子"
                       />
                     </div>
                     <div className="flex gap-2">

@@ -2,7 +2,7 @@ export type Role = 'her' | 'me'
 
 export type MealSlot = 'breakfast' | 'lunch' | 'dinner' | 'snack'
 export type MealStatus = 'eaten' | 'little' | 'skipped'
-export type OrderStatus = 'pending' | 'accepted' | 'done' | 'cancelled'
+export type OrderStatus = 'pending' | 'accepted' | 'cooking' | 'done' | 'cancelled'
 export type DishRequestStatus = 'pending' | 'approved' | 'rejected'
 export type PostAuthor = 'me' | 'her'
 
@@ -195,7 +195,8 @@ export const DISH_REQUEST_STATUS: Record<DishRequestStatus, { label: string; emo
 
 export const ORDER_STATUS: Record<OrderStatus, { label: string; cls: string }> = {
   pending: { label: '待接单', cls: 'bg-warn-50 text-warn-600 border-warn-200' },
-  accepted: { label: '已接单', cls: 'bg-danger-50 text-danger-600 border-danger-200' },
+  accepted: { label: '已接单', cls: 'bg-brand-50 text-brand-600 border-brand-200' },
+  cooking: { label: '制作中', cls: 'bg-danger-50 text-danger-600 border-danger-200' },
   done: { label: '已完成', cls: 'bg-ok-50 text-ok-600 border-ok-200' },
   cancelled: { label: '已取消', cls: 'bg-slate-100 text-slate-500 border-slate-200' },
 }

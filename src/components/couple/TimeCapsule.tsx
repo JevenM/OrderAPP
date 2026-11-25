@@ -3,6 +3,7 @@ import type { CoupleWeddingState } from '../../lib/db'
 import { capsuleDaysLeft, capsuleUnlocked, type TimeCapsule } from '../../lib/keepsake'
 import { notifyOpenedCapsules } from '../../lib/capsuleNotify'
 import { EmptyState } from '../States'
+import DateField from '../DateField'
 import { useConfirm } from '../Modal'
 import { useToast } from '../Toast'
 
@@ -174,10 +175,10 @@ export default function TimeCapsuleBoard({ state, mutate, saving, memberId, myNa
             value={content}
             onChange={(e) => setContent(e.target.value)}
           />
-          <label className="block text-[11px] text-slate-500">
+          <div className="block text-[11px] text-slate-500">
             开封日期
-            <input className="input mt-1" type="date" value={openAt} onChange={(e) => setOpenAt(e.target.value)} />
-          </label>
+            <DateField className="mt-1" value={openAt} onChange={setOpenAt} min={dayStr(new Date())} />
+          </div>
           <div className="flex flex-wrap gap-1.5">
             {[3, 6, 12, 24].map((m) => (
               <button key={m} type="button" className="rounded-full border border-rose-100 bg-white px-2.5 py-1 text-[11px] text-rose-600" onClick={() => setOpenAt(addMonths(m))}>

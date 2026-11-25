@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { listMealsRange, publishMealPost, uploadMealPhoto, upsertMeal } from '../lib/db'
 import { sizeText } from '../lib/image'
 import { pushEmail } from '../lib/notify'
 import { prettyDay, shiftDay, todayStr, weekdayCn } from '../lib/date'
 import { useToast } from '../components/Toast'
 import BlurImage from '../components/BlurImage'
+import DateField from '../components/DateField'
+import MorphButton from '../components/MorphButton'
 import { useSession } from '../store/session'
 import { MEAL_STATUS, SLOTS, type Meal, type MealSlot, type MealStatus } from '../lib/types'
 
@@ -20,6 +22,15 @@ export default function MealLogPage() {
   const [forms, setForms] = useState<Record<string, Form>>({})
   const [saving, setSaving] = useState<MealSlot | null>(null)
   const [uploading, setUploading] = useState<MealSlot | null>(null)
+  /** 刚提交成功的那一餐：按钮停在「对勾」状态 1 秒，再恢复成常态按钮 */
+  const [savedSlot, setSavedSlot] = useState<MealSlot | null>(null)
+  const flashTimer = useRef<number | null>(null)
+  useEffect(
+    () => () => {
+      if (flashTimer.current) window.clearTimeout(flashTimer.current)
+    },
+    []
+  )
 
   const load = useCallback(async () => {
     try {
@@ -100,6 +111,10 @@ export default function MealLogPage() {
         ...fs,
         [slot]: { status: f.status, content: f.content, note: f.note, photo_url: f.photo_url },
       }))
+      // 提交成功后按钮先变成对勾，1 秒后恢复常态
+      if (flashTimer.current) window.clearTimeout(flashTimer.current)
+      setSavedSlot(slot)
+      flashTimer.current = window.setTimeout(() => setSavedSlot(null), 1000)
     } catch (e) {
       toast.show((e as Error).message, 'err')
     } finally {
@@ -131,12 +146,8 @@ export default function MealLogPage() {
           <div className="text-2xs text-slate-400">
             {day} {weekdayCn(day)} · 已记录 {recorded}/3
           </div>
-          <input
-            type="date"
-            className="mt-1 rounded-lg border border-slate-200 px-2 py-0.5 text-2xs text-slate-500"
-            value={day}
-            onChange={(e) => setDay(e.target.value)}
-          />
+          {/* 自绘日历：点开在下方展开月历，选中即收回并更新上面的文字 */}
+          <DateField value={day} onChange={setDay} compact floating className="mt-1" />
         </div>
         <button className="btn-ghost px-3" onClick={() => setDay(shiftDay(day, 1))}>
           ›
@@ -208,9 +219,12 @@ export default function MealLogPage() {
               )}
             </div>
 
-            <button className="btn-primary w-full" disabled={saving === s.key} onClick={() => save(s.key)}>
-              {saving === s.key ? '提交中…' : `提交${s.label}记录`}
-            </button>
+            <MorphButton
+              phase={saving === s.key ? 'loading' : savedSlot === s.key ? 'done' : 'idle'}
+              onClick={() => void save(s.key)}
+            >
+              提交{s.label}记录
+            </MorphButton>
           </div>
         )
       })}

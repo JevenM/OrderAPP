@@ -9,11 +9,13 @@ import { useUnread } from '../store/unread'
 import { useMembers } from '../store/members'
 import { useSession } from '../store/session'
 import { ORDER_STATUS, SLOT_LABEL, type OrderStatus, type OrderWithItems } from '../lib/types'
+import { nextOrderAction, nextOrderStatus } from '../lib/orderFlow'
 
 const FILTERS: { key: 'all' | OrderStatus; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'pending', label: '待接单' },
   { key: 'accepted', label: '已接单' },
+  { key: 'cooking', label: '制作中' },
   { key: 'done', label: '已完成' },
   { key: 'cancelled', label: '已取消' },
 ]
@@ -167,16 +169,15 @@ export default function AdminOrders() {
           )}
 
           <div className="flex flex-wrap gap-2 pt-1">
-            {o.status === 'pending' && (
-              <button className="btn-primary text-xs" onClick={() => act(o.id, 'accepted')}>
-                接单
-              </button>
-            )}
-            {o.status !== 'done' && o.status !== 'cancelled' && (
-              <button className="btn-soft text-xs" onClick={() => act(o.id, 'done')}>
-                做好了
-              </button>
-            )}
+            {(() => {
+              const next = nextOrderStatus(o.status)
+              if (!next) return null
+              return (
+                <button className="btn-primary text-xs" disabled={!next} onClick={() => act(o.id, next)}>
+                  {nextOrderAction(o.status)}
+                </button>
+              )
+            })()}
             {o.status !== 'cancelled' && o.status !== 'done' && (
               <button className="btn-ghost text-xs" onClick={() => act(o.id, 'cancelled')}>
                 取消
