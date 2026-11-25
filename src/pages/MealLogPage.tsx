@@ -4,6 +4,7 @@ import { sizeText } from '../lib/image'
 import { pushEmail } from '../lib/notify'
 import { prettyDay, shiftDay, todayStr, weekdayCn } from '../lib/date'
 import { useToast } from '../components/Toast'
+import BlurImage from '../components/BlurImage'
 import { useSession } from '../store/session'
 import { MEAL_STATUS, SLOTS, type Meal, type MealSlot, type MealStatus } from '../lib/types'
 
@@ -127,12 +128,12 @@ export default function MealLogPage() {
         </button>
         <div className="text-center">
           <div className="text-sm font-medium">{prettyDay(day)}</div>
-          <div className="text-[11px] text-slate-400">
+          <div className="text-2xs text-slate-400">
             {day} {weekdayCn(day)} · 已记录 {recorded}/3
           </div>
           <input
             type="date"
-            className="mt-1 rounded-lg border border-slate-200 px-2 py-0.5 text-[11px] text-slate-500"
+            className="mt-1 rounded-lg border border-slate-200 px-2 py-0.5 text-2xs text-slate-500"
             value={day}
             onChange={(e) => setDay(e.target.value)}
           />
@@ -151,7 +152,7 @@ export default function MealLogPage() {
               <h3 className="text-sm font-semibold">
                 {s.emoji} {s.label}
               </h3>
-              {saved && <span className="text-[11px] text-slate-400">已保存</span>}
+              {saved && <span className="text-2xs text-slate-400">已保存</span>}
             </div>
 
             <div className="flex gap-2">
@@ -183,7 +184,7 @@ export default function MealLogPage() {
 
             <div className="flex items-center gap-2">
               {f.photo_url ? (
-                <img src={f.photo_url} alt="餐食" className="h-16 w-16 rounded-lg object-cover" />
+                <BlurImage src={f.photo_url} alt="餐食" aspect="aspect-square" className="h-16 w-16 rounded-lg" />
               ) : (
                 <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-slate-50 text-xl">📷</div>
               )}

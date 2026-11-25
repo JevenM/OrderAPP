@@ -13,6 +13,23 @@
   --brand-500: 244 63 112;
   --brand-600: 225 29 81;
   --brand-700: 190 18 60;
+  /* 语义色（成功/警示/危险）：与 brand 同机制走变量，深色模式在文件末尾统一适配。
+     色值取自 emerald / amber / rose，视觉上与既有硬编码一致，收编后换肤不丢语义 */
+  --ok-50: 236 253 245;
+  --ok-200: 167 243 208;
+  --ok-500: 16 185 129;
+  --ok-600: 5 150 105;
+  --ok-700: 4 120 87;
+  --warn-50: 254 252 232;
+  --warn-200: 253 230 138;
+  --warn-500: 234 179 8;
+  --warn-600: 217 119 6;
+  --warn-700: 180 83 9;
+  --danger-50: 255 241 245;
+  --danger-200: 254 205 217;
+  --danger-500: 244 63 94;
+  --danger-600: 225 29 72;
+  --danger-700: 190 18 60;
 }
 
 html,
@@ -59,6 +76,57 @@ body {
   }
   .chip {
     @apply inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium;
+  }
+  /* ---- 以下为本次统一新增的语义类，既有类一行不动 ---- */
+  /* 危险操作按钮：Modal 确认框的 danger 态此前被引用但未定义，这里补齐 */
+  .btn-danger {
+    @apply btn bg-danger-500 text-white hover:bg-danger-600;
+  }
+  .btn-danger-soft {
+    @apply btn border border-danger-200 bg-danger-50 text-danger-600 hover:bg-danger-200/60;
+  }
+  /* 小按钮档：与 .btn 叠用（btn btn-sm），统一 px-3 text-xs 这类手写组合 */
+  .btn-sm {
+    @apply rounded-lg px-3 py-1.5 text-xs;
+  }
+  /* 圆形图标按钮：购物车加减等，保证 36px 视觉 + 易点 */
+  .btn-icon {
+    @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-base font-semibold text-brand-600 shadow-sm ring-1 ring-slate-200 transition active:scale-90 disabled:opacity-40;
+  }
+  /* 未读角标：全站唯一写法，替换 bg-rose-500 text-[10px]/[9px] 散写 */
+  .badge {
+    @apply min-w-[16px] animate-pop-in rounded-full bg-danger-500 px-1 text-2xs font-semibold leading-4 text-white;
+  }
+  /* 卡片/弹窗/分区标题统一 Title 级 */
+  .card-title {
+    @apply text-base font-semibold text-slate-800;
+  }
+  /* 列表分组小标题统一 */
+  .section-label {
+    @apply text-xs font-medium text-slate-400;
+  }
+  /* 列表行容器：好友/记录类列表的统一行式（替换三种手写容器） */
+  .list-row {
+    @apply flex min-h-[44px] items-center gap-3 rounded-xl p-2 transition active:bg-slate-100;
+  }
+  /* 分段控制（tab 切换）：DiningPage 样板语义化 */
+  .seg {
+    @apply mx-auto flex w-full rounded-xl bg-brand-50 p-1;
+  }
+  .seg-btn {
+    @apply flex flex-1 items-center justify-center gap-1 rounded-lg py-1.5 text-sm transition-all duration-200;
+  }
+  /* 骨架占位：自带一道斜向扫光，深色配方在文件末尾 */
+  .skeleton {
+    @apply relative overflow-hidden rounded bg-slate-100;
+  }
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-120%);
+    background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 0.65) 50%, transparent 70%);
+    animation: skeleton-sweep 1.8s ease-in-out infinite;
   }
 }
 
@@ -246,6 +314,45 @@ html.dark input,
 html.dark textarea,
 html.dark select {
   color-scheme: dark;
+}
+
+/* ------------------------------ 深色模式 · 语义色与新增类 ------------------------------
+   只追加新选择器，不修改上方既有规则。配方统一为「半透明深底 + 亮字」，
+   保证 ok / warn / danger 的 chip 在深色下可读且不刺眼。 */
+html.dark .bg-ok-50 { background-color: rgb(16 185 129 / 0.12); }
+html.dark .bg-warn-50 { background-color: rgb(234 179 8 / 0.12); }
+html.dark .bg-danger-50 { background-color: rgb(244 63 94 / 0.12); }
+html.dark .bg-danger-500 { background-color: #e11d48; }
+html.dark .text-ok-600,
+html.dark .text-ok-700 { color: #34d399; }
+html.dark .text-warn-600,
+html.dark .text-warn-700 { color: #fbbf24; }
+html.dark .text-danger-600,
+html.dark .text-danger-700 { color: #fb7185; }
+html.dark .border-ok-200 { border-color: rgb(52 211 153 / 0.3); }
+html.dark .border-warn-200 { border-color: rgb(251 191 36 / 0.3); }
+html.dark .border-danger-200 { border-color: rgb(251 113 133 / 0.3); }
+html.dark .bg-brand-100 { background-color: #3b2a3a; }
+html.dark .skeleton { background-color: #243044; }
+html.dark .skeleton::after {
+  background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 0.07) 50%, transparent 70%);
+}
+/* 玻璃顶栏 / 底栏深色配方：App.tsx 的 header 与 nav 共用 .glass 类 */
+html.dark .glass {
+  background-color: rgb(15 23 42 / 0.82);
+  border-color: #2b384d;
+}
+html.dark .glass-solid {
+  background-color: rgb(15 23 42 / 0.92);
+}
+
+@keyframes skeleton-sweep {
+  28% {
+    transform: translateX(120%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
 }
 
 /* 系统开启「减弱动态效果」时关掉动画，照顾晕动/省电场景 */

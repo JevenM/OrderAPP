@@ -3,6 +3,9 @@ import { useSearchParams } from 'react-router-dom'
 import { addComment, createPost, listPosts, removeComment, removePost, toggleLike, uploadMealPhoto } from '../lib/db'
 import { sizeText } from '../lib/image'
 import Avatar from '../components/Avatar'
+import BlurImage from '../components/BlurImage'
+import { EmptyState } from '../components/States'
+import { useConfirm } from '../components/Modal'
 import { useToast } from '../components/Toast'
 import { useRealtime } from '../lib/realtime'
 import { timeCn } from '../lib/date'
@@ -17,6 +20,7 @@ type ReplyTarget = Record<string, { id: string | null; label: string }>
 
 export default function FeedPage() {
   const toast = useToast()
+  const confirm = useConfirm()
   const { isAdmin, role, memberId, memberName, memberAvatar } = useSession()
   const { members } = useMembers()
   const { friendIds, displayName, avatarOf: friendAvatar, isFriend } = useFriends()
@@ -213,7 +217,7 @@ export default function FeedPage() {
   }
 
   const dropPost = async (p: PostWithMeta) => {
-    if (!confirm('删除这条动态？下面的点赞和评论也会一起删掉。')) return
+    if (!(await confirm({ message: '删除这条动态？下面的点赞和评论也会一起删掉。', danger: true }))) return
     try {
       await removePost(p.id)
       toast.show('已删除')
@@ -238,8 +242,8 @@ export default function FeedPage() {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-600">饭圈（{posts.length} 条）</h2>
-        <span className="text-[11px] text-slate-400">
+        <h2 className="card-title">饭圈（{posts.length} 条）</h2>
+        <span className="text-2xs text-slate-400">
           {feedIsAdmin ? '你能看到所有人的动态、点赞和评论' : '好友圈'}
         </span>
       </div>
@@ -297,17 +301,17 @@ export default function FeedPage() {
       )}
 
       {!showComposer && (
-        <p className="rounded-xl bg-brand-50 px-3 py-2 text-[11px] text-brand-700">
+        <p className="rounded-xl bg-brand-50 px-3 py-2 text-2xs text-brand-700">
           🍚 每天记录三餐后会自动发到这里，在下面点赞和评论～
         </p>
       )}
       {showComposer && (
-        <p className="px-1 text-[11px] text-slate-400">
+        <p className="px-1 text-2xs text-slate-400">
           🍚 记录三餐时会自动发一条到这里，也可以手动发
         </p>
       )}
 
-      {posts.length === 0 && <p className="py-10 text-center text-sm text-slate-400">还没有动态，先去记一笔三餐吧～</p>}
+      {posts.length === 0 && <EmptyState icon="📸" title="还没有动态" hint="先去记一笔三餐吧～" />}
 
       {posts.map((p) => {
         const liked = likedByViewer(p)
@@ -327,7 +331,7 @@ export default function FeedPage() {
               <Avatar url={who.url} emoji={who.emoji} size={38} />
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{nameOf(p.member_id)}</div>
-                <div className="text-[11px] text-slate-400">
+                <div className="text-2xs text-slate-400">
                   {timeCn(p.created_at)}
                   {p.meal_slot ? ` · ${SLOT_LABEL[p.meal_slot]}` : ''}
                 </div>
@@ -342,14 +346,14 @@ export default function FeedPage() {
             {p.content && <p className="whitespace-pre-wrap text-sm">{p.content}</p>}
 
             {p.photo_url && (
-              <img src={p.photo_url} alt="饭圈配图" className="max-h-72 w-full rounded-xl object-cover" />
+              <BlurImage src={p.photo_url} alt="饭圈配图" aspect="aspect-[4/3] max-h-72" className="rounded-xl" />
             )}
 
             <div className="flex items-center gap-3 pt-1">
               <button
                 className={`inline-flex items-center gap-1 text-sm transition active:scale-90 ${
                   isLiking ? 'animate-heart' : ''
-                } ${liked ? 'text-rose-500' : 'text-slate-400'}`}
+                } ${liked ? 'text-danger-500' : 'text-slate-400'}`}
                 onClick={() => like(p)}
               >
                 <span className={`inline-block transition-transform duration-200 ${isLiking ? 'scale-125' : ''}`}>
@@ -366,13 +370,13 @@ export default function FeedPage() {
                   <div key={c.id} className="animate-fade flex items-start gap-2 text-xs">
                     <span className="min-w-0 flex-1">
                       {c.reply_to && (
-                        <span className="mr-1 rounded bg-brand-50 px-1 text-[10px] text-brand-600">
+                        <span className="mr-1 rounded bg-brand-50 px-1 text-2xs text-brand-600">
                           {isAdmin ? `🔒 仅${nameOf(c.reply_to)}可见` : '🔒'}
                         </span>
                       )}
                       <span className="font-medium text-slate-600">{nameOf(c.member_id)}：</span>
                       <span className="text-slate-700">{c.content}</span>
-                      <span className="ml-1 whitespace-nowrap text-[10px] text-slate-400">{timeCn(c.created_at)}</span>
+                      <span className="ml-1 whitespace-nowrap text-2xs text-slate-400">{timeCn(c.created_at)}</span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                       {startReplyTarget(p, c) !== null && (
@@ -392,7 +396,7 @@ export default function FeedPage() {
             )}
 
             {target?.id && (
-              <div className="flex items-center gap-2 rounded-lg bg-brand-50 px-2 py-1 text-[11px] text-brand-700">
+              <div className="flex items-center gap-2 rounded-lg bg-brand-50 px-2 py-1 text-2xs text-brand-700">
                 🔒 正在回复 {target.label}，只有她能看到
                 <button className="ml-auto text-brand-400" onClick={() => cancelReply(p.id)}>
                   取消

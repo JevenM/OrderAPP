@@ -12,11 +12,14 @@ export default function Pager({
   total,
   onChange,
   pageSize = PAGE_SIZE,
+  totalLabel,
 }: {
   page: number
   total: number
   onChange: (page: number) => void
   pageSize?: number
+  /** 覆盖默认的「共 N 条」文案，比如传「最新 30 条」 */
+  totalLabel?: string
 }) {
   const pages = Math.max(1, Math.ceil(total / pageSize))
   // 列表可能被筛选/刷新/删除，页码可能越界，这里统一收敛到有效范围
@@ -24,13 +27,23 @@ export default function Pager({
   if (total <= pageSize) return null
   return (
     <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-xs">
-      <button type="button" className="text-brand-600 disabled:text-slate-300" disabled={safePage === 0} onClick={() => onChange(safePage - 1)}>
+      <button
+        type="button"
+        className="-mx-2 inline-flex min-h-[44px] min-w-[44px] items-center justify-center px-2 font-medium text-brand-600 disabled:text-slate-300"
+        disabled={safePage === 0}
+        onClick={() => onChange(safePage - 1)}
+      >
         上一页
       </button>
       <span className="text-slate-400">
-        {safePage + 1}/{pages} 页 · 共 {total} 条
+        {safePage + 1}/{pages} 页 · {totalLabel ?? `共 ${total} 条`}
       </span>
-      <button type="button" className="text-brand-600 disabled:text-slate-300" disabled={safePage >= pages - 1} onClick={() => onChange(safePage + 1)}>
+      <button
+        type="button"
+        className="-mx-2 inline-flex min-h-[44px] min-w-[44px] items-center justify-center px-2 font-medium text-brand-600 disabled:text-slate-300"
+        disabled={safePage >= pages - 1}
+        onClick={() => onChange(safePage + 1)}
+      >
         下一页
       </button>
     </div>

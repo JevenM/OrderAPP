@@ -32,7 +32,7 @@ export default function AboutPage() {
       </div>
 
       <div className="card space-y-4 text-center">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-tr from-brand-500 to-rose-400 text-3xl shadow-md">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-tr from-brand-400 to-brand-600 text-3xl shadow-sm">
           💕
         </div>
         <div>
@@ -45,7 +45,7 @@ export default function AboutPage() {
       </div>
 
       {/* 支付宝赞赏卡片 */}
-      <div className="card space-y-4 border-amber-200/80 bg-gradient-to-b from-white to-amber-50/40 text-center shadow-sm">
+      <div className="card space-y-4 border-warn-200/80 bg-gradient-to-b from-white to-warn-50/40 text-center shadow-sm">
         <div className="space-y-1">
           <h3 className="text-base font-bold text-slate-800">☕ 打赏支持开发者</h3>
           <p className="text-xs text-slate-500">如果这个应用给你带来了甜蜜，欢迎支持我继续迭代！</p>
@@ -71,7 +71,7 @@ export default function AboutPage() {
           />
         </div>
 
-        <p className="text-[11px] text-slate-400">
+        <p className="text-2xs text-slate-400">
           长按或截屏上方图片，打开支付宝扫一扫即可赞赏 🎁
         </p>
 
@@ -81,14 +81,14 @@ export default function AboutPage() {
             className="btn-soft text-xs"
             onClick={handleCopy}
           >
-            {copied ? '✓ 已复制寄语' : '📋 复制打赏寄语'}
+            {copied ? '✓ 已复制寄语' : '复制打赏寄语'}
           </button>
           <a
             href={`${import.meta.env.BASE_URL}alipay-qr.jpg`}
             download="alipay-qr.jpg"
             className="btn-primary text-xs"
           >
-            📥 下载二维码图片
+            下载二维码图片
           </a>
         </div>
       </div>

@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { listFeedNotifications, markFeedNotificationRead, markFeedNotificationsReadAll, type FeedNotificationRow } from '../lib/db'
 import { timeCn } from '../lib/date'
 import { useUnread, useUnreadBellCount } from '../store/unread'
+import { EmptyState, SkeletonList } from './States'
+import Pager from './Pager'
 
 const ICON: Record<string, string> = { post: '📸', like: '❤️', comment: '💬', reply: '↩️', quiz: '💞', truth: '🎲', together: '💕', chat: '💌', board: '🎯', mines: '💣', wufu: '♟️', gomoku: '⚫', watermelon: '🍉', dice: '🎲', love: '💌', 'love-unlocked': '💖', scratch: '🎫', countdown: '⏳', 'game-pass': '🎮', 'meal-report': '🍚' }
 /** 全部消息视图：一次只取最新的 30 条（不查全表总数），在这 30 条内本地分页 */
@@ -129,21 +131,19 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
         </div>
         <div className="flex items-center gap-2">
           <button
-            className="text-[11px] text-brand-500 active:text-brand-600 disabled:text-slate-300"
+            className="text-2xs text-brand-500 active:text-brand-600 disabled:text-slate-300"
             disabled={!unread || markingAll}
             onClick={() => void markAllRead()}
           >
             {markingAll ? '标记中…' : '全部已读'}
           </button>
-          <button className="text-[11px] text-slate-400 active:text-brand-500" onClick={onClose}>关闭</button>
+          <button className="text-2xs text-slate-400 active:text-brand-500" onClick={onClose}>关闭</button>
         </div>
       </div>
 
       <div className="touch-scroll min-h-0 flex-1 overflow-y-auto">
-        {items === null && <div className="px-3 py-8 text-center text-xs text-slate-300">加载中…</div>}
-        {items !== null && items.length === 0 && (
-          <div className="px-3 py-8 text-center text-xs leading-relaxed text-slate-400">还没有消息</div>
-        )}
+        {items === null && <SkeletonList rows={3} compact />}
+        {items !== null && items.length === 0 && <EmptyState icon="🔔" title="还没有消息" compact />}
         {items !== null && (view === 'preview' ? items : items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)).map((notice) => (
           <button
             key={notice.id}
@@ -154,11 +154,11 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5">
                 <span className={`block min-w-0 flex-1 truncate text-xs font-medium ${notice.read_at ? 'text-slate-500' : 'text-slate-800'}`}>{notice.title}</span>
-                {!notice.read_at && <span className="shrink-0 rounded-full bg-rose-500 px-1.5 py-0.5 text-[9px] leading-none text-white">未读</span>}
-                {notice.read_at && <span className="shrink-0 text-[9px] text-slate-300">已读</span>}
+                {!notice.read_at && <span className="badge shrink-0 px-1.5">未读</span>}
+                {notice.read_at && <span className="shrink-0 text-2xs text-slate-300">已读</span>}
               </span>
-              {notice.body && <span className="mt-0.5 block truncate text-[11px] text-slate-400">{notice.body}</span>}
-              <span className="mt-0.5 block text-[10px] text-slate-300">{timeCn(notice.created_at)}</span>
+              {notice.body && <span className="mt-0.5 block truncate text-2xs text-slate-400">{notice.body}</span>}
+              <span className="mt-0.5 block text-2xs text-slate-300">{timeCn(notice.created_at)}</span>
             </span>
           </button>
         ))}
@@ -168,12 +168,14 @@ export default function FeedNotifyPanel({ identity, onClose }: { identity: strin
         <button className="border-t border-slate-100 py-2 text-xs text-brand-600" onClick={() => switchView('all')}>展开全部消息</button>
       )}
       {view === 'all' && items !== null && items.length > 0 && (
-        <div className="flex items-center justify-between border-t border-slate-100 px-3 py-2 text-xs">
-          <button className="text-brand-600 disabled:text-slate-300" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>上一页</button>
-          <span className="text-slate-400">
-            {page + 1}/{Math.ceil(items.length / PAGE_SIZE)} 页 · 最新 {items.length} 条{items.length >= FULL_SIZE ? '（仅取最新 30 条）' : ''}
-          </span>
-          <button className="text-brand-600 disabled:text-slate-300" disabled={(page + 1) * PAGE_SIZE >= items.length} onClick={() => setPage((p) => p + 1)}>下一页</button>
+        <div className="px-3 py-2">
+          <Pager
+            page={page}
+            total={items.length}
+            pageSize={PAGE_SIZE}
+            onChange={setPage}
+            totalLabel={`最新 ${items.length} 条${items.length >= FULL_SIZE ? '（仅取最新 30 条）' : ''}`}
+          />
         </div>
       )}
     </div>

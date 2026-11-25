@@ -134,7 +134,7 @@ export default function TogetherStatus() {
   return (
     <button
       className={`flex items-center gap-1 rounded-full px-2 py-1 text-[11px] transition ${
-        together ? 'bg-rose-50 text-rose-600' : sharing ? 'bg-rose-50 text-rose-500' : 'bg-slate-50 text-slate-400'
+        together ? 'bg-brand-50 text-brand-600' : sharing ? 'bg-brand-50 text-brand-500' : 'bg-slate-50 text-slate-400'
       }`}
       title={sharing ? '点击停止位置共享' : '点击开启位置共享；双方都开启且相距小于 1 公里时点亮'}
       onClick={() => void (sharing ? stopSharing() : startSharing())}

@@ -47,19 +47,19 @@ export function Modal({ open, onClose, children, title, z = 50, className = '' }
   if (!open) return null
   return createPortal(
     <div
-      className="fixed inset-0 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4"
+      className="overlay"
       style={{ zIndex: z }}
       onClick={onClose}
     >
       <div
-        className={`max-h-[85vh] w-full max-w-md animate-slide-up overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-2xl ${className}`}
+        className={`max-h-[85vh] w-full max-w-md animate-slide-up overflow-hidden rounded-t-2xl bg-white pb-safe shadow-lg sm:rounded-2xl ${className}`}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
       >
         {title && (
           <div className="flex items-center justify-between border-b border-brand-100 px-4 py-3">
-            <h2 className="text-base font-semibold text-slate-700">{title}</h2>
+            <h2 className="card-title">{title}</h2>
             <button className="btn-ghost px-2 py-1 text-xs" onClick={onClose} aria-label="关闭">
               关闭
             </button>

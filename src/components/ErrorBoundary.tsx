@@ -30,14 +30,14 @@ export default class ErrorBoundary extends Component<Props, State> {
     return (
       <div className="flex min-h-screen items-center justify-center bg-brand-50/40 px-6">
         <div className="card w-full max-w-sm space-y-4 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-rose-50 text-3xl">💔</div>
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-danger-50 text-3xl">💔</div>
           <div className="space-y-1">
             <h2 className="text-base font-semibold text-slate-800">页面开小差了</h2>
             <p className="text-xs leading-relaxed text-slate-500">别担心，已帮你拦住这次异常。可以先重试，或刷新页面重新进入。</p>
           </div>
           <details className="rounded-xl bg-slate-50 p-3 text-left">
-            <summary className="cursor-pointer text-[11px] text-slate-400">查看错误详情</summary>
-            <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-relaxed text-slate-500">
+            <summary className="cursor-pointer text-2xs text-slate-400">查看错误详情</summary>
+            <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words text-2xs leading-relaxed text-slate-500">
               {error.message}
             </pre>
           </details>

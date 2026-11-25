@@ -90,26 +90,26 @@ export default function Login() {
         </div>
 
         {idleNotice && (
-          <div className="animate-fade rounded-xl bg-amber-50 p-2.5">
-            <p className="text-xs leading-relaxed text-amber-700">⏱️ {idleNotice}</p>
+          <div className="animate-fade rounded-xl bg-warn-50 p-2.5">
+            <p className="text-xs leading-relaxed text-warn-700">⏱️ {idleNotice}</p>
           </div>
         )}
 
         {err && (
-          <div className="animate-fade rounded-xl bg-rose-50 p-2.5">
-            <p className="whitespace-pre-line text-xs leading-relaxed text-rose-600">{err}</p>
+          <div className="animate-fade rounded-xl bg-danger-50 p-2.5">
+            <p className="whitespace-pre-line text-xs leading-relaxed text-danger-600">{err}</p>
             <div className="mt-2 flex gap-2">
-              <button className="btn-ghost px-2 py-1 text-[11px]" disabled={probing || busy} onClick={() => void submit()}>
+              <button className="btn-ghost px-2 py-1 text-2xs" disabled={probing || busy} onClick={() => void submit()}>
                 重试
               </button>
-              <button className="btn-ghost px-2 py-1 text-[11px]" disabled={probing} onClick={() => void runProbe()}>
+              <button className="btn-ghost px-2 py-1 text-2xs" disabled={probing} onClick={() => void runProbe()}>
                 {probing ? '自检中…' : '网络自检'}
               </button>
             </div>
           </div>
         )}
 
-        {probe && <p className="animate-fade whitespace-pre-line text-[11px] leading-relaxed text-slate-500">🔍 {probe}</p>}
+        {probe && <p className="animate-fade whitespace-pre-line text-2xs leading-relaxed text-slate-500">🔍 {probe}</p>}
 
         <button className="btn-primary w-full py-2.5" disabled={busy} onClick={submit}>
           {busy ? '进入中…' : '进 入'}
@@ -117,14 +117,14 @@ export default function Login() {
 
 
         {!configured && (
-          <p className="whitespace-pre-line rounded-xl bg-amber-50 p-2 text-[11px] leading-relaxed text-amber-700">
+          <p className="whitespace-pre-line rounded-xl bg-warn-50 p-2 text-2xs leading-relaxed text-warn-700">
             还没连上 Supabase：复制 .env.example 为 .env 并填入 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 后重启 npm run
             dev。
           </p>
         )}
       </div>
 
-      <p className="px-2 text-center text-[11px] leading-relaxed text-slate-400">
+      <p className="px-2 text-center text-2xs leading-relaxed text-slate-400">
         手机浏览器打开后，用「添加到主屏幕」即可像 APP 一样使用。
       </p>
     </div>

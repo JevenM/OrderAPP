@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import Avatar from './Avatar'
+import { Modal } from './Modal'
 import { setMemberAvatar, uploadAvatar } from '../lib/db'
 import { sizeText } from '../lib/image'
 import { useToast } from './Toast'
@@ -62,12 +63,8 @@ export default function AvatarSheet({ open, title, hint, fallbackEmoji = '👧',
   const shown = preview ?? url
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-md animate-slide-up rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-base font-semibold text-brand-600">{title}</h3>
+    <Modal open={open} onClose={onClose} title={title} className="max-w-md">
+      <div className="px-5 pb-5 pt-3">
         {hint && <p className="mt-1 text-xs leading-relaxed text-slate-400">{hint}</p>}
 
         <div className="mt-5 flex flex-col items-center gap-3">
@@ -104,11 +101,11 @@ export default function AvatarSheet({ open, title, hint, fallbackEmoji = '👧',
           </button>
         </div>
 
-        <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">
+        <p className="mt-3 text-center text-2xs leading-relaxed text-slate-400">
           图片会自动压缩到 {sizeText(60 * 1024)} 以内再上传，省流量也省空间。
         </p>
       </div>
-    </div>
+    </Modal>
   )
 }
 

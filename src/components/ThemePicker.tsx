@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { THEMES, applyDark, applyTheme, readDark, readThemeId, themeGradient } from '../lib/themes'
+import { Modal } from './Modal'
 
 /** 一键换肤弹窗：从右上角「更多」菜单进入，选中即生效并记住 */
 export default function ThemePicker({ onClose }: { onClose: () => void }) {
@@ -17,17 +18,8 @@ export default function ThemePicker({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div
-        className="animate-slide-up w-full max-w-xs rounded-2xl border border-slate-100 bg-white p-4 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="font-semibold text-slate-700">🎨 一键换肤</h3>
-          <button type="button" className="text-slate-400 transition active:text-slate-600" onClick={onClose}>
-            ✕
-          </button>
-        </div>
+    <Modal open onClose={onClose} title="🎨 一键换肤" z={70} className="max-w-xs">
+      <div className="px-4 pb-4 pt-3">
         <div className="grid grid-cols-2 gap-2">
           {THEMES.map((t) => (
             <button
@@ -41,7 +33,7 @@ export default function ThemePicker({ onClose }: { onClose: () => void }) {
               <span className="block h-10 w-full rounded-lg" style={{ background: themeGradient(t) }} />
               <span className="mt-1.5 block text-xs font-medium text-slate-600">
                 {t.emoji} {t.name}
-                {t.id === current && <span className="ml-1 text-[10px] text-slate-400">✓ 使用中</span>}
+                {t.id === current && <span className="ml-1 text-2xs text-slate-400">✓ 使用中</span>}
               </span>
             </button>
           ))}
@@ -54,12 +46,12 @@ export default function ThemePicker({ onClose }: { onClose: () => void }) {
           }`}
         >
           <span>{dark ? '🌙 深色模式' : '☀️ 浅色模式'}</span>
-          <span className={`rounded-full px-2 py-0.5 text-[10px] ${dark ? 'bg-slate-600 text-slate-200' : 'bg-white text-slate-500'}`}>
-            {dark ? '点击切换' : '点击切换'}
+          <span className={`rounded-full px-2 py-0.5 text-2xs ${dark ? 'bg-slate-600 text-slate-200' : 'bg-white text-slate-500'}`}>
+            点击切换
           </span>
         </button>
-        <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">全站配色立即生效，每台设备独立记忆</p>
+        <p className="mt-3 text-center text-2xs leading-relaxed text-slate-400">全站配色立即生效，每台设备独立记忆</p>
       </div>
-    </div>
+    </Modal>
   )
 }

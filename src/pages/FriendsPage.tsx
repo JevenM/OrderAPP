@@ -7,6 +7,7 @@ import {
   setFriendNote,
 } from '../lib/db'
 import Avatar from '../components/Avatar'
+import { EmptyState, SkeletonList } from '../components/States'
 import { useToast } from '../components/Toast'
 import { useConfirm } from '../components/Modal'
 import { useFriends } from '../store/friends'
@@ -113,7 +114,7 @@ export default function FriendsPage() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-600">好友（{friends.length} 位）</h2>
-        <span className="text-[11px] text-slate-400">{adminView ? '你和所有人都是好友' : '好友可见'}</span>
+        <span className="text-2xs text-slate-400">{adminView ? '你和所有人都是好友' : '好友可见'}</span>
       </div>
 
       {/* ---------- 搜昵称加好友 ---------- */}
@@ -140,7 +141,7 @@ export default function FriendsPage() {
               {busy ? '查找中…' : '查找'}
             </button>
           </div>
-          <p className="text-[11px] leading-relaxed text-slate-400">
+          <p className="text-2xs leading-relaxed text-slate-400">
             输入对方的专属昵称搜索并发送申请，对方接受之后你们才能互相看到饭圈动态、点赞和评论。
           </p>
 
@@ -149,7 +150,7 @@ export default function FriendsPage() {
               <Avatar url={result.avatarUrl} emoji="👧" size={40} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{result.name}</div>
-                <div className="text-[11px] text-slate-400">
+                <div className="text-2xs text-slate-400">
                   {result.relation === 'accepted'
                     ? '已经是好友'
                     : result.relation === 'outgoing'
@@ -194,7 +195,7 @@ export default function FriendsPage() {
             </div>
           )}
           {result?.relation === 'self' && (
-            <p className="rounded-xl bg-brand-50 px-3 py-2 text-[11px] text-brand-700">
+            <p className="rounded-xl bg-brand-50 px-3 py-2 text-2xs text-brand-700">
               这是你自己的昵称～不能添加自己为好友哦。
             </p>
           )}
@@ -204,13 +205,13 @@ export default function FriendsPage() {
       {/* ---------- 收到的申请 ---------- */}
       {!adminView && incoming.length > 0 && (
         <div className="card space-y-2">
-          <h3 className="text-sm font-semibold">📨 好友申请（{incoming.length}）</h3>
+          <h3 className="card-title">📨 好友申请（{incoming.length}）</h3>
           {incoming.map((r) => (
             <div key={r.friendshipId} className="flex items-center gap-3 rounded-xl bg-brand-50/60 p-2">
               <Avatar url={r.avatarUrl} emoji="👧" size={40} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{r.name}</div>
-                <div className="text-[11px] text-slate-400">想加你为好友 · {timeCn(r.createdAt)}</div>
+                <div className="text-2xs text-slate-400">想加你为好友 · {timeCn(r.createdAt)}</div>
               </div>
               <button
                 className="btn-primary shrink-0 px-3 text-xs"
@@ -234,13 +235,13 @@ export default function FriendsPage() {
       {/* ---------- 发出的申请 ---------- */}
       {!adminView && outgoing.length > 0 && (
         <div className="card space-y-2">
-          <h3 className="text-sm font-semibold">⏳ 等待接受（{outgoing.length}）</h3>
+          <h3 className="card-title">⏳ 等待接受（{outgoing.length}）</h3>
           {outgoing.map((r) => (
             <div key={r.friendshipId} className="flex items-center gap-3 rounded-xl bg-slate-50 p-2">
               <Avatar url={r.avatarUrl} emoji="👧" size={40} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{r.name}</div>
-                <div className="text-[11px] text-slate-400">已发送 · {timeCn(r.createdAt)}</div>
+                <div className="text-2xs text-slate-400">已发送 · {timeCn(r.createdAt)}</div>
               </div>
               <button
                 className="btn-ghost shrink-0 px-3 text-xs"
@@ -256,15 +257,15 @@ export default function FriendsPage() {
 
       {/* ---------- 好友列表 ---------- */}
       <div className="space-y-2">
-        <h3 className="px-1 text-sm font-semibold text-slate-600">👫 好友列表</h3>
-        {loading && friends.length === 0 && <p className="py-6 text-center text-sm text-slate-400">加载中…</p>}
+        <h3 className="card-title px-1">👫 好友列表</h3>
+        {loading && friends.length === 0 && <SkeletonList rows={3} />}
         {!loading && friends.length === 0 && (
-          <div className="card text-center text-xs leading-relaxed text-slate-400">
-            还没有好友。
-            <br />
-            把你的昵称告诉朋友，或者在上面搜 TA 的昵称加好友，
-            <br />
-            对方接受后就能互相看到饭圈动态、点赞和评论啦。
+          <div className="card">
+            <EmptyState
+              icon="👫"
+              title="还没有好友"
+              hint="把你的昵称告诉朋友，或搜 TA 的昵称加好友；对方接受后就能互相看到饭圈动态、点赞和评论啦"
+            />
           </div>
         )}
 
@@ -278,7 +279,7 @@ export default function FriendsPage() {
                 <Avatar url={f.avatarUrl} emoji={isAdminFriend ? '👨‍🍳' : '👧'} size={44} />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{f.shownName}</div>
-                  <div className="truncate text-[11px] text-slate-400">
+                  <div className="truncate text-2xs text-slate-400">
                     {isAdminFriend ? '管理员 · 默认互为好友' : f.note ? `原昵称：${f.name}` : '好友'}
                   </div>
                 </div>
@@ -321,7 +322,7 @@ export default function FriendsPage() {
         })}
       </div>
 
-      {/* <p className="px-1 text-[11px] leading-relaxed text-slate-400">
+      {/* <p className="px-1 text-2xs leading-relaxed text-slate-400">
         账户之间默认完全隔离：不是好友，动态、点赞、评论一条都看不到，也不能互动。
         <br />
         管理员 默认和所有账户都是好友，所以能看到所有人的动态。

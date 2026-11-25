@@ -17,9 +17,36 @@ export default {
           600: 'rgb(var(--brand-600) / <alpha-value>)',
           700: 'rgb(var(--brand-700) / <alpha-value>)',
         },
+        // 语义色：成功 / 警示 / 危险，同样走 CSS 变量，深色模式在 index.css 末尾统一适配。
+        // 与 brand 一样收编散落的 emerald / amber / rose 硬编码，保证深浅色一致可读。
+        ok: {
+          50: 'rgb(var(--ok-50) / <alpha-value>)',
+          200: 'rgb(var(--ok-200) / <alpha-value>)',
+          500: 'rgb(var(--ok-500) / <alpha-value>)',
+          600: 'rgb(var(--ok-600) / <alpha-value>)',
+          700: 'rgb(var(--ok-700) / <alpha-value>)',
+        },
+        warn: {
+          50: 'rgb(var(--warn-50) / <alpha-value>)',
+          200: 'rgb(var(--warn-200) / <alpha-value>)',
+          500: 'rgb(var(--warn-500) / <alpha-value>)',
+          600: 'rgb(var(--warn-600) / <alpha-value>)',
+          700: 'rgb(var(--warn-700) / <alpha-value>)',
+        },
+        danger: {
+          50: 'rgb(var(--danger-50) / <alpha-value>)',
+          200: 'rgb(var(--danger-200) / <alpha-value>)',
+          500: 'rgb(var(--danger-500) / <alpha-value>)',
+          600: 'rgb(var(--danger-600) / <alpha-value>)',
+          700: 'rgb(var(--danger-700) / <alpha-value>)',
+        },
       },
       boxShadow: {
         card: '0 4px 20px -6px rgb(var(--brand-500) / 0.18)',
+      },
+      fontSize: {
+        // 角标 / 时间戳等弱提示统一 11px：归并全站散落的 text-[10px] / text-[11px]
+        '2xs': ['11px', { lineHeight: '16px' }],
       },
       keyframes: {
         fade: { from: { opacity: '0' }, to: { opacity: '1' } },
@@ -53,6 +80,13 @@ export default {
           '25%': { transform: 'rotate(-6deg)' },
           '75%': { transform: 'rotate(6deg)' },
         },
+        // 底部导航液滴的落地回弹：纵向挤压再回弹，像水滴先砸到再稳住
+        // （只用 scaleY，避免与滑块的 translateX 合并冲突）
+        'nav-drop': {
+          '0%': { transform: 'scaleY(0.75)', opacity: '0.6' },
+          '55%': { transform: 'scaleY(1.08)', opacity: '1' },
+          '100%': { transform: 'scaleY(1)', opacity: '1' },
+        },
       },
       animation: {
         fade: 'fade .28s ease-out both',
@@ -66,6 +100,7 @@ export default {
         confetti: 'confetti 2.8s linear forwards',
         shimmer: 'shimmer 1.6s linear infinite',
         wiggle: 'wiggle .5s ease-in-out',
+        'nav-drop': 'nav-drop .34s cubic-bezier(.34,1.4,.64,1) both',
       },
     },
   },

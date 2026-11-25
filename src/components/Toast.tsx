@@ -43,7 +43,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             key={item.id}
             role="status"
             className={`animate-fade-down max-w-full rounded-xl px-4 py-2 text-center text-sm text-white shadow-lg ${
-              item.kind === 'ok' ? 'bg-emerald-600' : 'bg-rose-600'
+              item.kind === 'ok' ? 'bg-ok-600' : 'bg-danger-600'
             }`}
           >
             {item.text}

@@ -182,20 +182,20 @@ export const SLOT_LABEL: Record<MealSlot, string> = {
 }
 
 export const MEAL_STATUS: Record<MealStatus, { label: string; emoji: string; cls: string }> = {
-  eaten: { label: '吃了', emoji: '✅', cls: 'bg-emerald-50 text-emerald-600 border-emerald-200' },
-  little: { label: '吃得少', emoji: '😔', cls: 'bg-amber-50 text-amber-600 border-amber-200' },
-  skipped: { label: '没吃', emoji: '❌', cls: 'bg-rose-50 text-rose-600 border-rose-200' },
+  eaten: { label: '吃了', emoji: '✅', cls: 'bg-ok-50 text-ok-600 border-ok-200' },
+  little: { label: '吃得少', emoji: '😔', cls: 'bg-warn-50 text-warn-600 border-warn-200' },
+  skipped: { label: '没吃', emoji: '❌', cls: 'bg-danger-50 text-danger-600 border-danger-200' },
 }
 
 export const DISH_REQUEST_STATUS: Record<DishRequestStatus, { label: string; emoji: string; cls: string }> = {
-  pending: { label: '待审核', emoji: '⏳', cls: 'bg-amber-50 text-amber-600 border-amber-200' },
-  approved: { label: '已收录', emoji: '✅', cls: 'bg-emerald-50 text-emerald-600 border-emerald-200' },
+  pending: { label: '待审核', emoji: '⏳', cls: 'bg-warn-50 text-warn-600 border-warn-200' },
+  approved: { label: '已收录', emoji: '✅', cls: 'bg-ok-50 text-ok-600 border-ok-200' },
   rejected: { label: '婉拒了', emoji: '🚫', cls: 'bg-slate-100 text-slate-500 border-slate-200' },
 }
 
 export const ORDER_STATUS: Record<OrderStatus, { label: string; cls: string }> = {
-  pending: { label: '待接单', cls: 'bg-rose-50 text-rose-600 border-rose-200' },
-  accepted: { label: '已接单', cls: 'bg-amber-50 text-amber-600 border-amber-200' },
-  done: { label: '已完成', cls: 'bg-emerald-50 text-emerald-600 border-emerald-200' },
+  pending: { label: '待接单', cls: 'bg-warn-50 text-warn-600 border-warn-200' },
+  accepted: { label: '已接单', cls: 'bg-danger-50 text-danger-600 border-danger-200' },
+  done: { label: '已完成', cls: 'bg-ok-50 text-ok-600 border-ok-200' },
   cancelled: { label: '已取消', cls: 'bg-slate-100 text-slate-500 border-slate-200' },
 }

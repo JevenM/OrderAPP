@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { createDishRequest, createOrder, deleteOrder, listDishes, listOrders } from '../lib/db'
 import { pushEmail } from '../lib/notify'
 import { timeCn } from '../lib/date'
 import { useRealtime } from '../lib/realtime'
 import Pager from '../components/Pager'
+import { Modal } from '../components/Modal'
+import { EmptyState } from '../components/States'
 import { useToast } from '../components/Toast'
 import { useSession } from '../store/session'
 import { ORDER_STATUS, SLOTS, SLOT_LABEL, type Dish, type MealSlot, type OrderWithItems } from '../lib/types'
@@ -43,6 +44,8 @@ export default function OrderPage() {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
   /* 购物车分页 */
   const [cartPage, setCartPage] = useState(0)
+  /** 吸顶分类条当前高亮的分类：滚动到哪个分类，指示就跟到哪 */
+  const [activeCategory, setActiveCategory] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -108,6 +111,36 @@ export default function OrderPage() {
     }
     return [...map.entries()]
   }, [dishes, keyword])
+
+  /** 吸顶分类指示跟随滚动：rAF 合帧 + passive 监听，只在分类变化时 setState */
+  useEffect(() => {
+    if (!grouped.length) return
+    let raf = 0
+    let last: string | null = null
+    const onScroll = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        // 180px ≈ 55 顶栏 + 81 分段条 + 44 吸顶分类条：分类标题越过这条线就算「当前」
+        const probe = 180
+        let current: string | null = null
+        for (const [category] of grouped) {
+          const el = document.getElementById(`cat-${category}`)
+          if (!el) continue
+          if (el.getBoundingClientRect().top - probe <= 0) current = category
+        }
+        if (current !== last) {
+          last = current
+          setActiveCategory(current)
+        }
+      })
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [grouped])
 
   const totalQty = Object.values(cart).reduce((a, b) => a + b, 0)
   const picked = Object.entries(cart).filter(([, q]) => q > 0)
@@ -261,7 +294,7 @@ export default function OrderPage() {
 
       <div className="card space-y-2">
         <div className="text-xs text-slate-500">想吃的菜（菜单里没有就直接写下来）</div>
-        <p className="text-[11px] text-slate-400">
+        <p className="text-2xs text-slate-400">
           菜单里没有的菜会先写进这顿订单，同时发给他审核；通过之后就能在下面的菜单里直接点啦～
         </p>
         <div className="flex gap-2">
@@ -318,16 +351,36 @@ export default function OrderPage() {
       </div>
 
       {grouped.length === 0 && (
-        <p className="py-8 text-center text-sm text-slate-400">
-          还没有可点的菜，让他去「菜单」里加几道～<br />
-          也可以直接在上面写下想吃的菜
-        </p>
+        <EmptyState icon="🍽️" title="还没有可点的菜" hint="让他去「菜单」里加几道，或直接在上面写下想吃的菜" />
+      )}
+
+      {/* 吸顶分类条：滚到哪个分类指示跟到哪；点击平滑滚到对应分类。
+          top 值 = 55px 顶栏 + DiningPage 吸顶分段条高度，双层吸顶避让 */}
+      {grouped.length > 0 && (
+        <div className="sticky top-[136px] z-[5] -mx-4 border-y border-brand-100 bg-white/95 px-4 py-2 backdrop-blur">
+          <div className="touch-scroll flex max-w-md gap-1.5 overflow-x-auto">
+            {grouped.map(([category]) => (
+              <button
+                key={category}
+                type="button"
+                className={`chip shrink-0 transition-colors duration-200 ${
+                  activeCategory === category
+                    ? 'border-brand-400 bg-brand-50 font-semibold text-brand-600'
+                    : 'border-brand-200 bg-white text-slate-600 active:bg-brand-50'
+                }`}
+                onClick={() => document.getElementById(`cat-${category}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              >
+                {category}
+              </button>
+            ))}
+          </div>
+        </div>
       )}
 
       {grouped.map(([category, list]) => {
         const expanded = expandedCategories.has(category)
         return (
-        <div key={category}>
+        <div key={category} id={`cat-${category}`} className="scroll-mt-[180px]">
           <button
             type="button"
             className="mb-2 flex w-full items-center justify-between rounded-xl border border-brand-100 bg-white/80 px-3 py-2 text-left text-xs font-medium text-slate-600"
@@ -359,9 +412,9 @@ export default function OrderPage() {
                   </div>
                   <div className="flex items-baseline justify-between gap-1">
                     <span className="text-sm font-medium">{d.name}</span>
-                    {d.price > 0 && <span className="shrink-0 text-[11px] text-brand-500">¥{d.price}</span>}
+                    {d.price > 0 && <span className="shrink-0 text-2xs text-brand-500">¥{d.price}</span>}
                   </div>
-                  {d.description && <div className="line-clamp-2 text-[11px] text-slate-400">{d.description}</div>}
+                  {d.description && <div className="line-clamp-2 text-2xs text-slate-400">{d.description}</div>}
                   <div className="mt-1 flex items-center justify-between">
                     <button
                       className="btn-soft px-2 py-1 text-xs"
@@ -390,60 +443,54 @@ export default function OrderPage() {
         )
       })}
 
-      {wheelOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => !spinning && setWheelOpen(false)}>
-          <section className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-slate-800">今天吃点什么？</h2>
-              <button className="text-slate-400" disabled={spinning} onClick={() => setWheelOpen(false)} title="关闭">✕</button>
-            </div>
-            <div className="relative mx-auto my-5 aspect-square w-full max-w-[17rem]">
-              <div className="absolute -top-1 left-1/2 z-10 -translate-x-1/2 border-x-[10px] border-t-[18px] border-x-transparent border-t-rose-500" />
-              <div
-                className="absolute inset-0 overflow-hidden rounded-full border-4 border-white shadow-lg transition-transform duration-1000 ease-out"
-                style={{
-                  transform: `rotate(${wheelRotation}deg)`,
-                  // 扇区边界从 12 点钟方向顺时针排，与标签的「中心角-90°」换算保持同一坐标系
-                  background: `conic-gradient(${wheelPool
-                    .map(
-                      (_, i) =>
-                        `${WHEEL_COLORS[i % WHEEL_COLORS.length]} ${i * (360 / wheelPool.length)}deg ${(i + 1) * (360 / wheelPool.length)}deg`
-                    )
-                    .join(', ')})`,
-                }}
-              >
-                {wheelPool.map((dish, index) => {
-                  const seg = 360 / wheelPool.length
-                  return (
-                    <span
-                      key={dish.id}
-                      className="absolute left-1/2 top-1/2 w-[46%] truncate pl-7 text-center text-[10px] font-semibold text-white drop-shadow"
-                      style={{
-                        // conic-gradient 从 12 点钟起算，CSS rotate 从 3 点钟起算：中心角要减 90°
-                        // translateY(-50%) 让文字沿半径方向垂直居中，落在扇面中央
-                        transform: `rotate(${index * seg + seg / 2 - 90}deg) translateY(-50%)`,
-                        transformOrigin: '0 50%',
-                      }}
-                    >
-                      {dish.emoji} {dish.name}
-                    </span>
+      <Modal open={wheelOpen} onClose={() => !spinning && setWheelOpen(false)} title="今天吃点什么？" className="max-w-sm">
+        <div className="px-5 pb-5">
+          <div className="relative mx-auto my-5 aspect-square w-full max-w-[17rem]">
+            <div className="absolute -top-1 left-1/2 z-10 -translate-x-1/2 border-x-[10px] border-t-[18px] border-x-transparent border-t-danger-500" />
+            <div
+              className="absolute inset-0 overflow-hidden rounded-full border-4 border-white shadow-lg transition-transform duration-1000 ease-out"
+              style={{
+                transform: `rotate(${wheelRotation}deg)`,
+                // 扇区边界从 12 点钟方向顺时针排，与标签的「中心角-90°」换算保持同一坐标系
+                background: `conic-gradient(${wheelPool
+                  .map(
+                    (_, i) =>
+                      `${WHEEL_COLORS[i % WHEEL_COLORS.length]} ${i * (360 / wheelPool.length)}deg ${(i + 1) * (360 / wheelPool.length)}deg`
                   )
-                })}
-              </div>
-              <button className="absolute left-1/2 top-1/2 z-10 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-4 border-white bg-slate-800 text-sm font-bold text-white shadow-lg disabled:opacity-60" disabled={spinning} onClick={spinWheel}>
-                {spinning ? '转动中' : '随机'}
-              </button>
+                  .join(', ')})`,
+              }}
+            >
+              {wheelPool.map((dish, index) => {
+                const seg = 360 / wheelPool.length
+                return (
+                  <span
+                    key={dish.id}
+                    className="absolute left-1/2 top-1/2 w-[46%] truncate pl-7 text-center text-2xs font-semibold text-white drop-shadow"
+                    style={{
+                      // conic-gradient 从 12 点钟起算，CSS rotate 从 3 点钟起算：中心角要减 90°
+                      // translateY(-50%) 让文字沿半径方向垂直居中，落在扇面中央
+                      transform: `rotate(${index * seg + seg / 2 - 90}deg) translateY(-50%)`,
+                      transformOrigin: '0 50%',
+                    }}
+                  >
+                    {dish.emoji} {dish.name}
+                  </span>
+                )
+              })}
             </div>
-            {selectedDish && (
-              <div className="animate-pop-in text-center">
-                <p className="text-xs text-slate-400">今天就吃</p>
-                <p className="mt-1 text-lg font-semibold text-brand-600">{selectedDish.emoji} {selectedDish.name}</p>
-                <button className="btn-primary mt-3 w-full" onClick={() => { change(selectedDish, 1); setWheelOpen(false) }}>加入购物车</button>
-              </div>
-            )}
-          </section>
+            <button className="absolute left-1/2 top-1/2 z-10 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-4 border-white bg-slate-800 text-sm font-bold text-white shadow-lg disabled:opacity-60" disabled={spinning} onClick={spinWheel}>
+              {spinning ? '转动中' : '随机'}
+            </button>
+          </div>
+          {selectedDish && (
+            <div className="animate-pop-in text-center">
+              <p className="text-xs text-slate-400">今天就吃</p>
+              <p className="mt-1 text-lg font-semibold text-brand-600">{selectedDish.emoji} {selectedDish.name}</p>
+              <button className="btn-primary mt-3 w-full" onClick={() => { change(selectedDish, 1); setWheelOpen(false) }}>加入购物车</button>
+            </div>
+          )}
         </div>
-      )}
+      </Modal>
 
       {recent.length > 0 && (
         <div className="card space-y-2">
@@ -467,22 +514,10 @@ export default function OrderPage() {
         </div>
       )}
 
-      {/* 订单详情：整条订单信息 + 删除。用 Portal 挂到 body，避免 .card 的 :active transform 让 fixed 定位退化 */}
-      {detailOrder && createPortal(
-        <div
-          className="fixed inset-0 z-50 flex touch-none items-end justify-center overscroll-contain bg-slate-900/50 backdrop-blur-sm sm:items-center sm:p-4"
-          onClick={() => !deletingOrder && setDetailOrder(null)}
-        >
-          <div
-            className="max-h-[85vh] w-full max-w-sm space-y-3 overflow-y-auto rounded-t-3xl bg-white p-5 pb-safe shadow-2xl sm:rounded-3xl"
-            onClick={(event) => event.stopPropagation()}
-            onTouchStart={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <h4 className="text-sm font-semibold text-slate-700">订单详情</h4>
-              <button type="button" className="btn-ghost px-2 py-1 text-xs" disabled={deletingOrder} onClick={() => setDetailOrder(null)}>关闭</button>
-            </div>
-
+      {/* 订单详情：整条订单信息 + 删除，统一走 Modal（Portal + Esc + 滚动锁 + 遮罩点击关闭） */}
+      <Modal open={!!detailOrder} onClose={() => !deletingOrder && setDetailOrder(null)} title="订单详情" className="max-w-sm">
+        {detailOrder && (
+          <div className="space-y-3 px-5 pb-5">
             <div className="space-y-2 text-xs">
               <div className="flex flex-wrap items-center gap-2 text-slate-400">
                 <span>{timeCn(detailOrder.created_at)}</span>
@@ -491,7 +526,7 @@ export default function OrderPage() {
               </div>
 
               <div className="space-y-1 rounded-lg bg-slate-50 p-2">
-                <div className="text-[11px] font-medium text-slate-400">点的菜</div>
+                <div className="text-2xs font-medium text-slate-400">点的菜</div>
                 {detailOrder.items.length > 0 ? (
                   <ul className="space-y-1">
                     {detailOrder.items.map((i) => (
@@ -516,16 +551,15 @@ export default function OrderPage() {
 
             <button
               type="button"
-              className="btn-ghost w-full py-2 text-xs text-rose-500"
+              className="btn-danger-soft w-full py-2 text-xs"
               disabled={deletingOrder}
               onClick={() => void removeRecentOrder()}
             >
               {deletingOrder ? '删除中…' : '删除这条订单'}
             </button>
           </div>
-        </div>,
-        document.body
-      )}
+        )}
+      </Modal>
 
       {totalQty > 0 && (
         <aside className="fixed bottom-20 right-3 z-20 flex w-56 max-w-[calc(100vw-1.5rem)] flex-col rounded-2xl border border-brand-100 bg-white/95 p-3 shadow-card backdrop-blur sm:right-[max(0.75rem,calc((100vw-28rem)/2))]">
@@ -548,7 +582,7 @@ export default function OrderPage() {
                   <div className="flex shrink-0 items-center gap-1">
                     <button
                       type="button"
-                      className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-sm font-semibold text-brand-600 shadow-sm disabled:opacity-50"
+                      className="btn-icon"
                       aria-label={`减少${label}`}
                       onClick={() => changeKey(key, -1)}
                     >
@@ -557,7 +591,7 @@ export default function OrderPage() {
                     <span className="min-w-5 text-center font-semibold text-brand-600">{qty}</span>
                     <button
                       type="button"
-                      className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-sm font-semibold text-brand-600 shadow-sm"
+                      className="btn-icon"
                       aria-label={`增加${label}`}
                       onClick={() => changeKey(key, 1)}
                     >

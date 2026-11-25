@@ -24,9 +24,9 @@ function TabFallback() {
   return (
     <div className="px-4 py-6">
       <div className="mx-auto max-w-md space-y-3">
-        <div className="h-4 w-24 animate-pulse rounded-full bg-brand-100" />
-        <div className="h-24 animate-pulse rounded-2xl bg-brand-50" />
-        <div className="h-24 animate-pulse rounded-2xl bg-brand-50" />
+        <div className="skeleton h-4 w-24 rounded-full bg-brand-100" />
+        <div className="skeleton h-24 rounded-2xl bg-brand-50" />
+        <div className="skeleton h-24 rounded-2xl bg-brand-50" />
       </div>
     </div>
   )
@@ -48,15 +48,15 @@ export default function DiningPage() {
 
   return (
     <div className="pb-4">
-      {/* 分段控制：粘性吸顶，切换不丢滚动上下文之外还保持原生 app 的手感 */}
-      <div className="sticky top-0 z-10 -mx-4 mb-3 border-b border-brand-100 bg-white/95 px-4 pb-2 pt-3 backdrop-blur">
-        <div className="mx-auto flex max-w-md rounded-xl bg-brand-50 p-1">
+      {/* 分段控制：粘性吸顶避让 55px 顶栏（top-0 会被固定顶栏遮住半条） */}
+      <div className="sticky top-[55px] z-10 -mx-4 mb-3 border-b border-brand-100 bg-white/95 px-4 pb-2 pt-3 backdrop-blur">
+        <div className="seg mx-auto max-w-md">
           {TABS.map((t) => (
             <button
               key={t.id}
               type="button"
               onClick={() => switchTab(t.id)}
-              className={`flex flex-1 items-center justify-center gap-1 rounded-lg py-1.5 text-sm transition-all duration-200 ${
+              className={`seg-btn ${
                 t.id === tab ? 'bg-white font-semibold text-brand-600 shadow-sm' : 'text-slate-400'
               }`}
             >
@@ -65,7 +65,7 @@ export default function DiningPage() {
             </button>
           ))}
         </div>
-        <p className="mt-1 text-center text-[10px] text-slate-300">{activeTab.hint}</p>
+        <p className="mt-1 text-center text-2xs text-slate-300">{activeTab.hint}</p>
       </div>
 
       <Suspense fallback={<TabFallback />}>

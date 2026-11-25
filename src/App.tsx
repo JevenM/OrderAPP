@@ -49,14 +49,14 @@ const AdminMeals = lazy(() => import('./pages/AdminMeals'))
 const AdminDishes = lazy(() => import('./pages/AdminDishes'))
 const AdminMembers = lazy(() => import('./pages/AdminMembers'))
 
-/** 切页时的占位：保持与页面同宽的内容区，避免导航栏跳动 */
+/** 切页时的占位：保持与页面同宽的内容区，避免导航栏跳动；骨架带扫光，切页不闪白 */
 function PageFallback() {
   return (
     <div className="px-4 py-6">
       <div className="mx-auto max-w-md space-y-3">
-        <div className="h-4 w-24 animate-pulse rounded-full bg-brand-100" />
-        <div className="h-24 animate-pulse rounded-2xl bg-brand-50" />
-        <div className="h-24 animate-pulse rounded-2xl bg-brand-50" />
+        <div className="skeleton h-4 w-24 rounded-full bg-brand-100" />
+        <div className="skeleton h-24 rounded-2xl bg-brand-50" />
+        <div className="skeleton h-24 rounded-2xl bg-brand-50" />
       </div>
     </div>
   )
@@ -185,7 +185,7 @@ function MenuItem({
   return (
     <button
       className={`block w-full truncate px-3 py-2 text-left ${
-        active ? 'bg-brand-50 font-medium text-brand-600' : danger ? 'text-rose-600' : 'text-slate-600'
+        active ? 'bg-brand-50 font-medium text-brand-600' : danger ? 'text-danger-600' : 'text-slate-600'
       } active:bg-brand-50`}
       onClick={onClick}
     >
@@ -208,6 +208,24 @@ function Layout() {
   const [menu, setMenu] = useState<'member' | 'more' | 'feed' | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
   const [themeOpen, setThemeOpen] = useState(false)
+  /** 玻璃顶栏：0 = 未滚动（通透），1 = 已滚动（加深底色 + 顶部高光渐显） */
+  const [glassProgress, setGlassProgress] = useState(0)
+  useEffect(() => {
+    let raf = 0
+    const onScroll = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        setGlassProgress(Math.min(1, window.scrollY / 40))
+      })
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    onScroll()
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [])
 
   /** 顶部头像：看到谁的脸就用谁的头像；「我」的视角用自己的 */
   const viewingMember = members.find((m) => m.id === memberId)
@@ -236,6 +254,9 @@ function Layout() {
     : role === 'her'
       ? `Hi, ${memberName || '她'}👋`
       : adminName
+
+  /** 当前命中的 tab 序号：液滴滑块的位移依据；匹配不到（如管理页过渡）时停在原位 */
+  const activeTabIndex = tabs.findIndex((t) => t.to === pathname)
 
   const enableBell = async () => {
     if (typeof window !== 'undefined' && !window.isSecureContext) {
@@ -286,8 +307,23 @@ function Layout() {
 
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col bg-brand-50/40 pb-20 pt-[56px]">
-      {/* 固定在设备顶部：不随页面滚动，始终可见（高度 54px 内容 + 1px 分隔线 = 55px，容器留 56px 顶部内边距） */}
-      <header className="fixed inset-x-0 top-0 z-30 mx-auto max-w-md border-b border-brand-100 bg-white/95 backdrop-blur">
+      {/* 液态玻璃顶栏：固定在设备顶部始终可见（高度 54px 内容 + 1px 分隔线 = 55px，容器留 56px 顶部内边距）。
+          未滚动时通透贴近内容，滚动后底色加深并显出一道顶部品牌高光——高光随滚动位移渐显，深浅色自动适配 */}
+      <header
+        className={`glass fixed inset-x-0 top-0 z-30 mx-auto max-w-md border-b border-brand-100 backdrop-blur-md transition-[background-color,box-shadow] duration-300 ${
+          glassProgress > 0.15 ? 'shadow-[0_8px_24px_-16px_rgb(0_0_0/0.18)]' : ''
+        }`}
+        style={{
+          backgroundColor: `rgb(255 255 255 / ${0.95 - glassProgress * 0.15})`,
+          '--glass-edge': glassProgress,
+        } as React.CSSProperties}
+      >
+        {/* 边缘高光：随滚动渐显的一道 1px 品牌光线 */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-300 to-transparent"
+          style={{ opacity: glassProgress }}
+        />
         <div className="relative flex items-center gap-2 px-3 py-2">
           <button
             className="shrink-0 rounded-full transition active:scale-95"
@@ -298,7 +334,7 @@ function Layout() {
           </button>
           <div className="min-w-0 flex-1">
             {/* <h1 className="truncate text-[15px] font-semibold leading-tight text-brand-600">{APP_TITLE}</h1> */}
-            <p className="truncate text-[11px] leading-tight text-slate-400">{subtitle}</p>
+            <p className="truncate text-2xs leading-tight text-slate-400">{subtitle}</p>
           </div>
           <TogetherStatus />
 
@@ -312,7 +348,7 @@ function Layout() {
               >
                 🔔
                 {unread.feedUnread > 0 && (
-                  <span className="absolute -right-1.5 -top-1.5 min-w-[16px] animate-pop-in rounded-full bg-rose-500 px-1 text-center text-[10px] font-semibold leading-4 text-white">
+                  <span className="badge absolute -right-1.5 -top-1.5 text-center">
                     {unread.feedUnread > 99 ? '99+' : unread.feedUnread}
                   </span>
                 )}
@@ -328,7 +364,7 @@ function Layout() {
                 </button>
                 {menu === 'member' && (
                   <div className={PANEL}>
-                    <div className="px-3 pb-1 pt-1.5 text-[11px] text-slate-400">切换到她的视角</div>
+                    <div className="px-3 pb-1 pt-1.5 text-2xs text-slate-400">切换到她的视角</div>
                     <MenuItem active={!memberId} onClick={() => switchMember(null)}>
                       我的管理视图
                     </MenuItem>
@@ -357,9 +393,9 @@ function Layout() {
                   {isAdmin && role === 'me' && (
                     <>
                       <MenuItem onClick={() => run(() => navigate('/admin'))}>🗂 管理总览</MenuItem>
-                      <MenuItem onClick={() => run(() => navigate('/admin/feed'))}>📸饭圈动态管理</MenuItem>
-                      <MenuItem onClick={() => run(() => navigate('/admin/couple-data'))}>💞互动数据管理</MenuItem>
-                      <MenuItem onClick={() => run(() => navigate('/admin/couple-questions'))}>❓同步抉择题库</MenuItem>
+                      <MenuItem onClick={() => run(() => navigate('/admin/feed'))}>📸 饭圈动态管理</MenuItem>
+                      <MenuItem onClick={() => run(() => navigate('/admin/couple-data'))}>💞 互动数据管理</MenuItem>
+                      <MenuItem onClick={() => run(() => navigate('/admin/couple-questions'))}>❓ 同步抉择题库</MenuItem>
                       <MenuItem onClick={() => run(() => navigate('/admin/modules'))}>🧩 模块管理</MenuItem>
                       <MenuItem onClick={() => run(() => navigate('/admin/friendships'))}>🤝 好友关系管理</MenuItem>
                     </>
@@ -386,7 +422,7 @@ function Layout() {
       </header>
 
       {isAdmin && role === 'her' && memberId && (
-        <div className="mx-3 mt-2 flex animate-fade-down items-center gap-2 rounded-xl bg-brand-50 px-3 py-1.5 text-[11px] text-brand-700">
+        <div className="mx-3 mt-2 flex animate-fade-down items-center gap-2 rounded-xl bg-brand-50 px-3 py-1.5 text-2xs text-brand-700">
           <span className="min-w-0 flex-1 truncate">
             👧 正在查看「{memberName || '她'}」，只看她的数据
           </span>
@@ -403,7 +439,7 @@ function Layout() {
       )}
 
       {!configured && (
-        <div className="m-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+        <div className="m-4 rounded-xl border border-warn-200 bg-warn-50 p-3 text-xs text-warn-700">
           还没配置 Supabase：复制 <code>.env.example</code> 为 <code>.env</code> 填入 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 后重启。
         </div>
       )}
@@ -449,14 +485,26 @@ function Layout() {
 
       {themeOpen && <ThemePicker onClose={() => setThemeOpen(false)} />}
 
-      <nav className="pb-safe fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-md border-t border-brand-100 bg-white/95 backdrop-blur">
+      {/* 液滴底部导航：选中的胶囊像一滴水滑过去——滑块平移到当前 tab，切换瞬间回弹一下先「到」再「稳住」 */}
+      <nav className="glass pb-safe fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-md border-t border-brand-100 backdrop-blur">
+        {/* 液滴滑块：宽 = 1/N，位移 = index × 自身宽 */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-1 left-0 rounded-full bg-brand-100/80"
+          style={{ width: `${100 / tabs.length}%`, transform: `translateX(${Math.max(0, activeTabIndex) * 100}%)`, transition: 'transform 300ms cubic-bezier(.34,1.4,.64,1)' }}
+        >
+          <span
+            key={activeTabIndex}
+            className="block h-full w-full animate-nav-drop rounded-full"
+          />
+        </span>
         {tabs.map((t) => {
           const active = pathname === t.to
           return (
             <NavLink
               key={t.to}
               to={t.to}
-              className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-xs transition-colors duration-200 ${
+              className={`relative z-10 flex flex-1 flex-col items-center gap-0.5 py-2 text-xs transition-colors duration-200 ${
                 active ? 'text-brand-600' : 'text-slate-400'
               }`}
             >
@@ -464,9 +512,8 @@ function Layout() {
                 {t.emoji}
               </span>
               <span>{t.label}</span>
-              {active && <span className="absolute inset-x-0 top-0 mx-auto h-0.5 w-8 rounded-full bg-brand-400 animate-pop-in" />}
               {!!t.badge && t.badge > 0 && (
-                <span className="absolute right-[22%] top-1 min-w-[16px] animate-pop-in rounded-full bg-rose-500 px-1 text-[10px] font-semibold leading-4 text-white">
+                <span className="badge absolute right-[22%] top-1">
                   {t.badge > 99 ? '99+' : t.badge}
                 </span>
               )}
