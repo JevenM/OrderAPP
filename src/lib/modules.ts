@@ -69,7 +69,7 @@ export const MODULE_DEFS: ModuleDef[] = [
   { key: 'wedding', icon: '💍', title: '备婚流程', desc: '从确定心意到结完婚的 16 个节点，记录你们走到哪一步', group: 'couple' },
   { key: 'topics', icon: '🗂️', title: '备婚沟通台账', desc: '彩礼、定居、酒席……把要谈的事和双方口径记下来', group: 'couple', newIn: '2.0.7' },
   { key: 'capsule', icon: '💌', title: '时光胶囊', desc: '写给未来的信，到约定那天自动开封', group: 'couple', newIn: '2.0.7' },
-  { key: 'timeline', icon: '🖼️', title: '共同相册', desc: '把有照片的动态串成「我们的第 N 天」', group: 'couple', newIn: '2.0.7' },
+  { key: 'timeline', icon: '🖼️', title: '共同相册', desc: '把有照片的动态串起来', group: 'couple', newIn: '2.0.7' },
   { key: 'review', icon: '📊', title: '年度回顾', desc: '一年的打卡、留言、答题与备婚进度，生成年度账单', group: 'couple', newIn: '2.0.7' },
   { key: 'mealReport', icon: '🍚', title: '三餐总结报告', desc: '月报 / 半年报 / 年报，分析吃饭偏好与习惯并给建议，到期自动推送', group: 'couple', newIn: '2.0.8' },
   { key: 'scratch', icon: '🎫', title: '情侣刮刮乐', desc: '手指刮开卡片赢奖励', group: 'game' },

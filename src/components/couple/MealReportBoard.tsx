@@ -118,7 +118,7 @@ export default function MealReportBoard({ memberId, friendId, myName, friendName
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold">🍚 三餐总结报告</h3>
           <p className="mt-1 text-xs leading-relaxed text-slate-400">
-            月报 / 半年报 / 年报，吃饭偏好与习惯。
+            报告吃饭偏好与习惯。
           </p>
         </div>
         <div className="flex shrink-0 gap-1">

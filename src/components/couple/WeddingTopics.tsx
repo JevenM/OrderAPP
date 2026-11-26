@@ -164,7 +164,7 @@ export default function WeddingTopics({ state, mutate, saving, memberId, myName,
           <div className="min-w-0 flex-1">
             <h3 className="font-semibold">🗂️ 备婚沟通台账</h3>
             <p className="mt-1 text-xs leading-relaxed text-slate-400">
-              异地最怕「以为说好了」——把要谈的事、双方口径和下次再聊的时间都写下来，两人实时同步。
+              把要谈的事、时间都写下来，两人实时同步。
             </p>
           </div>
           <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-[11px]" onClick={exportText}>⬇ 导出</button>
@@ -251,7 +251,7 @@ export default function WeddingTopics({ state, mutate, saving, memberId, myName,
         <EmptyState
           icon="🗂️"
           title="台账还是空的"
-          hint="点上面的常见议题，把彩礼、定居、酒席这些需要提前谈拢的事记下来"
+          hint="点上面的常见议题，把要提前谈拢的事记下来"
         />
       ) : (
         <div className="space-y-2">

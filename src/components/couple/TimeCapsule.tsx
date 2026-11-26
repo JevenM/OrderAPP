@@ -281,7 +281,7 @@ export default function TimeCapsuleBoard({ state, mutate, saving, memberId, myNa
           <div className="min-w-0 flex-1">
             <h3 className="font-semibold">💌 时光胶囊</h3>
             <p className="mt-1 text-xs leading-relaxed text-slate-400">
-              写给某天的TA。到约定日期自动开封，在那之前只有写信的人能预览。
+              写给某天的TA，到约定日期自动开封。
             </p>
           </div>
           {unlocked.length > 0 && (
