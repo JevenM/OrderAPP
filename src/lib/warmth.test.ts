@@ -53,7 +53,7 @@ describe('关系温度计', () => {
         sender_id: i % 2 ? 'A' : 'B',
         receiver_id: i % 2 ? 'B' : 'A',
       })),
-      games: Array.from({ length: 2 }, () => ({ finished_at: iso(TODAY), member_a: 'A', member_b: 'B' })),
+      games: Array.from({ length: 3 }, () => ({ finished_at: iso(TODAY), member_a: 'A', member_b: 'B' })),
       hearts: Array.from({ length: 2 }, () => ({ created_at: iso(TODAY), member_a: 'A', member_b: 'B' })),
       orders: Array.from({ length: 3 }, (_, i) => ({
         created_at: iso(TODAY, 8 + i),
