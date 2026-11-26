@@ -2681,7 +2681,8 @@ export default function CouplePage() {
       throttled('countdown', () => reloadCountdown(true))
     } else if (m === 'scratch') {
       throttled('scratch', () => reloadScratch(true))
-    } else if (m === 'wedding') {
+    } else if (m === 'wedding' || m === 'capsule' || m === 'topics') {
+      // 时光胶囊 / 共同话题共用备婚的 jsonb 状态，收到推送同样要整表重拉
       throttled('wedding', () => reloadWedding(true))
     } else if (m === 'love') {
       throttled('meals', reloadMeals)
@@ -2727,7 +2728,8 @@ export default function CouplePage() {
       void reloadCountdown(countdownLoaded ? undefined : true)
     } else if (m === 'scratch') {
       void reloadScratch(scratchLoaded ? undefined : true)
-    } else if (m === 'wedding') {
+    } else if (m === 'wedding' || m === 'capsule' || m === 'topics') {
+      // 进入时光胶囊 / 共同话题时同样要拉备婚状态，否则首次进入列表为空
       void reloadWedding(weddingLoaded ? undefined : true)
     } else if (m === 'love') {
       void reloadMeals()
@@ -2879,12 +2881,15 @@ export default function CouplePage() {
     } else if (activeModuleRef.current === 'love') {
       void reloadMeals()
       void loadLoveTreeOnce()
+    } else if (activeModuleRef.current === 'capsule' || activeModuleRef.current === 'topics') {
+      // 按模块按需拉取的补全分支：这两个模块复用备婚 jsonb，首次进入必须加载
+      void reloadWedding()
     } else {
       // 无模块参数（停留在模块网格页）：只拉入口卡片要的计数，
       // 心愿 / 留言 / 答题 / 真心话的正文留到真正打开那个模块时再下载
       void reloadGridCounts()
     }
-  }, [ready, reloadGridCounts, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, loadLoveTreeOnce, reloadTruthHistory, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory])
+  }, [ready, reloadGridCounts, reloadWishes, reloadMessages, reloadQuiz, reloadEvents, reloadMeals, loadLoveTreeOnce, reloadTruthHistory, reloadWedding, reloadBoard, reloadBoardHistory, reloadMines, reloadMinesHistory, reloadWufu, reloadWufuHistory, reloadGomoku, reloadGomokuHistory, reloadWatermelon, reloadWatermelonLogs, reloadDice, reloadDiceHistory])
 
   useEffect(() => {
     try {
@@ -4910,9 +4915,14 @@ export default function CouplePage() {
               </div>
               {truthDraw ? (
                 <div className="space-y-3 rounded-2xl bg-rose-50 p-4">
-                  <span className={`chip ${truthDraw.type === 'truth' ? 'border-rose-200 bg-white text-rose-600' : 'border-orange-200 bg-white text-orange-600'}`}>
-                    {truthDraw.type === 'truth' ? '💬真心话' : '🔥大冒险'}
-                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className={`chip ${truthDraw.type === 'truth' ? 'border-rose-200 bg-white text-rose-600' : 'border-orange-200 bg-white text-orange-600'}`}>
+                      {truthDraw.type === 'truth' ? '💬真心话' : '🔥大冒险'}
+                    </span>
+                    {(peerTruthPrompts.includes(truthDraw.prompt) || peerDarePrompts.includes(truthDraw.prompt)) && (
+                      <span className="chip border-amber-200 bg-amber-50 text-amber-600">🎯 TA 出的题</span>
+                    )}
+                  </div>
                   <p className="break-words text-sm font-semibold leading-relaxed text-rose-700">{truthDraw.prompt}</p>
                   {truthDraw.type === 'truth' ? (
                     <>
@@ -4960,7 +4970,9 @@ export default function CouplePage() {
                   <div className="space-y-2 rounded-xl bg-slate-50 p-3">
                     <div className="text-xs font-semibold text-slate-600">加入你们的题库</div>
                     <p className="text-[11px] leading-relaxed text-slate-400">
-                      你出的题只有 TA 能抽到，你不会抽到自己出的题。
+                      这里的数字是 <b className="font-semibold text-slate-500">TA 出给你抽的题</b>（优先抽）；你出的{' '}
+                      {(isTruthBank ? truthPromptBank : darePromptBank).filter((item) => item.created_by === memberId).length}{' '}
+                      道只有 TA 能抽到，你不会抽到自己出的题。
                     </p>
                     {/* 两个题库共用一块面板，用分段按钮切换要维护的题库 */}
                     <div className="grid grid-cols-2 gap-1 rounded-lg bg-white p-1">
@@ -4969,14 +4981,14 @@ export default function CouplePage() {
                         className={`rounded-md py-1 text-[11px] transition ${isTruthBank ? 'bg-rose-50 font-semibold text-rose-600' : 'text-slate-400'}`}
                         onClick={() => setBankKind('truth')}
                       >
-                        💬 真心话 {truthPromptBank.length}
+                        💬 真心话 {peerTruthPrompts.length}
                       </button>
                       <button
                         type="button"
                         className={`rounded-md py-1 text-[11px] transition ${!isTruthBank ? 'bg-orange-50 font-semibold text-orange-600' : 'text-slate-400'}`}
                         onClick={() => setBankKind('dare')}
                       >
-                        🔥 大冒险 {darePromptBank.length}
+                        🔥 大冒险 {peerDarePrompts.length}
                       </button>
                     </div>
                     <div className="flex gap-2">

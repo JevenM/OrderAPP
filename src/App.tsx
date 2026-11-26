@@ -302,18 +302,19 @@ function Layout() {
   /** 消息收件箱身份：管理员固定 'me'，她是自己的成员 id */
   const feedIdentity = isAdmin ? 'me' : memberId ?? ''
 
-  const tabs: { to: string; label: string; emoji: string; badge?: number }[] =
+  // 底栏只留文字：取消 emoji，压低高度，让文字在窄屏上更清楚
+  const tabs: { to: string; label: string; badge?: number }[] =
     role === 'her'
       ? [
-          { to: '/dining', label: '干饭', emoji: '🍚' },
-          ...(ENABLE_FRIENDS ? [{ to: '/couple', label: '互动', emoji: '💞' }] : []),
+          { to: '/dining', label: '干饭' },
+          ...(ENABLE_FRIENDS ? [{ to: '/couple', label: '互动' }] : []),
         ]
       : [
-          { to: '/admin/orders', label: '订单', emoji: '🧾', badge: unread.orders },
-          { to: '/admin/meals', label: '饮食', emoji: '🍚', badge: unread.meals },
-          { to: '/admin/dishes', label: '菜单', emoji: '📖', badge: unread.requests },
-          { to: '/admin/members', label: '成员', emoji: '👭' },
-          { to: '/feed', label: '饭圈', emoji: '📸' },
+          { to: '/admin/orders', label: '订单', badge: unread.orders },
+          { to: '/admin/meals', label: '饮食', badge: unread.meals },
+          { to: '/admin/dishes', label: '菜单', badge: unread.requests },
+          { to: '/admin/members', label: '成员' },
+          { to: '/feed', label: '饭圈' },
         ]
 
   const subtitle = isAdmin && role === 'her' && memberId
@@ -521,41 +522,45 @@ function Layout() {
         </Suspense>
       </main>
 
-      {/* 液滴底部导航：选中的胶囊像一滴水滑过去——滑块平移到当前 tab，切换瞬间回弹一下先「到」再「稳住」 */}
+      {/* 液滴底部导航：选中的胶囊像一滴水滑过去——滑块平移到当前 tab，切换瞬间回弹一下先「到」再「稳住」。
+          内容行固定 44px（文字两轴居中 + 足够触控面积），安全区留白由外层 pb-safe 单独垫在下方，
+          不再把 padding 算进 flex 高度导致文字偏上；字号随视口宽度响应，窄屏也不掉行 */}
       <nav className="glass pb-safe fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-md border-t border-brand-100 backdrop-blur-md">
-        {/* 液滴滑块：宽 = 1/N，位移 = index × 自身宽 */}
-        <span
-          aria-hidden
-          className="pointer-events-none absolute inset-y-1 left-0 rounded-full bg-brand-100/80"
-          style={{ width: `${100 / tabs.length}%`, transform: `translateX(${Math.max(0, activeTabIndex) * 100}%)`, transition: 'transform 300ms cubic-bezier(.34,1.4,.64,1)' }}
-        >
+        <div className="relative flex h-11 w-full">
+          {/* 液滴滑块：宽 = 1/N，位移 = index × 自身宽（只覆盖 44px 内容行） */}
           <span
-            key={activeTabIndex}
-            className="block h-full w-full animate-nav-drop rounded-full"
-          />
-        </span>
-        {tabs.map((t) => {
-          const active = pathname === t.to
-          return (
-            <NavLink
-              key={t.to}
-              to={t.to}
-              className={`relative z-10 flex flex-1 flex-col items-center gap-0.5 py-2 text-xs transition-colors duration-200 ${
-                active ? 'text-brand-600' : 'text-slate-400'
-              }`}
-            >
-              <span className={`text-lg leading-none transition-transform duration-200 ${active ? 'scale-110' : ''}`}>
-                {t.emoji}
-              </span>
-              <span>{t.label}</span>
-              {!!t.badge && t.badge > 0 && (
-                <span className="badge absolute right-[22%] top-1">
-                  {t.badge > 99 ? '99+' : t.badge}
+            aria-hidden
+            className="pointer-events-none absolute inset-y-1 left-0 rounded-full bg-brand-100/80"
+            style={{ width: `${100 / tabs.length}%`, transform: `translateX(${Math.max(0, activeTabIndex) * 100}%)`, transition: 'transform 300ms cubic-bezier(.34,1.4,.64,1)' }}
+          >
+            <span
+              key={activeTabIndex}
+              className="block h-full w-full animate-nav-drop rounded-full"
+            />
+          </span>
+          {tabs.map((t) => {
+            const active = pathname === t.to
+            return (
+              <NavLink
+                key={t.to}
+                to={t.to}
+                className={`relative z-10 flex min-w-0 flex-1 flex-col items-center justify-center text-[clamp(11px,3.4vw,14px)] font-medium leading-none transition-colors duration-200 ${
+                  active ? 'text-brand-600' : 'text-slate-400'
+                }`}
+              >
+                {/* 文字自带定位上下文：角标贴着文字走，任何栏数/屏宽下都不遮挡、不偏移 */}
+                <span className="relative inline-flex items-center justify-center whitespace-nowrap">
+                  {t.label}
+                  {!!t.badge && t.badge > 0 && (
+                    <span className="badge absolute -right-3 -top-1.5">
+                      {t.badge > 99 ? '99+' : t.badge}
+                    </span>
+                  )}
                 </span>
-              )}
-            </NavLink>
-          )
-        })}
+              </NavLink>
+            )
+          })}
+        </div>
       </nav>
       </div>
 
