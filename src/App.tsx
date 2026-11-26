@@ -19,6 +19,7 @@ import { FriendsProvider, useFriends } from './store/friends'
 import { pushDueMealReports } from './lib/mealReportNotify'
 import FeedNotifyPanel from './components/FeedNotifyPanel'
 import TogetherStatus from './components/TogetherStatus'
+import ActivityTracker from './components/ActivityTracker'
 import { ChangelogProvider, useChangelog } from './store/changelog'
 import type { Role } from './lib/types'
 import Login from './pages/Login'
@@ -47,6 +48,7 @@ const AdminFeed = lazy(() => import('./pages/AdminFeed'))
 const AdminModuleFlags = lazy(() => import('./pages/AdminModuleFlags'))
 const AdminOrders = lazy(() => import('./pages/AdminOrders'))
 const AdminMeals = lazy(() => import('./pages/AdminMeals'))
+const AdminActivity = lazy(() => import('./pages/AdminActivity'))
 const AdminDishes = lazy(() => import('./pages/AdminDishes'))
 const AdminMembers = lazy(() => import('./pages/AdminMembers'))
 
@@ -189,6 +191,7 @@ function Shell() {
         <FriendsProvider>
           <MealReportAutoPush />
           <IncomingOrderNotify />
+          <ActivityTracker />
           <Routes>
             <Route element={<Layout />}>
               <Route path="/" element={<Navigate to={HOME[role]} replace />} />
@@ -214,6 +217,7 @@ function Shell() {
               {/* 这四个页面同样只给管理员：普通成员手输地址不该能看全员订单 / 成员邀请码 */}
               {isAdmin && <Route path="/admin/orders" element={<AdminOrders />} />}
               {isAdmin && <Route path="/admin/meals" element={<AdminMeals />} />}
+              {isAdmin && <Route path="/admin/activity" element={<AdminActivity />} />}
               {isAdmin && <Route path="/admin/dishes" element={<AdminDishes />} />}
               {isAdmin && <Route path="/admin/members" element={<AdminMembers />} />}
               <Route path="*" element={<Navigate to={HOME[role]} replace />} />

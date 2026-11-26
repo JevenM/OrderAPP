@@ -132,6 +132,7 @@ import {
   tierOf,
   type ScratchThemeId,
 } from '../lib/scratchThemes'
+import { trackModule } from '../lib/activity'
 import { setSfxEnabled, sfxEnabled, subscribeSfx } from '../lib/sfx'
 import { todayStr } from '../lib/date'
 import { DEEP_COUPLE_QUESTIONS, EXTRA_COUPLE_QUESTIONS, MILESTONE_QUESTIONS, TRUTH_PROMPTS } from '../lib/coupleQuestions'
@@ -2932,7 +2933,10 @@ export default function CouplePage() {
 
   // 打开过的模块登记为「已知晓」：入口卡片的 NEW 角标不再显示（含通知深链进入）
   useEffect(() => {
-    if (activeModule) markModuleSeen(activeModule)
+    if (activeModule) {
+      markModuleSeen(activeModule)
+      trackModule(activeModule) // 行为统计：具体哪个互动模块被打开
+    }
   }, [activeModule])
 
   // 高亮几秒后自动消退 + 滚动把模块带到视野内

@@ -9,6 +9,7 @@ const DAILY_LINKS: AdminLink[] = [
   { to: '/admin/dishes', emoji: '📖', title: '菜单管理', desc: '增删菜品、审核新菜申请' },
   { to: '/admin/members', emoji: '👭', title: '成员管理', desc: '成员账号与邀请码' },
   { to: '/admin/feed', emoji: '📸', title: '饭圈动态管理', desc: '按日期 / 成员筛选查看、编辑与删除', badge: '批量删除 · 导出' },
+  { to: '/admin/activity', emoji: '📊', title: '用户行为统计', desc: '登录次数 / 在线时长 / 模块频率与偏好分析', badge: '按天聚合' },
 ]
 
 /** 互动空间：情侣互动模块的数据管理 */

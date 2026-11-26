@@ -47,19 +47,15 @@ export default function ProfileSheet({
     setShownAvatar(avatarUrl)
   }, [open, name, avatarUrl])
 
-  // 抽屉展开时锁住页面滚动，避免「推动主页面」时背景还在滚
+  // 背景触摸由 .drawer-scrim 的 touch-action:none 承接；不再改 body.overflow——
+  // 滚动条消失/恢复会让页面宽度在开合瞬间变化，顶栏、内容、底栏横向跳动
   useEffect(() => {
     if (!open) return
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKey)
-    return () => {
-      document.body.style.overflow = prev
-      window.removeEventListener('keydown', onKey)
-    }
+    return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
   const pick = async (file: File) => {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { deleteOrder, listDishes, listOrders, setOrderStatus, updateOrder } from '../lib/db'
+import Pager, { PAGE_SIZE } from '../components/Pager'
 import { browserNotify, ding } from '../lib/notify'
 import { timeCn } from '../lib/date'
 import { useRealtime } from '../lib/realtime'
@@ -58,80 +59,51 @@ function OrderStepper({ status }: { status: OrderStatus }) {
   )
 }
 
-/** 订单卡片：详情摘要 + 进度 + 管理按钮（flex-wrap，窄屏也不重叠） */
+/** 订单卡片：整卡可点开详情；编辑/删除只在详情弹窗里做，列表保持清爽 */
 function OrderCard({
   order,
   mine,
   partnerName,
-  updating,
   onDetail,
-  onEdit,
-  onDelete,
-  onAdvance,
 }: {
   order: OrderWithItems
   mine: boolean
   partnerName: string
-  updating: boolean
   onDetail: (o: OrderWithItems, e: React.MouseEvent<HTMLElement>) => void
-  onEdit: (o: OrderWithItems) => void
-  onDelete: (o: OrderWithItems) => void
-  onAdvance: (o: OrderWithItems) => void
 }) {
-  const action = nextOrderAction(order.status)
-  const next = nextOrderStatus(order.status)
   return (
-    <div className={`space-y-2.5 rounded-xl border p-3 ${mine ? 'border-brand-100 bg-white' : 'border-rose-100 bg-white'}`}>
-      <button type="button" className="block w-full text-left" onClick={(e) => onDetail(order, e)}>
-        <div className="flex items-start justify-between gap-2">
-          <span className="min-w-0 text-xs leading-relaxed text-slate-700">
-            {order.items.map((i) => `${i.emoji}${i.dish_name}×${i.qty}`).join('，') || order.note || '只留了言'}
-          </span>
-          <span className={`chip shrink-0 text-2xs ${ORDER_STATUS[order.status]?.cls ?? ''}`}>
-            {ORDER_STATUS[order.status]?.label ?? order.status}
-          </span>
-        </div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-slate-400">
-          <span className={`rounded px-1.5 py-0.5 ${mine ? 'bg-brand-50 text-brand-600' : 'bg-rose-50 text-rose-500'}`}>
-            {mine ? '我点的' : `${partnerName}点的`}
-          </span>
-          <span>{timeCn(order.created_at)}</span>
-          <span>·</span>
-          <span>{SLOT_LABEL[order.meal_slot] ?? order.meal_slot}</span>
-          {order.hope_time && <span>· 期望 {order.hope_time}</span>}
-        </div>
-        {order.note && (
-          <p className="mt-1.5 break-words rounded-lg bg-brand-50/70 px-2 py-1 text-2xs text-brand-700">💬 {order.note}</p>
-        )}
-      </button>
-
+    <button
+      type="button"
+      className={`block w-full space-y-2.5 rounded-xl border p-3 text-left transition active:scale-[0.99] ${
+        mine ? 'border-brand-100 bg-white' : 'border-rose-100 bg-white'
+      }`}
+      onClick={(e) => onDetail(order, e)}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <span className="min-w-0 text-xs leading-relaxed text-slate-700">
+          {order.items.map((i) => `${i.emoji}${i.dish_name}×${i.qty}`).join('，') || order.note || '只留了言'}
+        </span>
+        <span className={`chip shrink-0 text-2xs ${ORDER_STATUS[order.status]?.cls ?? ''}`}>
+          {ORDER_STATUS[order.status]?.label ?? order.status}
+        </span>
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-slate-400">
+        <span className={`rounded px-1.5 py-0.5 ${mine ? 'bg-brand-50 text-brand-600' : 'bg-rose-50 text-rose-500'}`}>
+          {mine ? '我点的' : `${partnerName}点的`}
+        </span>
+        <span>{timeCn(order.created_at)}</span>
+        <span>·</span>
+        <span>{SLOT_LABEL[order.meal_slot] ?? order.meal_slot}</span>
+        {order.hope_time && <span>· 期望 {order.hope_time}</span>}
+      </div>
+      {order.note && (
+        <p className="mt-1.5 break-words rounded-lg bg-brand-50/70 px-2 py-1 text-2xs text-brand-700">💬 {order.note}</p>
+      )}
       <div className="rounded-lg bg-slate-50 px-2 py-2">
         <OrderStepper status={order.status} />
       </div>
-
-      {/* 详情 / 编辑 / 删除常驻，窄屏自动换行；推进状态按钮独占一整行避免挤压 */}
-      <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-2.5">
-        <button type="button" className="btn-ghost btn-sm flex-1" onClick={(e) => onDetail(order, e)}>
-          查看详情
-        </button>
-        <button type="button" className="btn-ghost btn-sm flex-1" onClick={() => onEdit(order)}>
-          编辑
-        </button>
-        <button type="button" className="btn-danger-soft btn-sm flex-1" onClick={() => onDelete(order)}>
-          删除
-        </button>
-        {next && action && (
-          <button
-            type="button"
-            className="btn-primary btn-sm w-full"
-            disabled={updating}
-            onClick={() => onAdvance(order)}
-          >
-            {updating ? '更新中…' : action}
-          </button>
-        )}
-      </div>
-    </div>
+      {/* <div className="border-t border-slate-100 pt-2 text-center text-2xs text-brand-500">点开管理 · 详情 / 编辑 / 删除</div> */}
+    </button>
   )
 }
 
@@ -143,6 +115,9 @@ export default function OrdersPage() {
 
   const [recent, setRecent] = useState<OrderWithItems[]>([])
   const [incoming, setIncoming] = useState<OrderWithItems[]>([])
+  /** 两区各自分页（长列表不内部滚动，苹果手机更好翻） */
+  const [incomingPage, setIncomingPage] = useState(0)
+  const [myPage, setMyPage] = useState(0)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   /** 最近一次看到的订单状态：用来判断「他接单了 / 做好了」，避免每次拉取都重复提示 */
   const seenStatus = useRef<Map<string, OrderStatus>>(new Map())
@@ -341,6 +316,10 @@ export default function OrdersPage() {
   const detailIsMine = detailOrder ? detailOrder.member_id === memberId : true
   const detailNext = detailOrder ? nextOrderStatus(detailOrder.status) : null
 
+  // 列表被刷新/删除后页码可能越界：收敛到有效页再切片
+  const safeIncomingPage = Math.min(incomingPage, Math.max(0, Math.ceil(incoming.length / PAGE_SIZE) - 1))
+  const safeMyPage = Math.min(myPage, Math.max(0, Math.ceil(recent.length / PAGE_SIZE) - 1))
+
   return (
     <div className="space-y-4 pb-2">
       {/* 📥 对方点给我的单：玫红区分，接单/制作在卡片上直接推进 */}
@@ -352,19 +331,18 @@ export default function OrdersPage() {
           </span>
         </div>
         {incoming.length > 0 ? (
-          incoming.map((o) => (
-            <OrderCard
-              key={o.id}
-              order={o}
-              mine={o.member_id === memberId}
-              partnerName={partnerName}
-              updating={updatingId === o.id}
-              onDetail={openDetail}
-              onEdit={openEdit}
-              onDelete={(order) => void removeOrder(order)}
-              onAdvance={(order) => void advance(order)}
-            />
-          ))
+          <>
+            {incoming.slice(safeIncomingPage * PAGE_SIZE, (safeIncomingPage + 1) * PAGE_SIZE).map((o) => (
+              <OrderCard
+                key={o.id}
+                order={o}
+                mine={o.member_id === memberId}
+                partnerName={partnerName}
+                onDetail={openDetail}
+              />
+            ))}
+            <Pager page={safeIncomingPage} total={incoming.length} onChange={setIncomingPage} totalLabel={`共 ${incoming.length} 单`} />
+          </>
         ) : (
           <p className="py-2 text-center text-2xs text-slate-400">还没有 {partnerName} 点给你的单</p>
         )}
@@ -377,19 +355,18 @@ export default function OrdersPage() {
           <span className="chip border-brand-200 bg-brand-50 text-2xs text-brand-600">共 {recent.length} 单</span>
         </div>
         {recent.length > 0 ? (
-          recent.map((o) => (
-            <OrderCard
-              key={o.id}
-              order={o}
-              mine={o.member_id === memberId}
-              partnerName={partnerName}
-              updating={updatingId === o.id}
-              onDetail={openDetail}
-              onEdit={openEdit}
-              onDelete={(order) => void removeOrder(order)}
-              onAdvance={(order) => void advance(order)}
-            />
-          ))
+          <>
+            {recent.slice(safeMyPage * PAGE_SIZE, (safeMyPage + 1) * PAGE_SIZE).map((o) => (
+              <OrderCard
+                key={o.id}
+                order={o}
+                mine={o.member_id === memberId}
+                partnerName={partnerName}
+                onDetail={openDetail}
+              />
+            ))}
+            <Pager page={safeMyPage} total={recent.length} onChange={setMyPage} totalLabel={`共 ${recent.length} 单`} />
+          </>
         ) : (
           <p className="py-2 text-center text-2xs text-slate-400">你还没下过单，去「点菜」点起来～</p>
         )}

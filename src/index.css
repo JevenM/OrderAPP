@@ -317,6 +317,9 @@ html.dark .confirm-check {
    抽屉从左侧滑入，主页面（.app-shell）右移缩小，形成两层空间关系。 */
 .app-shell {
   transform-origin: left center;
+  /* 顶栏、内容、底栏都是 app-shell 的后代：同一个 transform 一起移动，
+     will-change 把整层提升为合成层，避免三段各自重排产生割裂感 */
+  will-change: transform;
   transition: transform 0.38s cubic-bezier(0.22, 1, 0.36, 1), border-radius 0.38s cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 0.38s ease;
 }
@@ -324,7 +327,8 @@ html.dark .confirm-check {
   transform: translate3d(58%, 0, 0) scale(0.9);
   border-radius: 1.5rem;
   box-shadow: -18px 0 48px rgb(15 23 42 / 0.3);
-  overflow: hidden;
+  /* 不要在推送瞬间切 overflow:hidden：fixed 顶/底栏会被突然裁切，
+     关闭时又立刻复原造成跳动。遮罩层负责挡触摸，这里只做整体位移。 */
 }
 .drawer {
   position: fixed;
@@ -353,7 +357,9 @@ html.dark .confirm-check {
   background: rgb(15 23 42 / 0.3);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.3s ease;
+  /* 与主页面/抽屉的 0.38s 同曲线，三者同步淡入淡出 */
+  touch-action: none;
+  transition: opacity 0.38s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .drawer-scrim.is-open {
   opacity: 1;

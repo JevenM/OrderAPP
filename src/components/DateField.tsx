@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { formatCnDate, inRange, monthLabel, monthMatrix, parseDay, shiftMonth, WEEK_LABELS } from '../lib/calendar'
 import { todayStr } from '../lib/date'
 
@@ -76,7 +76,7 @@ export default function DateField({
   }
 
   /** 量触发器位置并算出浮层坐标：水平限位、下方放不下就翻到上方 */
-  const measure = () => {
+  const measure = useCallback(() => {
     const rect = wrapRef.current?.getBoundingClientRect()
     if (!rect) return
     const vw = window.innerWidth
@@ -85,16 +85,20 @@ export default function DateField({
     const left = Math.min(Math.max(8, rect.left + rect.width / 2 - width / 2), Math.max(8, vw - width - 8))
     const placeBelow = vh - rect.bottom > 320 || rect.top < 320
     setPos(placeBelow ? { top: rect.bottom + 6, left, width } : { bottom: vh - rect.top + 6, left, width })
-  }
+  }, [])
 
-  /** 展开 / 收起；浮层模式先量触发器位置，再决定向上还是向下弹 */
+  /**
+   * 浮层坐标必须在「浏览器绘制之前」算好：
+   * 用 useEffect（绘制后才量）会让日历先在文档流位置（触发器下方）露一帧，
+   * 再跳到 fixed 目标位置——就是那种「先显示一下、再跳走」的卡顿。
+   */
+  useLayoutEffect(() => {
+    if (open && floating) measure()
+  }, [open, floating, measure])
+
+  /** 展开 / 收起；坐标交给上面的 layout effect 在首帧前算好 */
   const toggle = () => {
-    if (open) {
-      setOpen(false)
-      return
-    }
-    if (floating) measure()
-    setOpen(true)
+    setOpen((v) => !v)
   }
 
   // 浮层跟着页面滚动保持贴合触发器（只重算坐标，不关闭，避免一闪就没）
@@ -216,16 +220,20 @@ export default function DateField({
       </button>
 
       {floating ? (
-        /* 浮层：fixed 定位到触发器下方（视口限位 / 空间不足翻到上方），不撑破表单行 */
-        <div
-          id={panelId}
-          style={pos ?? undefined}
-          className={`fixed z-[70] origin-top transition-all duration-300 ${
-            open ? 'pointer-events-auto scale-100 opacity-100' : 'pointer-events-none scale-95 opacity-0'
-          }`}
-        >
-          {panel}
-        </div>
+        /* 浮层：fixed 定位到触发器下方（视口限位 / 空间不足翻到上方），不撑破表单行。
+           坐标就绪后才挂载，且只过渡透明度/缩放——top/left 变化走滚动跟随时立即生效，
+           不再出现「先在下方显示、再跳到目标位置」的拖动残影 */
+        pos && (
+          <div
+            id={panelId}
+            style={pos}
+            className={`fixed z-[70] origin-top transition-[opacity,transform] duration-200 ease-out ${
+              open ? 'pointer-events-auto scale-100 opacity-100' : 'pointer-events-none scale-95 opacity-0'
+            }`}
+          >
+            {panel}
+          </div>
+        )
       ) : (
         /* 高度折叠：内容高度未知也能顺滑展开/收起 */
         <div id={panelId} className={`collapse-grid ${open ? 'is-open' : ''}`}>
