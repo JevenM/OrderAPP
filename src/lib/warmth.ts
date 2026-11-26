@@ -28,7 +28,7 @@ export const WARMTH_WEIGHTS: Record<WarmthKey, number> = {
 export const WARMTH_CAPS: Record<WarmthKey, number> = {
   meals: 42, // 3 餐 × 2 人 × 7 天
   chat: 21, // 平均每天 3 条
-  play: 2, // 一周一起玩 2 局就算达标
+  play: 3, // 一周一起玩 2 局就算达标
   heart: 2,
   food: 3, // 一周互相投喂 3 单
   feed: 2,

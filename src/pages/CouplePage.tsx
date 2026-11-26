@@ -7807,9 +7807,7 @@ export default function CouplePage() {
             <div className="animate-heart text-4xl">💌</div>
             <div className="mt-2 text-xs font-medium tracking-widest text-rose-400">今日专属情话已解锁</div>
             <p className="mt-4 text-lg font-semibold leading-relaxed text-rose-700">“{loveMessage}”</p>
-            <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
-              你们今日三餐都打卡完啦，这是属于你们的一句话
-            </p>
+            
             <button
               className="btn-primary mt-5 w-full"
               onClick={() => {

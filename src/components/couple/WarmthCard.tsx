@@ -119,6 +119,9 @@ export default function WarmthCard({
       <div className={`collapse-grid ${open ? 'is-open' : ''}`}>
         <div>
           <div className="space-y-1.5 border-t border-slate-100 pt-3">
+            <p className="text-[10px] leading-relaxed text-slate-400">
+              右侧为近 7 天实际次数；达标线只是满分阈值，超过后不再加分（进度条封顶 100%）
+            </p>
             {(result?.parts ?? []).map((p) => (
               <div key={p.key} className="flex items-center gap-2">
                 <span className="w-14 shrink-0 truncate text-2xs text-slate-500">{p.label}</span>
@@ -128,8 +131,11 @@ export default function WarmthCard({
                     style={{ width: `${Math.round(p.value * 100)}%` }}
                   />
                 </div>
-                <span className="w-12 shrink-0 text-right text-2xs tabular-nums text-slate-400">
-                  {p.count}/{p.cap}
+                <span
+                  className={`w-14 shrink-0 text-right text-2xs tabular-nums ${p.count >= p.cap ? 'font-semibold text-brand-500' : 'text-slate-400'}`}
+                  title={`近 7 天 ${p.count} 次 · 满分阈值 ${p.cap} 次（达标后不再加分）`}
+                >
+                  {p.count >= p.cap ? `${p.count}次 ✓` : `${p.count}/${p.cap}`}
                 </span>
               </div>
             ))}
