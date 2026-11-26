@@ -317,13 +317,16 @@ html.dark .confirm-check {
    抽屉从左侧滑入，主页面（.app-shell）右移缩小，形成两层空间关系。 */
 .app-shell {
   transform-origin: left center;
-  /* 顶栏、内容、底栏都是 app-shell 的后代：同一个 transform 一起移动，
-     will-change 把整层提升为合成层，避免三段各自重排产生割裂感 */
-  will-change: transform;
+  /* ⚠ 这里绝不能加 will-change: transform / transform 等非 none 值：
+     它会创建 fixed 定位的包含块，顶栏/底栏就不再相对视口固定，而是跟着
+     这个 min-h-screen 的容器滚走——切换页面或滚动后「菜单栏消失」。
+     平时保持普通静态定位，顶/底栏才是真正的 viewport fixed。 */
   transition: transform 0.38s cubic-bezier(0.22, 1, 0.36, 1), border-radius 0.38s cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 0.38s ease;
 }
 .app-shell--pushed {
+  /* 只有抽屉推开时才提升合成层：此刻顶栏/底栏本来就该跟着主页面一起被推走 */
+  will-change: transform;
   transform: translate3d(58%, 0, 0) scale(0.9);
   border-radius: 1.5rem;
   box-shadow: -18px 0 48px rgb(15 23 42 / 0.3);
