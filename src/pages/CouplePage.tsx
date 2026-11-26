@@ -1900,6 +1900,23 @@ export default function CouplePage() {
   )
   /* 已答过的题：情侣对共享，任一方答过就不再重复出现 */
   const usedTruthPrompts = useMemo(() => new Set(truthHistory.map((row) => row.prompt)), [truthHistory])
+  /**
+   * 优先队列的「已做」判定必须按本人 + 题型区分：
+   * 旧的 usedTruthPrompts 把双方、真心话/大冒险的历史混在一起，
+   * 对方的答题记录/棋盘大冒险记录会把「我还没做过的对方题」误判成已答，
+   * 于是 4 道待做题被跳过、直接去公共池抽。
+   */
+  const myDoneTruth = useMemo(
+    () => new Set(truthHistory.filter((r) => r.type === 'truth' && r.sender_id === memberId && !!r.answer).map((r) => r.prompt)),
+    [truthHistory, memberId]
+  )
+  const myDoneDare = useMemo(
+    () => new Set(truthHistory.filter((r) => r.type === 'dare' && r.sender_id === memberId).map((r) => r.prompt)),
+    [truthHistory, memberId]
+  )
+  /** 对方出给我、我还没做过的题——抽题时优先抽完这批 */
+  const peerTruthPending = useMemo(() => peerTruthPrompts.filter((p) => !myDoneTruth.has(p)), [peerTruthPrompts, myDoneTruth])
+  const peerDarePending = useMemo(() => peerDarePrompts.filter((p) => !myDoneDare.has(p)), [peerDarePrompts, myDoneDare])
   const truthDoneCount = useMemo(
     () => truthPromptPool.filter((prompt) => usedTruthPrompts.has(prompt)).length,
     [usedTruthPrompts, truthPromptPool]
@@ -3216,12 +3233,13 @@ export default function CouplePage() {
      2. 对方出的自定义题优先抽取 —— 保证「对方出的题一定会被自己抽到」，不被固定题库稀释；
      3. 对方出的题抽完后，再在「固定题库 + 对方出的题」里过滤掉已答过的随机抽。 */
   const drawTruth = () => {
-    const peerUnused = peerTruthPrompts.filter((p) => !usedTruthPrompts.has(p))
-    if (peerUnused.length) {
-      setTruthDraw({ type: 'truth', prompt: peerUnused[Math.floor(Math.random() * peerUnused.length)] })
+    // 先把对方出的、我还没答过的题抽完，才轮到公共题库
+    if (peerTruthPending.length) {
+      setTruthDraw({ type: 'truth', prompt: peerTruthPending[Math.floor(Math.random() * peerTruthPending.length)] })
       setTruthAnswer('')
       return
     }
+    if (peerTruthPrompts.length) toast.show('TA 出的真心话都答过啦，现在开始抽公共题库～')
     const pool = truthPromptPool.filter((p) => !usedTruthPrompts.has(p))
     // 全部答完时提示一轮完成，然后从头再来（第二轮同样不重复）
     if (!pool.length) toast.show(`${truthPromptPool.length} 道真心话都答过啦，从头再来一轮 🎉`)
@@ -3288,11 +3306,11 @@ export default function CouplePage() {
 
   /* 抽大冒险：与真心话同口径 —— 自己出的题不进自己的池子，对方出的题优先抽 */
   const drawDare = async () => {
-    const peerUnused = peerDarePrompts.filter((p) => !usedTruthPrompts.has(p))
     let prompt: string
-    if (peerUnused.length) {
-      prompt = peerUnused[Math.floor(Math.random() * peerUnused.length)]
+    if (peerDarePending.length) {
+      prompt = peerDarePending[Math.floor(Math.random() * peerDarePending.length)]
     } else {
+      if (peerDarePrompts.length) toast.show('TA 出的大冒险都做过啦，现在开始抽公共题库～')
       const pool = DARES.filter((p) => !usedTruthPrompts.has(p))
       const list = pool.length ? pool : DARES
       prompt = list[Math.floor(Math.random() * list.length)]
@@ -4970,7 +4988,9 @@ export default function CouplePage() {
                   <div className="space-y-2 rounded-xl bg-slate-50 p-3">
                     <div className="text-xs font-semibold text-slate-600">加入你们的题库</div>
                     <p className="text-[11px] leading-relaxed text-slate-400">
-                      这里的数字是 <b className="font-semibold text-slate-500">TA 出给你抽的题</b>（优先抽）；你出的{' '}
+                      数字是 <b className="font-semibold text-slate-500">TA 出给你、你还没做过的题</b>
+                      （共{' '}
+                      {(isTruthBank ? peerTruthPrompts : peerDarePrompts).length} 道，做完才抽公共池）；你出的{' '}
                       {(isTruthBank ? truthPromptBank : darePromptBank).filter((item) => item.created_by === memberId).length}{' '}
                       道只有 TA 能抽到，你不会抽到自己出的题。
                     </p>
@@ -4981,14 +5001,14 @@ export default function CouplePage() {
                         className={`rounded-md py-1 text-[11px] transition ${isTruthBank ? 'bg-rose-50 font-semibold text-rose-600' : 'text-slate-400'}`}
                         onClick={() => setBankKind('truth')}
                       >
-                        💬 真心话 {peerTruthPrompts.length}
+                        💬 真心话 {peerTruthPending.length}
                       </button>
                       <button
                         type="button"
                         className={`rounded-md py-1 text-[11px] transition ${!isTruthBank ? 'bg-orange-50 font-semibold text-orange-600' : 'text-slate-400'}`}
                         onClick={() => setBankKind('dare')}
                       >
-                        🔥 大冒险 {peerDarePrompts.length}
+                        🔥 大冒险 {peerDarePending.length}
                       </button>
                     </div>
                     <div className="flex gap-2">
