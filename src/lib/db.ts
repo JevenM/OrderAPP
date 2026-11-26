@@ -25,6 +25,9 @@ import type {
   PostWithMeta,
 } from './types'
 import type { WeddingStep } from './weddingSteps'
+import type { WarmthInput } from './warmth'
+import type { RankItemRow, RankOrderRow, RankRatingRow } from './dishRank'
+import { normalizeCheckins, type GoalKind, type GoalStatus } from './goals'
 import {
   longestStreak,
   type TimeCapsule,
@@ -1862,9 +1865,13 @@ export interface CoupleMinesHistoryRow {
 
 /** 表还没建好（迁移未执行）时静默跳过，不当成硬错误刷屏 */
 function isMissingTable(error: unknown): boolean {
-  return /Could not find the table|relation .* does not exist/i.test(
-    (error instanceof Error ? error.message : String(error ?? '')) || ''
-  )
+  // PostgREST 的错误可能是 Error 实例，也可能是纯对象（code/message/details），
+  // 两种都要认，否则 "Could not find the table ..." 会被当成真错误抛上去。
+  const code = (error as { code?: string } | null)?.code
+  if (code === 'PGRST205' || code === '42P01') return true
+  const msg =
+    error instanceof Error ? error.message : ((error as { message?: string } | null)?.message ?? String(error ?? ''))
+  return /Could not find the table|relation .* does not exist/i.test(msg || '')
 }
 
 /** 一局通关时把整份棋局快照（棋盘、踩雷任务、奖励、结果）存进历史 */
@@ -4366,4 +4373,393 @@ export async function deleteCoupleMinesHistory(ids: string[]): Promise<void> {
   if (!ids.length) return
   const { error } = await supabase.from('couple_mines_history').delete().in('id', ids)
   if (error && !isMissingTable(error)) fail(error, '删除扫雷历史')
+}
+
+/* ------------------------------ 关系温度计（v2.2.0） ------------------------------
+   温度计只读现有表，不新增表。任何一个数据源失败（表没建、网络抖）都只让那一项计 0 分，
+   绝不打断互动页首屏——温度是锦上添花，不该把整页拖垮。 */
+
+/** 从 14 天窗口一次取全六路信号，前端再切成「本周 / 上周」两段 */
+export async function loadWarmthInput(
+  userA: string,
+  userB: string,
+  sinceDay: string
+): Promise<WarmthInput> {
+  const pair = couplePair(userA, userB)
+  if (!pair[0] || !pair[1] || pair[0] === pair[1]) return {}
+  const [a, b] = pair
+  // 日期列用 day 比较，时间戳列用 ISO 比较，两者不能混用
+  const sinceIso = new Date(`${sinceDay}T00:00:00+08:00`).toISOString()
+
+  type RowResult = { data: unknown; error: { message?: string } | null }
+  /** 失败一律降级为空数组：温度低一点好过整页报错 */
+  const rowsOf = async <T,>(run: () => PromiseLike<RowResult>): Promise<T[]> => {
+    try {
+      const { data, error } = await run()
+      if (error) return []
+      return (data ?? []) as T[]
+    } catch {
+      return []
+    }
+  }
+
+  const pairTable = (table: string, col: string) =>
+    rowsOf<{ created_at: string; member_a: string; member_b: string }>(() =>
+      supabase
+        .from(table)
+        .select(`${col}, member_a, member_b`)
+        .eq('member_a', a)
+        .eq('member_b', b)
+        .gte(col, sinceIso)
+        .limit(400)
+    )
+
+  const [meals, messages, board, mines, wufu, tank, wishes, truths, orders, posts] =
+    await Promise.all([
+      rowsOf<{ day: string; slot: MealSlot; member_id: string | null }>(() =>
+        supabase
+          .from('meals')
+          .select('day, slot, member_id')
+          .in('member_id', [a, b])
+          .gte('day', sinceDay)
+          .limit(2000)
+      ),
+      rowsOf<{ created_at: string; sender_id: string; receiver_id: string }>(() =>
+        supabase
+          .from('couple_messages')
+          .select('created_at, sender_id, receiver_id')
+          .or(
+            `and(sender_id.eq.${a},receiver_id.eq.${b}),and(sender_id.eq.${b},receiver_id.eq.${a})`
+          )
+          .gte('created_at', sinceIso)
+          .limit(500)
+      ),
+      pairTable('couple_board_game_history', 'finished_at'),
+      pairTable('couple_mines_history', 'finished_at'),
+      pairTable('couple_wufu_history', 'finished_at'),
+      pairTable('couple_tank_history', 'finished_at'),
+      pairTable('couple_wishes', 'created_at'),
+      pairTable('couple_truth_dare', 'created_at'),
+      rowsOf<{ created_at: string; status: OrderStatus; member_id: string | null }>(() =>
+        supabase
+          .from('orders')
+          .select('created_at, status, member_id')
+          .in('member_id', [a, b])
+          .neq('status', 'cancelled')
+          .gte('created_at', sinceIso)
+          .limit(400)
+      ),
+      rowsOf<{ created_at: string; member_id: string | null }>(() =>
+        supabase
+          .from('posts')
+          .select('created_at, member_id')
+          .in('member_id', [a, b])
+          .gte('created_at', sinceIso)
+          .limit(400)
+      ),
+    ])
+
+  return {
+    meals,
+    messages,
+    // 四张对局历史的字段名都是 finished_at，统一成一起玩信号
+    games: [
+      ...(board as unknown as { finished_at: string; member_a: string; member_b: string }[]),
+      ...(mines as unknown as { finished_at: string; member_a: string; member_b: string }[]),
+      ...(wufu as unknown as { finished_at: string; member_a: string; member_b: string }[]),
+      ...(tank as unknown as { finished_at: string; member_a: string; member_b: string }[]),
+    ],
+    hearts: [
+      ...(wishes as unknown as { created_at: string; member_a: string; member_b: string }[]),
+      ...(truths as unknown as { created_at: string; member_a: string; member_b: string }[]),
+    ],
+    orders,
+    posts,
+  }
+}
+
+/* ------------------------------ 菜品评分（v2.2.0） ------------------------------
+   评分独立成表，不挂 order_items：db.updateOrder 是「先删明细再重插」，
+   挂明细上任何一次「编辑这单」都会把评分清空。唯一键 (order_id, dish_name, rater_id)。 */
+
+export interface CoupleDishRatingRow {
+  id: string
+  order_id: string
+  order_item_id: string | null
+  dish_name: string
+  rating: number
+  rater_id: string
+  created_at: string
+  updated_at: string
+}
+
+/** 取某几单的评分（订单详情用） */
+export async function listDishRatings(
+  userA: string,
+  userB: string,
+  orderIds: string[]
+): Promise<CoupleDishRatingRow[]> {
+  const pair = couplePair(userA, userB)
+  if (!pair[0] || !pair[1] || pair[0] === pair[1] || orderIds.length === 0) return []
+  const { data, error } = await supabase
+    .from('couple_dish_ratings')
+    .select('*')
+    .eq('member_a', pair[0])
+    .eq('member_b', pair[1])
+    .in('order_id', orderIds)
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载菜品评分')
+  }
+  return (data ?? []) as CoupleDishRatingRow[]
+}
+
+/** 取本对某段时间的全部评分（常点榜算平均分用） */
+export async function listPairDishRatings(
+  userA: string,
+  userB: string,
+  sinceIso?: string
+): Promise<CoupleDishRatingRow[]> {
+  const pair = couplePair(userA, userB)
+  if (!pair[0] || !pair[1] || pair[0] === pair[1]) return []
+  let query = supabase
+    .from('couple_dish_ratings')
+    .select('*')
+    .eq('member_a', pair[0])
+    .eq('member_b', pair[1])
+  if (sinceIso) query = query.gte('created_at', sinceIso)
+  const { data, error } = await query.limit(2000)
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载菜品评分')
+  }
+  return (data ?? []) as CoupleDishRatingRow[]
+}
+
+/** 给一道菜打分；同一单同一道菜同一个人再打就是改分（upsert 覆盖） */
+export async function saveDishRating(input: {
+  userA: string
+  userB: string
+  orderId: string
+  orderItemId: string | null
+  dishName: string
+  rating: number
+  raterId: string
+}): Promise<void> {
+  const pair = couplePair(input.userA, input.userB)
+  if (!pair[0] || !pair[1] || pair[0] === pair[1]) throw new Error('还没有绑定另一半，暂时不能评分')
+  if (input.raterId !== pair[0] && input.raterId !== pair[1]) throw new Error('只能给自己这一对点过的菜评分')
+  const dishName = input.dishName.trim().replace(/\s+/g, ' ')
+  if (!dishName) throw new Error('菜名不能为空')
+  const rating = Math.max(1, Math.min(5, Math.round(input.rating)))
+
+  const { data, error } = await withTimeout(
+    supabase
+      .from('couple_dish_ratings')
+      .upsert(
+        {
+          member_a: pair[0],
+          member_b: pair[1],
+          order_id: input.orderId,
+          order_item_id: input.orderItemId,
+          dish_name: dishName,
+          rating,
+          rater_id: input.raterId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'order_id,dish_name,rater_id' }
+      )
+      .select('id'),
+    15_000,
+    '提交菜品评分'
+  )
+  if (error) fail(error, '提交菜品评分')
+  if (!data?.length) throw new Error('提交评分失败：没有写入任何数据，检查 Supabase 表权限（RLS）是否开放写入')
+}
+
+/* ------------------------------ 常点榜取数（v2.2.0） ------------------------------
+   order_items 没有 member_id，归属只能靠父订单先按 member_id 筛；
+   所以必须「先取订单、再用 order_id 取明细」两步走，顺序反了就会串到别对情侣。 */
+
+export type PairOrderRow = RankOrderRow
+export type PairOrderItemRow = RankItemRow
+export type PairRatingRow = RankRatingRow
+
+/** 近 N 天本对的订单（不含已取消，取消的单会把「点了又取消」算成偏好） */
+export async function listPairOrders(
+  userA: string,
+  userB: string,
+  sinceIso: string,
+  limit = 800
+): Promise<PairOrderRow[]> {
+  const pair = couplePair(userA, userB)
+  if (!pair[0] || !pair[1] || pair[0] === pair[1]) return []
+  const { data, error } = await supabase
+    .from('orders')
+    .select('id, meal_slot, status, created_at, member_id')
+    .in('member_id', [pair[0], pair[1]])
+    .neq('status', 'cancelled')
+    .gte('created_at', sinceIso)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载常点榜数据')
+  }
+  return (data ?? []) as PairOrderRow[]
+}
+
+/** 按 order_id 批量取明细：80 个一片，否则 PostgREST 会因为 URL 过长直接 414 */
+export async function listOrderItemsByOrderIds(orderIds: string[]): Promise<PairOrderItemRow[]> {
+  if (!orderIds.length) return []
+  const chunks: string[][] = []
+  for (let i = 0; i < orderIds.length; i += 80) chunks.push(orderIds.slice(i, i + 80))
+
+  const out: PairOrderItemRow[] = []
+  for (const chunk of chunks) {
+    const { data, error } = await supabase
+      .from('order_items')
+      .select('order_id, dish_id, dish_name, emoji, qty')
+      .in('order_id', chunk)
+    if (error) {
+      if (isMissingTable(error)) return out
+      fail(error, '加载订单明细')
+    }
+    out.push(...((data ?? []) as PairOrderItemRow[]))
+  }
+  return out
+}
+
+/* ------------------------------ 共建目标（v2.2.0） ------------------------------
+   一个目标一行。写操作用 updated_at 当乐观锁：两人同时打卡时不静默覆盖，
+   返回 false 让调用方重拉合并再试一次。 */
+
+export interface CoupleGoalRow {
+  id: string
+  member_a: string
+  member_b: string
+  title: string
+  kind: GoalKind
+  emoji: string
+  target: number | null
+  current: number
+  unit: string
+  deadline: string | null
+  checkins: string[]
+  note: string
+  status: GoalStatus
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** numeric 列经 PostgREST 回来可能是字符串，统一转数字；checkins 做一次归一化 */
+function goalRow(raw: Record<string, unknown>): CoupleGoalRow {
+  return {
+    id: String(raw.id ?? ''),
+    member_a: String(raw.member_a ?? ''),
+    member_b: String(raw.member_b ?? ''),
+    title: String(raw.title ?? ''),
+    kind: (raw.kind as GoalKind) ?? 'custom',
+    emoji: String(raw.emoji ?? '🎯'),
+    target: raw.target === null || raw.target === undefined ? null : Number(raw.target),
+    current: Number(raw.current ?? 0),
+    unit: String(raw.unit ?? ''),
+    deadline: (raw.deadline as string | null) ?? null,
+    checkins: normalizeCheckins(raw.checkins),
+    note: String(raw.note ?? ''),
+    status: (raw.status as GoalStatus) ?? 'active',
+    created_by: (raw.created_by as string | null) ?? null,
+    created_at: String(raw.created_at ?? ''),
+    updated_at: String(raw.updated_at ?? ''),
+  }
+}
+
+export async function listCoupleGoals(userA: string, userB: string): Promise<CoupleGoalRow[]> {
+  const pair = couplePair(userA, userB)
+  if (!pair[0] || !pair[1] || pair[0] === pair[1]) return []
+  const { data, error } = await supabase
+    .from('couple_goals')
+    .select('*')
+    .eq('member_a', pair[0])
+    .eq('member_b', pair[1])
+    .order('created_at', { ascending: false })
+    .limit(120)
+  if (error) {
+    if (isMissingTable(error)) return []
+    fail(error, '加载共建目标')
+  }
+  return ((data ?? []) as Record<string, unknown>[]).map(goalRow)
+}
+
+export async function createCoupleGoal(input: {
+  userA: string
+  userB: string
+  title: string
+  kind: GoalKind
+  emoji: string
+  target: number | null
+  unit: string
+  deadline: string | null
+  note: string
+  createdBy: string | null
+}): Promise<CoupleGoalRow> {
+  const pair = couplePair(input.userA, input.userB)
+  if (!pair[0] || !pair[1] || pair[0] === pair[1]) throw new Error('还没有绑定另一半，暂时不能建目标')
+  const title = input.title.trim()
+  if (!title) throw new Error('先给目标起个名字')
+
+  const { data, error } = await withTimeout(
+    supabase
+      .from('couple_goals')
+      .insert({
+        member_a: pair[0],
+        member_b: pair[1],
+        title: title.slice(0, 40),
+        kind: input.kind,
+        emoji: input.emoji || '🎯',
+        target: input.target,
+        current: 0,
+        unit: input.unit.slice(0, 8),
+        deadline: input.deadline || null,
+        note: input.note.slice(0, 300),
+        created_by: input.createdBy,
+      })
+      .select('*')
+      .single(),
+    15_000,
+    '新建目标'
+  )
+  if (error || !data) fail(error, '新建目标')
+  return goalRow(data as Record<string, unknown>)
+}
+
+/**
+ * 改目标（进度 / 打卡 / 标题 / 状态）。
+ * 用 updated_at 做乐观锁：返回 false 表示对方刚好改过，调用方应重拉合并后再试。
+ */
+export async function patchCoupleGoal(
+  id: string,
+  patch: Partial<
+    Pick<CoupleGoalRow, 'title' | 'current' | 'checkins' | 'target' | 'deadline' | 'note' | 'status' | 'emoji'>
+  >,
+  expectedUpdatedAt: string
+): Promise<boolean> {
+  const { data, error } = await withTimeout(
+    supabase
+      .from('couple_goals')
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('updated_at', expectedUpdatedAt)
+      .select('id'),
+    15_000,
+    '更新目标'
+  )
+  if (error) fail(error, '更新目标')
+  return Boolean(data?.length)
+}
+
+export async function deleteCoupleGoal(id: string): Promise<void> {
+  const { error } = await supabase.from('couple_goals').delete().eq('id', id)
+  if (error) fail(error, '删除目标')
 }

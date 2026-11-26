@@ -5,6 +5,7 @@ import { useToast } from '../components/Toast'
 import Pager from '../components/Pager'
 import DateField from '../components/DateField'
 import CoupleModuleGrid from '../components/couple/CoupleModuleGrid'
+import WarmthCard from '../components/couple/WarmthCard'
 import {
   appendCoupleEvent,
   broadcastCoupleMessage,
@@ -161,6 +162,8 @@ const TimeCapsuleBoard = lazy(() => import('../components/couple/TimeCapsule'))
 const AlbumTimeline = lazy(() => import('../components/couple/AlbumTimeline'))
 const YearReviewBoard = lazy(() => import('../components/couple/YearReviewBoard'))
 const MealReportBoard = lazy(() => import('../components/couple/MealReportBoard'))
+const CoupleGoals = lazy(() => import('../components/couple/CoupleGoals'))
+const DishRankBoard = lazy(() => import('../components/couple/DishRankBoard'))
 const LazyFallback = <div className="flex min-h-40 items-center justify-center text-xs text-slate-400">加载中…</div>
 import {
   LOVE_TREE_LOOKBACK,
@@ -2072,6 +2075,7 @@ export default function CouplePage() {
           { id: 'love', icon: '💌', title: '今日情话', detail: loveUnlocked ? '今日已解锁' : '完成三餐打卡解锁' },
           { id: 'chat', icon: '💬', title: '甜蜜留言', detail: `${gridCounts.messages} 条留言` },
           { id: 'wish', icon: '🎁', title: '秘密心愿', detail: `${gridCounts.wishes} 个心愿` },
+          { id: 'goals', icon: '🌱', title: '共建目标', detail: '存钱 / 旅行 / 习惯，一起往前' },
         ],
       },
       {
@@ -2123,6 +2127,7 @@ export default function CouplePage() {
           { id: 'timeline', icon: '🖼️', title: '共同相册', detail: '把有照片的动态串起来' },
           { id: 'review', icon: '📊', title: '年度回顾', detail: '痕迹生成年度账单' },
           { id: 'mealReport', icon: '🍚', title: '三餐总结报告', detail: '报告吃饭偏好与建议' },
+          { id: 'dishRank', icon: '🔥', title: '我们的常点榜', detail: '经常点的菜与今晚推荐' },
         ],
       },
     ],
@@ -4901,13 +4906,17 @@ export default function CouplePage() {
       )}
 
       {!activeModule ? (
-        /* 互动模块按分类分组：模块多了以后平铺要下拉很久，切成五段好找也好认 */
-        <CoupleModuleGrid
-          sections={moduleSections}
-          isEnabled={isEnabled}
-          onSelect={setActiveModule}
-          recent={recentForGrid}
-        />
+        /* 互动模块按分类分组：模块多了以后平铺要下拉很久，切成五段好找也好认。
+           顶部先放温度计：进互动页第一眼看到「我们最近怎么样」，点一下才展开明细 */
+        <div className="space-y-4">
+          <WarmthCard memberId={memberId} friendId={friendId} />
+          <CoupleModuleGrid
+            sections={moduleSections}
+            isEnabled={isEnabled}
+            onSelect={setActiveModule}
+            recent={recentForGrid}
+          />
+        </div>
       ) : (
         <>
           <button type="button" className="btn-ghost w-full" onClick={() => setActiveModule(null)}>← 返回互动入口</button>
@@ -7311,6 +7320,22 @@ export default function CouplePage() {
           )}
           {activeModule === 'mealReport' && (
             <MealReportBoard
+              memberId={memberId}
+              friendId={friendId}
+              myName={memberName || '我'}
+              friendName={friendName}
+            />
+          )}
+          {activeModule === 'goals' && (
+            <CoupleGoals
+              memberId={memberId}
+              friendId={friendId}
+              myName={memberName || '我'}
+              friendName={friendName}
+            />
+          )}
+          {activeModule === 'dishRank' && (
+            <DishRankBoard
               memberId={memberId}
               friendId={friendId}
               myName={memberName || '我'}

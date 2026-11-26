@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { deleteOrder, listDishes, listOrders, setOrderStatus, updateOrder } from '../lib/db'
+import { deleteOrder, listDishes, listDishRatings, listOrders, saveDishRating, setOrderStatus, updateOrder } from '../lib/db'
 import Pager, { PAGE_SIZE } from '../components/Pager'
+import { StarRow } from '../components/couple/DishRating'
 import { browserNotify, ding } from '../lib/notify'
 import { timeCn } from '../lib/date'
 import { useRealtime } from '../lib/realtime'
@@ -127,6 +128,10 @@ export default function OrdersPage() {
   /** 与 detailOrder 分开：关闭时先收起面板（保留内容播放缩回动画），内容不被立刻清空 */
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailOrigin, setDetailOrigin] = useState<ModalOrigin | null>(null)
+  /* 逐菜评分：key 用归一化后的菜名，和评分表 (order_id, dish_name, rater_id) 的唯一键对齐 */
+  const [myRatings, setMyRatings] = useState<Record<string, number>>({})
+  const [peerRatings, setPeerRatings] = useState<Record<string, number>>({})
+  const [ratingDish, setRatingDish] = useState<string | null>(null)
 
   /* 编辑弹窗 */
   const [editOrder, setEditOrder] = useState<OrderWithItems | null>(null)
@@ -247,6 +252,57 @@ export default function OrdersPage() {
     setDetailOrigin({ top: rect.top, left: rect.left, width: rect.width, height: rect.height })
     setDetailOrder(order)
     setDetailOpen(true)
+    setMyRatings({})
+    setPeerRatings({})
+    // 只有吃完的单才谈得上评分；评分表还没建时静默跳过，不给订单详情添乱
+    if (order.status === 'done' && memberId && partnerId) {
+      void listDishRatings(memberId, partnerId, [order.id])
+        .then((rows) => {
+          const mine: Record<string, number> = {}
+          const peer: Record<string, number> = {}
+          for (const r of rows) {
+            const key = r.dish_name.trim().replace(/\s+/g, ' ')
+            if (r.rater_id === memberId) mine[key] = r.rating
+            else peer[key] = r.rating
+          }
+          setMyRatings(mine)
+          setPeerRatings(peer)
+        })
+        .catch(() => {
+          /* 评分只是锦上添花，读失败就不显示星级 */
+        })
+    }
+  }
+
+  /** 给一道菜打分：先亮星再落库，失败回滚 */
+  const rateDish = async (item: OrderWithItems['items'][number], rating: number) => {
+    if (!detailOrder || !memberId || !partnerId) return
+    const name = item.dish_name.trim().replace(/\s+/g, ' ')
+    const before = myRatings[name] ?? 0
+    setMyRatings((prev) => ({ ...prev, [name]: rating }))
+    setRatingDish(name)
+    try {
+      await saveDishRating({
+        userA: memberId,
+        userB: partnerId,
+        orderId: detailOrder.id,
+        orderItemId: item.id,
+        dishName: name,
+        rating,
+        raterId: memberId,
+      })
+      toast.show(`已给「${name}」打了 ${rating} 星`)
+    } catch (e) {
+      setMyRatings((prev) => {
+        const next = { ...prev }
+        if (before) next[name] = before
+        else delete next[name]
+        return next
+      })
+      toast.show(e instanceof Error ? e.message : '评分没保存上，再试一次', 'err')
+    } finally {
+      setRatingDish(null)
+    }
   }
 
   /* ------------------------------ 编辑 ------------------------------ */
@@ -410,17 +466,45 @@ export default function OrdersPage() {
                 </div>
                 {detailOrder.items.length > 0 ? (
                   <ul className="space-y-1">
-                    {detailOrder.items.map((i) => (
-                      <li key={i.id} className="flex items-center justify-between gap-2 text-sm text-slate-700">
-                        <span className="min-w-0 break-words">
-                          {i.emoji} {i.dish_name}
-                        </span>
-                        <span className="shrink-0 text-slate-400">×{i.qty}</span>
-                      </li>
-                    ))}
+                    {detailOrder.items.map((i) => {
+                      const nameKey = i.dish_name.trim().replace(/\s+/g, ' ')
+                      const mine = myRatings[nameKey] ?? 0
+                      const peer = peerRatings[nameKey] ?? 0
+                      // 只有吃完的单才显示星级；其余状态视觉与以前完全一致
+                      const canRate = detailOrder.status === 'done' && !!memberId && !!partnerId
+                      return (
+                        <li
+                          key={i.id}
+                          className="space-y-1 border-b border-slate-100 pb-2 last:border-0 last:pb-0"
+                        >
+                          <div className="flex items-start justify-between gap-2 text-sm text-slate-700">
+                            <span className="min-w-0 break-words">
+                              {i.emoji} {i.dish_name}
+                            </span>
+                            <span className="shrink-0 text-slate-400">×{i.qty}</span>
+                          </div>
+                          {canRate && (
+                            <div className="flex items-center gap-1">
+                              <StarRow
+                                value={mine}
+                                disabled={ratingDish === nameKey}
+                                ariaLabel={`给${i.dish_name}打分`}
+                                onChange={(n) => void rateDish(i, n)}
+                              />
+                              {peer > 0 && (
+                                <span className="ml-auto shrink-0 text-2xs text-slate-400">TA {peer}★</span>
+                              )}
+                            </div>
+                          )}
+                        </li>
+                      )
+                    })}
                   </ul>
                 ) : (
                   <p className="text-sm text-slate-400">（没有选菜，只有留言）</p>
+                )}
+                {detailOrder.status === 'done' && detailOrder.items.length > 0 && (
+                  <p className="text-2xs text-slate-400">点星给每道菜打分，会算进「我们的常点榜」</p>
                 )}
               </div>
 

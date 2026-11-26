@@ -20,6 +20,8 @@ export type ModuleKey =
   | 'timeline'
   | 'review'
   | 'mealReport'
+  | 'goals'
+  | 'dishRank'
   | 'scratch'
   | 'star2048'
   | 'animalmatch'
@@ -72,6 +74,8 @@ export const MODULE_DEFS: ModuleDef[] = [
   { key: 'timeline', icon: '🖼️', title: '共同相册', desc: '把有照片的动态串起来', group: 'couple', newIn: '2.0.7' },
   { key: 'review', icon: '📊', title: '年度回顾', desc: '一年的打卡、留言、答题与备婚进度，生成年度账单', group: 'couple', newIn: '2.0.7' },
   { key: 'mealReport', icon: '🍚', title: '三餐总结报告', desc: '月报 / 半年报 / 年报，分析吃饭偏好与习惯并给建议，到期自动推送', group: 'couple', newIn: '2.0.8' },
+  { key: 'goals', icon: '🌱', title: '共建目标', desc: '存钱、旅行、习惯，一起把日子过成想要的样子', group: 'couple', newIn: '2.2.0' },
+  { key: 'dishRank', icon: '🔥', title: '我们的常点榜', desc: '近半年最常点的菜，按餐次推荐今晚吃什么', group: 'couple', newIn: '2.2.0' },
   { key: 'scratch', icon: '🎫', title: '情侣刮刮乐', desc: '手指刮开卡片赢奖励', group: 'game' },
   { key: 'star2048', icon: '✨', title: '星尘 2048', desc: '星空配色 2048，滑动合并方块，', group: 'game' },
   { key: 'animalmatch', icon: '🐾', title: '动物世界消消乐', desc: '羊了个羊式多层遮挡三消', group: 'game' },

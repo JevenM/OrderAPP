@@ -19,6 +19,14 @@
 - 订单状态链：`pending → accepted → cooking → done`（`cancelled` 为旁路），流转规则集中在 `lib/orderFlow.ts`，新增状态必须同步 `ORDER_STATUS` 与 AdminOrders 筛选。
 - 菜系分组（`lib/dishGroups.ts`）：菜单 category 是自由文本，新菜系优先登记到 EXPLICIT 映射，别只依赖关键词兜底。
 - 日期输入统一用 `components/DateField`（`floating` 用于窄触发器或表单单行；弹窗内必须用内联模式，fixed 浮层会被 z-index 压在遮罩下）。
+- **评分类数据禁止挂 `order_items`**：`updateOrder` 是「先删明细再重插」，挂上去任何一次编辑订单都会清空评分、行 id 还会变。逐菜评分单独存 `couple_dish_ratings`，唯一键 `(order_id, dish_name, rater_id)`，`order_item_id` 只作弱引用。
+- **`isMissingTable(error)` 要兼顾纯对象错误**：PostgREST 返回 `{code:'PGRST205'}` 时不是 `Error` 实例，只读 `.message` 会被 `String()` 成 `[object Object]`。已在 db.ts 里同时认 code 与 message。
+- 关系温度计零新增表（`lib/warmth.ts`）：权重 三餐25/留言20/一起玩15/心意15/投喂15/动态10，各带 7 天满分阈值；采集 14 天内存切「本周/上周」算趋势；任一数据源失败只让该项计 0。
+- 共建目标 `couple_goals` 一个目标一行（不是单行 jsonb），习惯打卡存 `checkins` 日期数组；写操作用 `updated_at` 乐观锁，0 行即「对方刚改过」→ 重拉合并。
+
+## 协作偏好（用户 2026-11-26 明确）
+- **Logo 方案已由用户自行选定**，`icon-options/` 六个方案不再是待决项，以后不要再提、也不要主动询问。
+- 用户只关注「他主动提供的信息」：不要自作主张扩散范围，不要重复确认已定事项，问题来一条解决一条。
 
 ## 待决事项
-- `icon-options/` 六个 Logo 方案已落盘并渲染自检，等用户选编号后一次性替换 `public/icon.svg` 及 favicon / PWA manifest / Service Worker / 通知图标四处引用。
+- （无）

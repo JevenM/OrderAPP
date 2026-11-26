@@ -38,8 +38,8 @@ const SIZE_CURVE: [number, number][] = [
   [120, 1],
 ]
 
-/** 分段线性插值：让树是平滑长大的，而不是一格一格跳 */
-const interp = (curve: [number, number][], x: number): number => {
+/** 分段线性插值：让树是平滑长大的，而不是一格一格跳。关系温度计也复用这条曲线工具 */
+export const interp = (curve: [number, number][], x: number): number => {
   if (x <= curve[0][0]) return curve[0][1]
   for (let i = 1; i < curve.length; i += 1) {
     const [x1, y1] = curve[i]
