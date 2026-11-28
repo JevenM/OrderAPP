@@ -117,7 +117,7 @@ export default function YearReviewBoard({ memberId, friendId, myName, friendName
       ) : (
         <>
           {/* 可截图的账单主视觉 */}
-          <div className="rounded-2xl bg-gradient-to-br from-rose-500 via-rose-400 to-orange-400 p-4 text-white shadow-sm">
+          <div className="rounded-2xl bg-gradient-to-br from-rose-500 via-rose-400 to-orange-400 p-4 text-white shadow-sm skeleton-fade">
             <div className="text-[11px] opacity-90">{year} 年度账单 · {myName} × {friendName}</div>
             <div className="mt-2 text-2xl font-bold">这一年，也一起走过来了 💕</div>
             <div className="mt-4 grid grid-cols-3 gap-2">

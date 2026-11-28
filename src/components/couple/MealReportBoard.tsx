@@ -168,7 +168,7 @@ export default function MealReportBoard({ memberId, friendId, myName, friendName
       ) : (
         <>
           {/* 主视觉：一眼看到覆盖率、打卡量与连续天数 */}
-          <div className="rounded-2xl bg-gradient-to-br from-rose-500 via-rose-400 to-orange-400 p-4 text-white shadow-sm">
+          <div className="rounded-2xl bg-gradient-to-br from-rose-500 via-rose-400 to-orange-400 p-4 text-white shadow-sm skeleton-fade">
             <div className="text-[11px] opacity-90">{period.label} · {period.days} 天 · 我们俩</div>
             <div className="mt-2 grid grid-cols-3 gap-2 text-center">
               <div>

@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useToast } from '../components/Toast'
 import Pager from '../components/Pager'
 import DateField from '../components/DateField'
+import { SkeletonList } from '../components/States'
 import CoupleModuleGrid from '../components/couple/CoupleModuleGrid'
 import WarmthCard from '../components/couple/WarmthCard'
 import {
@@ -6543,7 +6544,9 @@ export default function CouplePage() {
                 <DateField value={countdownDate} onChange={setCountdownDate} placeholder="选个日子" floating />
                 <button type="button" className="btn-primary" disabled={countdownSaving || !memberId || !friendId} onClick={() => void addCountdown()}>添加</button>
               </div>
-              {(() => {
+              {/* 首次加载先给与真实行同构的骨架，避免数据回来时整块跳动 */}
+              {!countdownLoaded && <SkeletonList variant="countdown" rows={4} />}
+              {countdownLoaded && (() => {
                 const allItems = Array.isArray(countdownGame?.state.items) ? countdownGame.state.items : []
                 const today = todayStr()
                 // 今天及以后 → 主列表（日期升序）；已过去 → 历史列表（日期倒序，分页展示）
@@ -6600,7 +6603,7 @@ export default function CouplePage() {
                     {upcoming.length === 0 ? (
                       <p className="py-3 text-center text-xs text-slate-400">当前没有还没到的重要日，看看下面的历史记录吧～</p>
                     ) : (
-                      <div className="space-y-2">{upcoming.map((item, index) => row(item, index, false))}</div>
+                      <div className="space-y-2 skeleton-fade">{upcoming.map((item, index) => row(item, index, false))}</div>
                     )}
                     {past.length > 0 && (
                       <div className="space-y-2 rounded-xl bg-slate-50 p-2">
@@ -6608,7 +6611,7 @@ export default function CouplePage() {
                           <h4 className="text-xs font-semibold text-slate-500">📜 历史重要日</h4>
                           <span className="text-[10px] text-slate-400">共 {past.length} 个</span>
                         </div>
-                        <div className="space-y-2">{pagedPast.map((item, index) => row(item, index, true))}</div>
+                        <div className="space-y-2 skeleton-fade">{pagedPast.map((item, index) => row(item, index, true))}</div>
                         <Pager page={safePage} total={past.length} pageSize={COUNTDOWN_HISTORY_PAGE_SIZE} onChange={setCountdownHistoryPage} />
                       </div>
                     )}

@@ -6,7 +6,7 @@ import { browserNotify, ding } from '../lib/notify'
 import { timeCn } from '../lib/date'
 import { useRealtime } from '../lib/realtime'
 import { Modal, useConfirm, type ModalOrigin } from '../components/Modal'
-import { EmptyState } from '../components/States'
+import { EmptyState, SkeletonList } from '../components/States'
 import { useToast } from '../components/Toast'
 import { useSession } from '../store/session'
 import { useFriends } from '../store/friends'
@@ -116,6 +116,8 @@ export default function OrdersPage() {
 
   const [recent, setRecent] = useState<OrderWithItems[]>([])
   const [incoming, setIncoming] = useState<OrderWithItems[]>([])
+  /** 首次拉取订单时两区都给骨架，避免空态闪一下再被真实列表顶掉 */
+  const [loading, setLoading] = useState(true)
   /** 两区各自分页（长列表不内部滚动，苹果手机更好翻） */
   const [incomingPage, setIncomingPage] = useState(0)
   const [myPage, setMyPage] = useState(0)
@@ -186,8 +188,14 @@ export default function OrdersPage() {
   }, [partnerId])
 
   useEffect(() => {
-    void loadRecent()
-    void loadIncoming()
+    let alive = true
+    setLoading(true)
+    void Promise.all([loadRecent(), loadIncoming()]).finally(() => {
+      if (alive) setLoading(false)
+    })
+    return () => {
+      alive = false
+    }
   }, [loadRecent, loadIncoming])
 
   useRealtime(
@@ -386,8 +394,10 @@ export default function OrdersPage() {
             共 {incoming.length} 单 · 待接 {incoming.filter((o) => o.status === 'pending').length}
           </span>
         </div>
-        {incoming.length > 0 ? (
-          <>
+        {loading ? (
+          <SkeletonList rows={2} variant="card" />
+        ) : incoming.length > 0 ? (
+          <div className="space-y-2 skeleton-fade">
             {incoming.slice(safeIncomingPage * PAGE_SIZE, (safeIncomingPage + 1) * PAGE_SIZE).map((o) => (
               <OrderCard
                 key={o.id}
@@ -398,7 +408,7 @@ export default function OrdersPage() {
               />
             ))}
             <Pager page={safeIncomingPage} total={incoming.length} onChange={setIncomingPage} totalLabel={`共 ${incoming.length} 单`} />
-          </>
+          </div>
         ) : (
           <p className="py-2 text-center text-2xs text-slate-400">还没有 {partnerName} 点给你的单</p>
         )}
@@ -410,8 +420,10 @@ export default function OrdersPage() {
           <h2 className="card-title text-sm text-brand-600">📤 我点的单</h2>
           <span className="chip border-brand-200 bg-brand-50 text-2xs text-brand-600">共 {recent.length} 单</span>
         </div>
-        {recent.length > 0 ? (
-          <>
+        {loading ? (
+          <SkeletonList rows={2} variant="card" />
+        ) : recent.length > 0 ? (
+          <div className="space-y-2 skeleton-fade">
             {recent.slice(safeMyPage * PAGE_SIZE, (safeMyPage + 1) * PAGE_SIZE).map((o) => (
               <OrderCard
                 key={o.id}
@@ -422,13 +434,13 @@ export default function OrdersPage() {
               />
             ))}
             <Pager page={safeMyPage} total={recent.length} onChange={setMyPage} totalLabel={`共 ${recent.length} 单`} />
-          </>
+          </div>
         ) : (
           <p className="py-2 text-center text-2xs text-slate-400">你还没下过单，去「点菜」点起来～</p>
         )}
       </section>
 
-      {recent.length === 0 && incoming.length === 0 && (
+      {!loading && recent.length === 0 && incoming.length === 0 && (
         <EmptyState icon="📦" title="还没有订单" hint="去「点菜」下一单，或者等 TA 点给你～" />
       )}
 

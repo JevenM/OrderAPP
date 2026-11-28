@@ -30,7 +30,8 @@ export function weekdayCn(day: string): string {
 export function prettyDay(day: string): string {
   if (day === todayStr()) return '今天'
   if (day === shiftDay(todayStr(), -1)) return '昨天'
-  return day.slice(5).replace('-', '月') + '日'
+  const [, m, d] = day.split('-')
+  return `${Number(m)}月${Number(d)}日`
 }
 
 export function timeCn(iso: string): string {

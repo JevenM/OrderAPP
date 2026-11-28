@@ -109,7 +109,7 @@ export default function AlbumTimeline({ isAdmin, memberId, friendIds, myName, fr
           hint={posts.length ? '换个年份看看' : '在「饭圈」发一条带照片的动态，这里就会自动收进来'}
         />
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-5 skeleton-fade">
           {groups.map((group) => (
             <div key={group.month} className="space-y-2">
               <div className="flex items-center gap-2">

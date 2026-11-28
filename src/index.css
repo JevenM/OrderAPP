@@ -127,17 +127,23 @@ body {
   .seg-btn {
     @apply flex flex-1 items-center justify-center gap-1 rounded-lg py-1.5 text-sm transition-all duration-200;
   }
-  /* 骨架占位：自带一道斜向扫光，深色配方在文件末尾 */
+  /* 骨架占位：灰色圆角块 + 1.5s 线性扫光（透明 → 浅灰 → 透明）。
+     深色配方、减少动效时的呼吸、加载完成后的淡入见文件末尾。 */
   .skeleton {
-    @apply relative overflow-hidden rounded bg-slate-100;
+    @apply relative overflow-hidden rounded-lg bg-slate-100;
   }
   .skeleton::after {
     content: '';
     position: absolute;
     inset: 0;
-    transform: translateX(-120%);
-    background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 0.65) 50%, transparent 70%);
-    animation: skeleton-sweep 1.8s ease-in-out infinite;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent 0%, rgb(203 213 225 / 0.7) 50%, transparent 100%);
+    animation: skeleton-sweep 1.5s linear infinite;
+    will-change: transform;
+  }
+  /* 骨架撤掉后真实内容淡入，避免「啪」一下换内容 */
+  .skeleton-fade {
+    animation: skeleton-fade-in 0.32s ease-out both;
   }
 }
 
@@ -462,6 +468,113 @@ html.dark .cal-day--selected {
   color: #fff;
 }
 
+/* ------------------------------ 滚轮日期 ------------------------------
+   年 / 月 / 日三列，每列固定 3 行高（上 / 中 / 下），中间行高亮。
+   浮层用 fixed 挂到 body，不参与弹窗排版，不会把弹窗撑出滚动条。 */
+.wheel-pop {
+  position: fixed;
+  z-index: 120;
+  width: 246px;
+  padding: 0.5rem;
+  border: 1px solid rgb(var(--brand-100));
+  border-radius: 1rem;
+  background: #fff;
+  box-shadow: 0 18px 44px -18px rgb(15 23 42 / 0.45);
+  animation: skeleton-fade-in 0.18s ease-out both;
+}
+html.dark .wheel-pop {
+  background: #1e293b;
+  border-color: #3b2a3a;
+  box-shadow: 0 18px 44px -18px rgb(0 0 0 / 0.7);
+}
+/* 标签与数字列包在同一个 group 里：列宽完全一致，「年 / 月 / 日」天然居中对齐 */
+.wheel-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.25rem;
+}
+.wheel-group {
+  display: grid;
+  grid-template-rows: 16px 132px;
+  min-width: 0;
+}
+.wheel-label {
+  line-height: 16px;
+  text-align: center;
+  font-size: 0.6875rem;
+  color: #94a3b8;
+}
+.wheel-widget {
+  position: relative;
+}
+.wheel-widget::after {
+  content: '';
+  position: absolute;
+  top: 60px; /* 标签 16px + 中间行 44px */
+  left: 0;
+  right: 0;
+  height: 44px;
+  border: 1px solid rgb(var(--brand-100));
+  border-radius: 0.75rem;
+  background: rgb(var(--brand-50));
+  pointer-events: none;
+}
+.wheel-col {
+  position: relative;
+  z-index: 1;
+  height: 132px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 70%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 70%, transparent 100%);
+}
+.wheel-col::-webkit-scrollbar {
+  display: none;
+}
+.wheel-item {
+  display: flex;
+  height: 44px;
+  scroll-snap-align: center;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  color: #64748b;
+  cursor: pointer;
+  user-select: none;
+}
+.wheel-item--active {
+  color: rgb(var(--brand-600));
+  font-size: 1rem;
+  font-weight: 700;
+}
+.wheel-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  font-size: 0.625rem;
+  color: #94a3b8;
+}
+.lock-clear {
+  flex-shrink: 0;
+  color: rgb(var(--brand-500));
+}
+html.dark .wheel-widget::after {
+  border-color: #54384a;
+  background: #2a1b24;
+}
+html.dark .wheel-item {
+  color: #94a3b8;
+}
+html.dark .wheel-item--active {
+  color: rgb(var(--brand-300));
+}
+
 @layer utilities {
   /* 列表逐条入场：给 card 加 stagger-1/2/3 就有轻微错落感 */
   .stagger-1 {
@@ -708,16 +821,27 @@ html.dark .glass-solid {
   background-color: rgb(15 23 42 / 0.92);
 }
 
+/* 1.5s 线性：光带从左侧完全离开走到右侧完全离开，不留停顿 */
 @keyframes skeleton-sweep {
-  28% {
-    transform: translateX(120%);
+  from {
+    transform: translateX(-100%);
   }
-  100% {
-    transform: translateX(120%);
+  to {
+    transform: translateX(100%);
   }
 }
 
-/* 系统开启「减弱动态效果」时关掉动画，照顾晕动/省电场景 */
+@keyframes skeleton-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 系统开启「减弱动态效果」时关掉位移类动画，照顾晕动/省电场景；
+   骨架改用缓慢呼吸（只变透明度），仍然能看出「正在加载」。 */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -725,5 +849,26 @@ html.dark .glass-solid {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+  .skeleton::after {
+    transform: none !important;
+    background: rgb(148 163 184 / 0.18) !important;
+    animation: skeleton-breathe 2.4s ease-in-out infinite !important;
+  }
+  html.dark .skeleton::after {
+    background: rgb(148 163 184 / 0.14) !important;
+  }
+  .skeleton-fade {
+    animation: none !important;
+  }
+}
+
+@keyframes skeleton-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
   }
 }

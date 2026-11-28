@@ -18,7 +18,7 @@ import {
 } from '../../lib/goals'
 import { lastDays, todayStr, weekdayCn } from '../../lib/date'
 import { POLL, useRealtime } from '../../lib/realtime'
-import DateField from '../DateField'
+import WheelDateField from '../WheelDateField'
 import { Modal, useConfirm } from '../Modal'
 import { EmptyState, SkeletonList } from '../States'
 import { useToast } from '../Toast'
@@ -270,7 +270,7 @@ export default function CoupleGoals({
       </div>
 
       {loading && goals.length === 0 ? (
-        <SkeletonList rows={3} />
+        <SkeletonList rows={4} variant="grid" />
       ) : sorted.length === 0 ? (
         <EmptyState
           icon="🌱"
@@ -278,7 +278,7 @@ export default function CoupleGoals({
           hint="从存钱、旅行、习惯里挑一个开始，比空想要实在"
         />
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 skeleton-fade">
           {sorted.map((g) => {
             const percent = goalPercent(g, today)
             const left = daysLeft(g.deadline, today)
@@ -457,7 +457,7 @@ export default function CoupleGoals({
           {draft.kind !== 'habit' && (
             <div>
               <div className="mb-1 text-2xs text-slate-500">截止日（可选）</div>
-              <DateField value={draft.deadline} onChange={(v) => setDraft({ ...draft, deadline: v })} placeholder="不设截止日" compact />
+              <WheelDateField value={draft.deadline} onChange={(v) => setDraft({ ...draft, deadline: v })} placeholder="不设截止日" />
             </div>
           )}
 

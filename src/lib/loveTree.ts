@@ -72,13 +72,13 @@ export interface LoveTreeStage {
 
 export const LOVE_TREE_STAGES: LoveTreeStage[] = [
   { min: 0, name: '沉睡的种子', emoji: '🌰', hint: '两人都打完今天的三餐，就能浇上第一滴水' },
-  { min: 2, name: '破土嫩芽', emoji: '🌱', hint: '继续一起打卡，嫩芽会长成小树苗' },
-  { min: 6, name: '小小树苗', emoji: '🌿', hint: '再攒一些水，树上就会冒出第一片爱心叶' },
-  { min: 16, name: '爱心小树', emoji: '🍃', hint: '树冠长稳之后，枝条会越来越舒展' },
-  { min: 30, name: '枝繁叶茂', emoji: '🌳', hint: '浇到 50 次，树上会开满花' },
-  { min: 50, name: '满树繁花', emoji: '🌸', hint: '再浇 30 次，会结出红红的爱心果' },
-  { min: 80, name: '爱心结果', emoji: '💗', hint: '再浇 40 次，它就是你们的永恒爱心树' },
-  { min: 120, name: '永恒爱心树', emoji: '✨', hint: '已经长到最高阶段，继续陪它长下去吧' },
+  { min: 2, name: '破土嫩芽', emoji: '🌱', hint: '两片小叶先探出头，继续一起打卡就会长成小树苗' },
+  { min: 6, name: '小小树苗', emoji: '🌿', hint: '树干慢慢变粗，冒出第一根枝条和爱心叶' },
+  { min: 16, name: '爱心小树', emoji: '🍃', hint: '枝条舒展开来，枝头开始冒出小小的花苞' },
+  { min: 30, name: '枝繁叶茂', emoji: '🌳', hint: '心形叶子长满枝头，花苞也慢慢绽开' },
+  { min: 50, name: '满树繁花', emoji: '🌸', hint: '花朵开满每条枝条，再攒水就会挂上爱心果' },
+  { min: 80, name: '爱心结果', emoji: '💗', hint: '枝头挂满红红的爱心果，枝丫还会分出更多' },
+  { min: 120, name: '永恒爱心树', emoji: '✨', hint: '每一根枝丫都长着心与花，果实累累，继续陪它长下去吧' },
 ]
 
 /** 以下四个都以**累计浇水次数**为轴：阶段名反映的是树的年纪，不是当前的连续天数 */
@@ -115,6 +115,69 @@ export const loveTreeStageProgress = (water: number): number => {
 
 /** 树已经长起来了，但连续中断：叶子大半掉了，树还在 */
 export const isDormantTree = (streak: number, water: number): boolean => streak === 0 && water > 0
+
+/**
+ * 树的可见细节。分两条线：
+ * - 枝干数量看累计浇水（阶段），只增不减 —— 树长到哪就回不去；
+ * - 芽 / 心 / 花 / 果的数量看繁茂度，断签会掉，但大树留一个下限。
+ */
+export interface LoveTreeVisual {
+  size: number
+  canopy: number
+  stageIndex: number
+  dormant: boolean
+  /** 还没浇过水：地上只有一颗种子 */
+  seed: boolean
+  /** 破土嫩芽：两片子叶，还没有枝条 */
+  cotyledon: boolean
+  /** 一级枝条数（最多 6 根，从树干不同高度伸出） */
+  branchCount: number
+  /** 每根枝条末梢再分出的细枝数 */
+  twigPerBranch: number
+  budCount: number
+  heartCount: number
+  flowerCount: number
+  fruitCount: number
+}
+
+/** 与 LoveTree.tsx 的候选点位数量一致，Count 不会超过它们 */
+export const LOVE_TREE_MAX = { branches: 6, buds: 13, hearts: 27, flowers: 23, fruits: 16 } as const
+
+/** 各阶段的骨架：枝干只增，花苞→心→花→果依次登场 */
+const BRANCH_BY_STAGE = [0, 0, 1, 2, 3, 4, 5, 6]
+const TWIG_BY_STAGE = [0, 0, 0, 0, 1, 1, 2, 3]
+const BUD_BY_STAGE = [0, 2, 3, 5, 7, 6, 4, 3]
+const HEART_BY_STAGE = [0, 0, 2, 6, 11, 16, 21, 26]
+const FLOWER_BY_STAGE = [0, 0, 0, 0, 3, 8, 13, 18]
+const FRUIT_BY_STAGE = [0, 0, 0, 0, 0, 0, 6, 16]
+
+const cap = (n: number, max: number) => Math.max(0, Math.min(max, Math.round(n)))
+
+/** 算出这棵树此刻该画多少枝条 / 芽 / 心 / 花 / 果 */
+export function loveTreeVisual(streak: number, water: number): LoveTreeVisual {
+  const size = treeSizeOf(water)
+  const canopy = canopyGrowthOf(streak, water)
+  const stageIndex = loveTreeStageIndex(water)
+  const dormant = isDormantTree(streak, water)
+  // 断签时繁茂度已经很低，再压一档，避免枯树上还开着花
+  const lush = dormant ? canopy * 0.45 : 0.35 + canopy * 0.65
+  const stageValue = (table: number[]) => table[stageIndex] ?? 0
+
+  return {
+    size,
+    canopy,
+    stageIndex,
+    dormant,
+    seed: water <= 0,
+    cotyledon: stageIndex === 1,
+    branchCount: Math.min(LOVE_TREE_MAX.branches, stageValue(BRANCH_BY_STAGE)),
+    twigPerBranch: stageValue(TWIG_BY_STAGE),
+    budCount: cap(stageValue(BUD_BY_STAGE) * lush, LOVE_TREE_MAX.buds),
+    heartCount: cap(stageValue(HEART_BY_STAGE) * lush, LOVE_TREE_MAX.hearts),
+    flowerCount: dormant ? 0 : cap(stageValue(FLOWER_BY_STAGE) * lush, LOVE_TREE_MAX.flowers),
+    fruitCount: dormant ? 0 : cap(stageValue(FRUIT_BY_STAGE) * lush, LOVE_TREE_MAX.fruits),
+  }
+}
 
 /** 最近 count 天（含今天）的 day 字符串，从今天往前倒序 */
 export function recentDays(count: number): string[] {
